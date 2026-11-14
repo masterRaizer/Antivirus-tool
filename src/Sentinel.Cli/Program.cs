@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Sentinel.Core.Analysis;
+using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Detection;
 using Sentinel.Core.Hashing;
 using Sentinel.Core.Pe;
@@ -51,6 +52,7 @@ internal static class Program
                 "pe" => Pe(opts),
                 "rules" => Rules(opts),
                 "selftest" => SelfTest(opts),
+                "audit-processes" => AuditProcesses(opts),
                 _ => Unknown(args[0]),
             };
         }
@@ -79,6 +81,8 @@ internal static class Program
               sentinel pe <файл> [--json]          разбор PE-заголовков
               sentinel rules [--rules <каталог>]   загрузка и валидация правил
               sentinel selftest [--rules <каталог>] самопроверка на синтетических артефактах (EICAR, PE-заглушки)
+              sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan]
+                                                   аудит активных процессов (только Windows)
 
             Коды возврата: 0 — чисто, 1 — обнаружены угрозы/подозрения, 2 — ошибка.
             """);
@@ -328,6 +332,60 @@ internal static class Program
         Console.WriteLine(failures == 0 ? "Самопроверка пройдена." : $"Самопроверка: {failures} ошибок.");
         return failures == 0 ? ExitOk : ExitError;
     }
+
+    private static int AuditProcesses(CliOptions opts)
+    {
+        if (!ProcessProviderFactory.IsSupported)
+        {
+            Console.Error.WriteLine("Аудит процессов доступен только в Windows (используются Win32 API).");
+            return ExitError;
+        }
+
+        var (_, analyzer) = CreateAnalyzer(opts, printRuleErrors: !opts.Json);
+        var provider = ProcessProviderFactory.CreateDefault();
+        var auditor = new ProcessAuditor(
+            new ProcessAuditorOptions { AnalyzeExecutable = !opts.NoFileScan },
+            opts.NoFileScan ? null : analyzer);
+
+        var processes = provider.GetProcesses();
+        var report = auditor.Audit(processes);
+
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                processes = report.ProcessCount,
+                flagged = report.FlaggedCount,
+                entries = report.Flagged.Select(e => new
+                {
+                    e.Process.Pid,
+                    e.Process.ParentPid,
+                    e.Process.Name,
+                    e.Process.ExecutablePath,
+                    e.Process.CommandLine,
+                    e.Process.CpuPercent,
+                    verdict = e.FileScan?.Verdict,
+                    findings = e.Findings,
+                }),
+            }, JsonOptions));
+        }
+        else
+        {
+            Console.WriteLine($"Процессов проверено: {report.ProcessCount}; с находками: {report.FlaggedCount}");
+            foreach (var e in report.Flagged.OrderByDescending(x => x.Findings.Max(f => f.Severity)))
+            {
+                Console.WriteLine();
+                Console.WriteLine($"PID {e.Process.Pid,-6} {e.Process.Name}  ({e.Process.ExecutablePath ?? "путь неизвестен"})");
+                foreach (var f in e.Findings.OrderByDescending(f => f.Severity))
+                {
+                    Console.WriteLine($"  [{f.Severity,-8}] {f.Id,-18} {f.Title}");
+                    Console.WriteLine($"             {f.Description}");
+                }
+            }
+        }
+
+        return report.FlaggedCount > 0 ? ExitDetected : ExitOk;
+    }
 }
 
 internal sealed class CliOptions
@@ -337,6 +395,7 @@ internal sealed class CliOptions
     public bool Json { get; private set; }
     public bool Recurse { get; private set; } = true;
     public int MaxSizeMb { get; private set; } = 64;
+    public bool NoFileScan { get; private set; }
     public string? Error { get; private set; }
 
     public static CliOptions Parse(string[] args)
@@ -354,6 +413,9 @@ internal sealed class CliOptions
                     break;
                 case "--no-recurse":
                     o.Recurse = false;
+                    break;
+                case "--no-file-scan":
+                    o.NoFileScan = true;
                     break;
                 case "--max-size" when i + 1 < args.Length:
                     if (!int.TryParse(args[++i], NumberStyles.None, CultureInfo.InvariantCulture, out var mb) || mb is < 1 or > 4096)
