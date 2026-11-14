@@ -1,3 +1,5 @@
+using Sentinel.Core.Audit.Config;
+using Sentinel.Core.Audit.Persistence;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Signatures;
 
@@ -34,21 +36,87 @@ public sealed class ProcessAuditor
         _fileAnalyzer = fileAnalyzer;
     }
 
-    public ProcessAuditReport Audit(IEnumerable<ProcessSnapshot> processes)
+    public ProcessAuditReport Audit(IEnumerable<ProcessSnapshot> processes) => Audit(processes, []);
+
+    /// <summary>
+    /// Аудит с учётом исключений встроенной защиты Windows. Процессы, попавшие под
+    /// <c>ExclusionProcess</c> или запущенные из <c>ExclusionPath</c>, проверяются первыми,
+    /// получают находку <c>PROC-DEFENDER-EXCLUDED</c>, а их образ — глубокую проверку файла.
+    /// </summary>
+    public ProcessAuditReport Audit(IEnumerable<ProcessSnapshot> processes, IReadOnlyList<DefenderExclusion> exclusions)
     {
         ArgumentNullException.ThrowIfNull(processes);
-        var entries = new List<ProcessAuditEntry>();
+        ArgumentNullException.ThrowIfNull(exclusions);
+
+        var prioritized = new List<ProcessAuditEntry>();
+        var regular = new List<ProcessSnapshot>();
         foreach (var p in processes)
         {
-            entries.Add(AuditOne(p));
+            var matched = MatchExclusions(p, exclusions);
+            if (matched.Count > 0)
+            {
+                prioritized.Add(AuditOne(p, matched));
+            }
+            else
+            {
+                regular.Add(p);
+            }
+        }
+
+        var entries = new List<ProcessAuditEntry>(prioritized);
+        foreach (var p in regular)
+        {
+            entries.Add(AuditOne(p, []));
         }
 
         return new ProcessAuditReport(entries);
     }
 
-    private ProcessAuditEntry AuditOne(ProcessSnapshot p)
+    /// <summary>Исключения, под которые попадает процесс (по образу или по каталогу запуска).</summary>
+    public static IReadOnlyList<DefenderExclusion> MatchExclusions(ProcessSnapshot process, IReadOnlyList<DefenderExclusion> exclusions)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        ArgumentNullException.ThrowIfNull(exclusions);
+        var matched = new List<DefenderExclusion>();
+        foreach (var e in exclusions)
+        {
+            var hit = e.Kind switch
+            {
+                DefenderExclusionKind.Process => e.CoversProcess(process.Name, process.ExecutablePath),
+                DefenderExclusionKind.Path => e.CoversFile(process.ExecutablePath),
+                _ => false,
+            };
+            if (hit)
+            {
+                matched.Add(e);
+            }
+        }
+
+        return matched;
+    }
+
+    private ProcessAuditEntry AuditOne(ProcessSnapshot p, IReadOnlyList<DefenderExclusion> matched)
     {
         var findings = new List<AuditFinding>();
+        var priority = matched.Count > 0
+            ? new PriorityScanContext(string.Join("; ", matched.Select(m => m.ToString())))
+            : null;
+
+        if (priority is not null)
+        {
+            var interpreter = InterpreterHeuristics.IsInterpreter(p.Name);
+            var userWritable = p.ExecutablePath is not null && PathClassifier.IsUserWritableLocation(p.ExecutablePath);
+            findings.Add(AuditFinding.Create("PROC-DEFENDER-EXCLUDED",
+                interpreter || userWritable ? Severity.High : Severity.Medium,
+                "Процесс скрыт от встроенной защиты исключением",
+                $"Процесс '{p.Name}' подпадает под исключение встроенной защиты Windows ({priority.Reason})"
+                    + (interpreter ? " и является интерпретатором — его действия и открываемые файлы не проверяются." : ".")
+                    + " Образ процесса проверен в приоритетном глубоком режиме.",
+                Evidence.Of("pid", p.Pid),
+                Evidence.Of("name", p.Name),
+                Evidence.Of("path", p.ExecutablePath),
+                Evidence.Of("exclusions", priority.Reason)));
+        }
 
         CheckSystemImpersonation(p, findings);
         CheckHomoglyphs(p, findings);
@@ -63,14 +131,14 @@ public sealed class ProcessAuditor
         FileScanResult? scan = null;
         if (_options.AnalyzeExecutable && _fileAnalyzer is not null && !string.IsNullOrWhiteSpace(p.ExecutablePath))
         {
-            scan = AnalyzeFileSafely(p.ExecutablePath);
+            scan = AnalyzeFileSafely(p.ExecutablePath, priority);
             if (scan is not null)
             {
                 AppendFileFindings(p, scan, findings);
             }
         }
 
-        return new ProcessAuditEntry(p, findings, scan);
+        return new ProcessAuditEntry(p, findings, scan) { MatchedExclusions = matched };
     }
 
     private void CheckSystemImpersonation(ProcessSnapshot p, List<AuditFinding> findings)
@@ -165,11 +233,11 @@ public sealed class ProcessAuditor
         }
     }
 
-    private FileScanResult? AnalyzeFileSafely(string path)
+    private FileScanResult? AnalyzeFileSafely(string path, PriorityScanContext? priority)
     {
         try
         {
-            return _fileAnalyzer!.Analyze(path);
+            return _fileAnalyzer!.Analyze(path, priority);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {

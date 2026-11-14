@@ -20,6 +20,12 @@ public sealed record ConfigFinding(ConfigArea Area, AuditFinding Finding)
 /// <summary>Итог аудита целостности конфигурации безопасности.</summary>
 public sealed record ConfigAuditReport(IReadOnlyList<ConfigFinding> Findings)
 {
+    /// <summary>
+    /// Все исключения встроенной защиты, найденные в реестре. Передаются в
+    /// <see cref="ExclusionPriorityScanner"/> для приоритетной глубокой проверки файлов и процессов.
+    /// </summary>
+    public IReadOnlyList<DefenderExclusion> DefenderExclusions { get; init; } = [];
+
     public int Count => Findings.Count;
 
     public IEnumerable<ConfigFinding> ByArea(ConfigArea area) => Findings.Where(f => f.Area == area);

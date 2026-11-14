@@ -15,6 +15,26 @@ public sealed class FileAnalyzerOptions
 
     /// <summary>Проверять подпись только у PE-файлов (неисполняемые файлы Authenticode не несут).</summary>
     public bool VerifySignatureOnlyForPe { get; init; } = true;
+
+    /// <summary>
+    /// Лимит сигнатурного поиска для приоритетной глубокой проверки (файлы, скрытые от встроенной
+    /// защиты исключениями). Заметно выше обычного: такие файлы проверяются целиком.
+    /// </summary>
+    public long DeepMaxScanBytes { get; init; } = 512L * 1024 * 1024;
+}
+
+/// <summary>
+/// Контекст приоритетной глубокой проверки: файл попал под исключение встроенной защиты Windows,
+/// то есть штатный антивирус его не видит. Для таких файлов снимается обычный лимит размера,
+/// подпись проверяется всегда, а неподписанный исполняемый код сам по себе считается подозрительным.
+/// </summary>
+public sealed record PriorityScanContext(string Reason)
+{
+    /// <summary>Расширения сценариев, исполняемых штатными интерпретаторами Windows.</summary>
+    internal static readonly string[] ScriptExtensions =
+    [
+        ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".hta", ".scr", ".com",
+    ];
 }
 
 /// <summary>
@@ -39,12 +59,18 @@ public sealed class FileAnalyzer
         _options = options ?? new FileAnalyzerOptions();
     }
 
-    public FileScanResult Analyze(string path)
+    public FileScanResult Analyze(string path) => Analyze(path, null);
+
+    /// <summary>
+    /// Анализ файла; при заданном <paramref name="priority"/> — приоритетная глубокая проверка
+    /// (см. <see cref="PriorityScanContext"/>).
+    /// </summary>
+    public FileScanResult Analyze(string path, PriorityScanContext? priority)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         try
         {
-            return AnalyzeCore(Path.GetFullPath(path));
+            return AnalyzeCore(Path.GetFullPath(path), priority);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -52,8 +78,12 @@ public sealed class FileAnalyzer
         }
     }
 
-    private FileScanResult AnalyzeCore(string path)
+    private FileScanResult AnalyzeCore(string path, PriorityScanContext? priority)
     {
+        // Массив байтов ограничен int.MaxValue, поэтому даже глубокий лимит не превышает ~2 ГБ.
+        var maxScan = priority is null
+            ? _options.MaxScanBytes
+            : Math.Min(Math.Max(_options.MaxScanBytes, _options.DeepMaxScanBytes), Array.MaxLength);
         byte[] content;
         string sha256;
         long size;
@@ -61,8 +91,8 @@ public sealed class FileAnalyzer
         using (var stream = FileHasher.OpenShared(path))
         {
             size = stream.Length;
-            truncated = size > _options.MaxScanBytes;
-            var toRead = (int)Math.Min(size, _options.MaxScanBytes);
+            truncated = size > maxScan;
+            var toRead = (int)Math.Min(size, maxScan);
             content = new byte[toRead];
             stream.ReadExactly(content);
             if (truncated)
@@ -98,7 +128,7 @@ public sealed class FileAnalyzer
         }
 
         SignatureVerificationResult? signature = null;
-        if (pe.IsPe || !_options.VerifySignatureOnlyForPe)
+        if (pe.IsPe || !_options.VerifySignatureOnlyForPe || priority is not null)
         {
             signature = _verifier.Verify(path);
         }
@@ -134,6 +164,16 @@ public sealed class FileAnalyzer
             }
         }
 
+        if (priority is not null && signature is not { IsValid: true })
+        {
+            var isScript = PriorityScanContext.ScriptExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+            if (pe.IsPe || isScript)
+            {
+                detections.Add(new Detection("Heuristic.DefenderExcludedExecutable", Severity.Medium, "evasion", DetectionSource.Heuristic, null,
+                    $"{(pe.IsPe ? "Исполняемый PE-файл" : "Сценарий")} без действительной цифровой подписи скрыт от встроенной защиты Windows ({priority.Reason}).", []));
+            }
+        }
+
         var verdict = whitelist is { IsWhitelisted: true } ? Verdict.Trusted : VerdictFrom(detections);
 
         return new FileScanResult
@@ -148,6 +188,7 @@ public sealed class FileAnalyzer
             Whitelist = whitelist,
             Detections = detections,
             Verdict = verdict,
+            PriorityReason = priority?.Reason,
         };
     }
 

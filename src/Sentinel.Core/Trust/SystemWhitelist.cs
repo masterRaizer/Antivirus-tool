@@ -49,6 +49,9 @@ public sealed class WhitelistOptions
 /// 3) подписант — доверенный издатель (по умолчанию Microsoft).
 /// Одно лишь расположение в System32 не делает файл доверенным: неподписанный
 /// файл, подброшенный в System32, должен проверяться как обычный.
+/// Локальные исключения встроенной защиты (Defender ExclusionPath/ExclusionProcess/ExclusionExtension)
+/// намеренно не читаются и не учитываются: их может добавить вредонос, поэтому они никогда
+/// не являются основанием для доверия — решение зависит только от пути и подписи.
 /// </summary>
 public sealed partial class SystemWhitelist : IWhitelistProvider
 {

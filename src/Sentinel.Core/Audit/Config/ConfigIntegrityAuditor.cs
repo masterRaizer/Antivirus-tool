@@ -1,5 +1,6 @@
 using Sentinel.Core.Audit.Persistence;
 using Sentinel.Core.Audit.Persistence.Registry;
+using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Signatures;
 
 namespace Sentinel.Core.Audit.Config;
@@ -17,7 +18,13 @@ public sealed class ConfigIntegrityAuditor
         @"SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions",
     ];
 
-    private static readonly string[] ExclusionKinds = ["Paths", "Processes", "Extensions"];
+    private static readonly (string SubKey, DefenderExclusionKind Kind)[] ExclusionKinds =
+    [
+        ("Paths", DefenderExclusionKind.Path),
+        ("Processes", DefenderExclusionKind.Process),
+        ("Extensions", DefenderExclusionKind.Extension),
+        ("IpAddresses", DefenderExclusionKind.IpAddress),
+    ];
 
     private const string FirewallRulesKey =
         @"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
@@ -50,9 +57,10 @@ public sealed class ConfigIntegrityAuditor
     public ConfigAuditReport Audit()
     {
         var findings = new List<ConfigFinding>();
+        var exclusions = new List<DefenderExclusion>();
         if (_registry is not null)
         {
-            AuditDefenderExclusions(findings);
+            AuditDefenderExclusions(findings, exclusions);
             AuditFirewall(findings);
             AuditProxy(findings);
         }
@@ -62,27 +70,40 @@ public sealed class ConfigIntegrityAuditor
             AuditRootCertificates(findings);
         }
 
-        return new ConfigAuditReport(findings);
+        return new ConfigAuditReport(findings) { DefenderExclusions = exclusions };
     }
 
     // ---- Исключения Windows Defender ------------------------------------------
 
-    private void AuditDefenderExclusions(List<ConfigFinding> findings)
+    private void AuditDefenderExclusions(List<ConfigFinding> findings, List<DefenderExclusion> exclusions)
     {
-        foreach (var root in DefenderExclusionRoots)
+        for (var r = 0; r < DefenderExclusionRoots.Length; r++)
         {
-            foreach (var kind in ExclusionKinds)
+            foreach (var (subKey, kind) in ExclusionKinds)
             {
-                var key = new RegistryKeyPath(RegistryHive.LocalMachine, root + "\\" + kind);
+                var key = new RegistryKeyPath(RegistryHive.LocalMachine, DefenderExclusionRoots[r] + "\\" + subKey);
                 foreach (var value in _registry!.GetValues(key))
                 {
                     var target = value.Name;
+                    if (string.IsNullOrWhiteSpace(target))
+                    {
+                        continue;
+                    }
+
+                    exclusions.Add(new DefenderExclusion(kind, target, key.ToString(), FromPolicy: r > 0));
                     var (severity, note) = ClassifyExclusion(kind, target);
+                    var what = kind switch
+                    {
+                        DefenderExclusionKind.Path => "путь",
+                        DefenderExclusionKind.Process => "процесс",
+                        DefenderExclusionKind.Extension => "тип файлов",
+                        _ => "IP-адрес",
+                    };
                     findings.Add(new ConfigFinding(ConfigArea.DefenderExclusion, AuditFinding.Create(
                         "CFG-DEFENDER-EXCL", severity,
-                        $"Исключение встроенной защиты ({kind})",
-                        $"Из проверки исключён {kind switch { "Paths" => "путь", "Processes" => "процесс", _ => "тип файлов" }} '{target}'. {note}",
-                        Evidence.Of("kind", kind),
+                        $"Исключение встроенной защиты ({subKey})",
+                        $"Из проверки исключён {what} '{target}'. {note}",
+                        Evidence.Of("kind", subKey),
                         Evidence.Of("target", target),
                         Evidence.Of("key", key.ToString()))));
                 }
@@ -90,9 +111,19 @@ public sealed class ConfigIntegrityAuditor
         }
     }
 
-    private static (Severity Severity, string Note) ClassifyExclusion(string kind, string target)
+    private static (Severity Severity, string Note) ClassifyExclusion(DefenderExclusionKind kind, string target)
     {
-        if (string.Equals(kind, "Extensions", StringComparison.OrdinalIgnoreCase))
+        if (kind == DefenderExclusionKind.IpAddress)
+        {
+            return (Severity.Medium, "Трафик этого адреса не проверяется сетевой защитой.");
+        }
+
+        if (kind == DefenderExclusionKind.Process && InterpreterHeuristics.IsInterpreter(ImageName(target)))
+        {
+            return (Severity.High, "Исключён интерпретатор/скриптовый хост — всё, что он запускает и открывает, не проверяется.");
+        }
+
+        if (kind == DefenderExclusionKind.Extension)
         {
             var ext = target.TrimStart('.', '*').ToLowerInvariant();
             return DangerousExtensions.Contains(ext)
@@ -111,6 +142,13 @@ public sealed class ConfigIntegrityAuditor
         }
 
         return (Severity.Medium, "Нештатное исключение ослабляет защиту.");
+    }
+
+    private static string ImageName(string target)
+    {
+        var t = target.Trim().Trim('"');
+        var idx = t.LastIndexOfAny(['\\', '/']);
+        return idx < 0 ? t : t[(idx + 1)..];
     }
 
     private static bool IsBroadPath(string target)

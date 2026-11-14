@@ -46,4 +46,10 @@ public sealed record FileScanResult
     public IReadOnlyList<Detection> Detections { get; init; } = [];
     public Verdict Verdict { get; init; }
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Причина приоритетной глубокой проверки (например, исключение Defender, под которое попал файл).
+    /// <c>null</c> — обычная проверка.
+    /// </summary>
+    public string? PriorityReason { get; init; }
 }

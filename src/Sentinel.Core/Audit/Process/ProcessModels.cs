@@ -1,3 +1,4 @@
+using Sentinel.Core.Audit.Config;
 using Sentinel.Core.Scanning;
 
 namespace Sentinel.Core.Audit.Process;
@@ -43,6 +44,9 @@ public sealed record ProcessAuditEntry(
     IReadOnlyList<AuditFinding> Findings,
     FileScanResult? FileScan)
 {
+    /// <summary>Исключения встроенной защиты, под которые попал процесс (пусто — обычная проверка).</summary>
+    public IReadOnlyList<DefenderExclusion> MatchedExclusions { get; init; } = [];
+
     public bool HasFindings => Findings.Count > 0;
 }
 
