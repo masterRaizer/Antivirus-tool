@@ -1,0 +1,37 @@
+{
+  "rules": [
+    {
+      "id": "SNT-MINER-0001",
+      "name": "CryptoMiner_Stratum_Config",
+      "severity": "high",
+      "category": "miner",
+      "description": "Конфигурация или бинарь криптомайнера: протокол Stratum и характерные параметры XMRig",
+      "tags": ["miner", "xmrig"],
+      "strings": [
+        { "id": "$proto_tcp", "text": "stratum+tcp://", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$proto_ssl", "text": "stratum+ssl://", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$cfg_donate", "text": "\"donate-level\"", "nocase": true },
+        { "id": "$cfg_randomx", "text": "randomx", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$cfg_nicehash", "text": "\"nicehash\"", "nocase": true },
+        { "id": "$cfg_cpu_max", "text": "--cpu-max-threads-hint", "nocase": true }
+      ],
+      "condition": "1 of ($proto*) and 1 of ($cfg*)"
+    },
+    {
+      "id": "SNT-MINER-0002",
+      "name": "CryptoMiner_Pool_Domains",
+      "severity": "medium",
+      "category": "miner",
+      "description": "Ссылки на популярные публичные майнинг-пулы Monero",
+      "tags": ["miner"],
+      "strings": [
+        { "id": "$p1", "text": "pool.minexmr.com", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p2", "text": "xmr.2miners.com", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p3", "text": "pool.supportxmr.com", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p4", "text": "xmr-eu1.nanopool.org", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p5", "text": "gulf.moneroocean.stream", "nocase": true, "ascii": true, "wide": true }
+      ],
+      "condition": "any of them"
+    }
+  ]
+}

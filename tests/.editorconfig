@@ -1,0 +1,7 @@
+[*.cs]
+# Имена тестов в стиле Method_Condition_Result
+dotnet_diagnostic.CA1707.severity = none
+# Константные массивы в ожидаемых значениях тестов
+dotnet_diagnostic.CA1861.severity = none
+# Тестовые классы xUnit должны быть public
+dotnet_diagnostic.CA1515.severity = none
