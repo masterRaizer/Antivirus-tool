@@ -12,6 +12,8 @@ using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Detection;
 using Sentinel.Core.Hashing;
 using Sentinel.Core.Pe;
+using Sentinel.Core.Remediation;
+using Sentinel.Core.Reporting;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Signatures;
 using Sentinel.Core.Testing;
@@ -48,6 +50,12 @@ internal static class Program
             return ExitError;
         }
 
+        if (opts.DryRun && !opts.Remediate)
+        {
+            Console.Error.WriteLine("Ошибка: --dry-run используется только вместе с --remediate.");
+            return ExitError;
+        }
+
         try
         {
             return args[0] switch
@@ -60,10 +68,12 @@ internal static class Program
                 "audit-processes" => AuditProcesses(opts),
                 "audit-startup" => AuditStartup(opts),
                 "audit-config" => AuditConfig(opts),
+                "quarantine" => Quarantine(opts),
+                "rollback" => Rollback(opts),
                 _ => Unknown(args[0]),
             };
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException)
         {
             Console.Error.WriteLine($"Ошибка: {ex.Message}");
             return ExitError;
@@ -83,17 +93,34 @@ internal static class Program
             Sentinel — системный аудитор и сканер безопасности
 
             Использование:
-              sentinel scan <путь> [--rules <каталог>] [--json] [--no-recurse] [--max-size <МБ>]
+              sentinel scan <путь> [--rules <каталог>] [--json] [--no-recurse] [--max-size <МБ>] [действия] [отчёт]
               sentinel hash <файл>                 SHA-256 и энтропия Шеннона
               sentinel pe <файл> [--json]          разбор PE-заголовков
               sentinel rules [--rules <каталог>]   загрузка и валидация правил
               sentinel selftest [--rules <каталог>] самопроверка на синтетических артефактах (EICAR, PE-заглушки)
-              sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan]
+              sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan] [действия] [отчёт]
                                                    аудит активных процессов (только Windows)
-              sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan]
+              sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan] [действия] [отчёт]
                                                    аудит автозагрузки и персистентности (только Windows)
-              sentinel audit-config [--json]       аудит целостности конфигурации безопасности
-                                                   (исключения защиты, брандмауэр, корневые сертификаты, прокси; только Windows)
+              sentinel audit-config [--rules <каталог>] [--json] [действия] [отчёт]
+                                                   аудит конфигурации безопасности (исключения защиты, брандмауэр,
+                                                   корневые сертификаты, прокси) с приоритетной глубокой проверкой
+                                                   файлов и процессов под исключениями Defender (только Windows)
+              sentinel quarantine list [--json]    записи карантина
+              sentinel quarantine restore <id> [--overwrite]
+                                                   вернуть файл на исходное место (с проверкой SHA-256)
+              sentinel rollback list [--json]      резервные копии изменённых параметров
+              sentinel rollback undo <id>          отменить изменение конфигурации/автозагрузки
+
+            Действия:
+              --remediate            нейтрализация: завершение деревьев процессов (находки High+), изоляция файлов
+                                     в карантин (детекты Medium+), откат автозагрузки и удаление исключений Defender
+              --dry-run              вместе с --remediate: только показать, что было бы сделано, без изменений
+              --data-dir <каталог>   каталог данных (карантин и манифест отката); по умолчанию %ProgramData%\Sentinel
+
+            Отчёт:
+              --report-html <путь>   самодостаточный HTML-отчёт (тёмная тема, фильтры)
+              --report-json <путь>   структурированный JSON-отчёт
 
             Коды возврата: 0 — чисто, 1 — обнаружены угрозы/подозрения, 2 — ошибка.
             """);
@@ -158,6 +185,7 @@ internal static class Program
             Console.WriteLine($"Правил загружено: {rules.Rules.Count} (ошибок: {rules.Errors.Count})");
         }
 
+        var session = new Session("scan", opts);
         var results = new List<FileScanResult>();
         foreach (var file in files)
         {
@@ -171,14 +199,24 @@ internal static class Program
 
         var flagged = results.Count(r => r.Verdict is Verdict.Malicious or Verdict.Suspicious);
         var errors = results.Count(r => r.Verdict == Verdict.Error);
+        session.Report.AddFileScan("Файлы", results);
+        if (opts.Remediate)
+        {
+            // Для файлового сканирования достаточно карантина — он работает на любой ОС.
+            using var response = session.CreateResponse(analyzer.Whitelist, requireEngine: false);
+            response.Coordinator.HandleFilesAsync(results).GetAwaiter().GetResult();
+        }
+
+        var report = session.Finish();
         if (opts.Json)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { scanned = results.Count, flagged, errors, results }, JsonOptions));
+            Console.WriteLine(JsonSerializer.Serialize(new { scanned = results.Count, flagged, errors, results, actions = ActionSummary(report, opts) }, JsonOptions));
         }
         else
         {
             Console.WriteLine();
             Console.WriteLine($"Проверено файлов: {results.Count}; угроз/подозрений: {flagged}; ошибок: {errors}");
+            PrintActions(report, opts);
         }
 
         return flagged > 0 ? ExitDetected : ExitOk;
@@ -358,13 +396,23 @@ internal static class Program
             new ProcessAuditorOptions { AnalyzeExecutable = !opts.NoFileScan },
             opts.NoFileScan ? null : analyzer);
 
+        var session = new Session("audit-processes", opts);
         var processes = provider.GetProcesses();
         var report = auditor.Audit(processes);
+        session.Report.AddProcessAudit(report);
+        if (opts.Remediate)
+        {
+            using var response = session.CreateResponse(analyzer.Whitelist, requireEngine: true);
+            response.Coordinator.HandleProcessesAsync(report).GetAwaiter().GetResult();
+        }
+
+        var final = session.Finish();
 
         if (opts.Json)
         {
             Console.WriteLine(JsonSerializer.Serialize(new
             {
+                actions = ActionSummary(final, opts),
                 processes = report.ProcessCount,
                 flagged = report.FlaggedCount,
                 entries = report.Flagged.Select(e => new
@@ -393,6 +441,8 @@ internal static class Program
                     Console.WriteLine($"             {f.Description}");
                 }
             }
+
+            PrintActions(final, opts);
         }
 
         return report.FlaggedCount > 0 ? ExitDetected : ExitOk;
@@ -414,12 +464,22 @@ internal static class Program
             new WindowsWmiSubscriptionProvider(),
             opts.NoFileScan ? null : analyzer);
 
+        var session = new Session("audit-startup", opts);
         var report = auditor.Audit();
+        session.Report.AddPersistenceAudit(report);
+        if (opts.Remediate)
+        {
+            using var response = session.CreateResponse(analyzer.Whitelist, requireEngine: true);
+            response.Coordinator.HandlePersistenceAsync(report).GetAwaiter().GetResult();
+        }
+
+        var final = session.Finish();
 
         if (opts.Json)
         {
             Console.WriteLine(JsonSerializer.Serialize(new
             {
+                actions = ActionSummary(final, opts),
                 total = report.Count,
                 flagged = report.FlaggedCount,
                 entries = report.Flagged.Select(e => new
@@ -453,6 +513,8 @@ internal static class Program
                     Console.WriteLine($"              {f.Description}");
                 }
             }
+
+            PrintActions(final, opts);
         }
 
         return report.FlaggedCount > 0 ? ExitDetected : ExitOk;
@@ -471,12 +533,46 @@ internal static class Program
             RegistryProviderFactory.CreateDefault(),
             new WindowsRootCertificateProvider());
 
+        var session = new Session("audit-config", opts);
         var report = auditor.Audit();
+        session.Report.AddConfigAudit(report);
+
+        // Связная проверка: всё, что исключено из встроенной защиты, проверяется в первую очередь и глубоко.
+        var (_, analyzer) = CreateAnalyzer(opts, printRuleErrors: !opts.Json);
+        ExclusionScanReport? exclusionScan = null;
+        if (report.DefenderExclusions.Count > 0)
+        {
+            var scanner = new ExclusionPriorityScanner(analyzer, new ProcessAuditor(new ProcessAuditorOptions(), analyzer));
+            exclusionScan = scanner.Scan(report.DefenderExclusions, ProcessProviderFactory.CreateDefault(TimeSpan.Zero).GetProcesses());
+            session.Report.AddExclusionScan(exclusionScan);
+            foreach (var p in exclusionScan.ExcludedProcesses)
+            {
+                session.Report.AddProcessFinding(p, "Процессы под исключениями Defender");
+            }
+        }
+
+        if (opts.Remediate)
+        {
+            using var response = session.CreateResponse(analyzer.Whitelist, requireEngine: true);
+            response.Coordinator.HandleConfigAsync(report, exclusionScan).GetAwaiter().GetResult();
+        }
+
+        var final = session.Finish();
 
         if (opts.Json)
         {
             Console.WriteLine(JsonSerializer.Serialize(new
             {
+                actions = ActionSummary(final, opts),
+                excluded = exclusionScan?.Entries.Select(e => new
+                {
+                    exclusion = e.Exclusion.ToString(),
+                    filesScanned = e.Files.Count,
+                    flagged = e.FlaggedFiles.Select(f => new { f.Path, f.Sha256, verdict = f.Verdict.ToString() }),
+                    processes = e.Processes.Select(p => p.Process.Pid),
+                    e.Truncated,
+                    e.Note,
+                }),
                 total = report.Count,
                 findings = report.Findings.Select(f => new
                 {
@@ -502,9 +598,253 @@ internal static class Program
                     Console.WriteLine($"             {f.Finding.Description}");
                 }
             }
+
+            if (exclusionScan is not null)
+            {
+                Console.WriteLine();
+                Console.WriteLine("=== Приоритетная проверка областей под исключениями Defender ===");
+                foreach (var e in exclusionScan.Entries)
+                {
+                    Console.WriteLine($"  {e.Exclusion}: файлов проверено {e.Files.Count}, угроз/подозрений {e.FlaggedFiles.Count()}, процессов {e.Processes.Count}"
+                        + (e.Truncated ? " (обход усечён)" : string.Empty));
+                    if (e.Note is not null)
+                    {
+                        Console.WriteLine($"      {e.Note}");
+                    }
+
+                    foreach (var file in e.FlaggedFiles)
+                    {
+                        PrintResult(file);
+                    }
+                }
+            }
+
+            PrintActions(final, opts);
         }
 
         return report.Count > 0 ? ExitDetected : ExitOk;
+    }
+
+    // ---- Карантин и откат ------------------------------------------------------
+
+    private static string DataDirectory(CliOptions opts) =>
+        opts.DataDir is not null
+            ? Path.GetFullPath(opts.DataDir)
+            : Path.GetDirectoryName(QuarantineOptions.CreateDefault().QuarantineDirectory)!;
+
+    private static QuarantineManager CreateQuarantine(CliOptions opts, Sentinel.Core.Trust.IWhitelistProvider whitelist) =>
+        new(whitelist, new QuarantineOptions { QuarantineDirectory = Path.Combine(DataDirectory(opts), "Quarantine") });
+
+    private static SystemWhitelist DefaultWhitelist() =>
+        new(SignatureVerifierFactory.CreateDefault(), WhitelistOptions.CreateDefault());
+
+    private static int Quarantine(CliOptions opts)
+    {
+        using var manager = CreateQuarantine(opts, DefaultWhitelist());
+        switch (opts.Target)
+        {
+            case "list":
+            {
+                var records = manager.ListAsync().GetAwaiter().GetResult();
+                if (opts.Json)
+                {
+                    // Ключ преобразования в вывод не попадает — он нужен только самому карантину.
+                    Console.WriteLine(JsonSerializer.Serialize(records.Select(r => new
+                    {
+                        r.Id, r.State, r.OriginalPath, r.Sha256, r.Size, r.QuarantinedAtUtc, r.RestoredAtUtc, r.Reason,
+                    }), JsonOptions));
+                    return ExitOk;
+                }
+
+                Console.WriteLine($"Каталог карантина: {manager.QuarantineDirectory}");
+                if (records.Count == 0)
+                {
+                    Console.WriteLine("Карантин пуст.");
+                    return ExitOk;
+                }
+
+                foreach (var r in records)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"{r.Id}  [{(r.State == QuarantineState.Quarantined ? "в карантине" : "восстановлен")}]  {r.QuarantinedAtUtc:u}");
+                    Console.WriteLine($"   путь    : {r.OriginalPath}");
+                    Console.WriteLine($"   SHA-256 : {r.Sha256}  ({r.Size} байт)");
+                    Console.WriteLine($"   причина : {r.Reason}");
+                }
+
+                return ExitOk;
+            }
+
+            case "restore":
+            {
+                if (opts.Argument is null)
+                {
+                    Console.Error.WriteLine("Укажите идентификатор записи: sentinel quarantine restore <id>");
+                    return ExitError;
+                }
+
+                var result = manager.RestoreAsync(opts.Argument, opts.Overwrite).GetAwaiter().GetResult();
+                (result.Success ? Console.Out : Console.Error).WriteLine(result.Message);
+                return result.Success ? ExitOk : ExitError;
+            }
+
+            default:
+                Console.Error.WriteLine("Использование: sentinel quarantine list | sentinel quarantine restore <id>");
+                return ExitError;
+        }
+    }
+
+    private static int Rollback(CliOptions opts)
+    {
+        var options = RemediationOptions.CreateDefault(DataDirectory(opts));
+        switch (opts.Target)
+        {
+            case "list":
+            {
+                var entries = new RollbackManifestStore(options.RollbackManifestPath).Load();
+                if (opts.Json)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(entries, JsonOptions));
+                    return ExitOk;
+                }
+
+                Console.WriteLine($"Манифест отката: {options.RollbackManifestPath}");
+                if (entries.Count == 0)
+                {
+                    Console.WriteLine("Записей нет.");
+                }
+
+                foreach (var e in entries.OrderByDescending(e => e.TimestampUtc))
+                {
+                    Console.WriteLine($"{e.Id}  [{(e.UndoneAtUtc is null ? "применено" : "отменено")}]  {e.TimestampUtc:u}  {e.Kind}: {e.Target}{(e.Name is null ? "" : " → " + e.Name)}");
+                }
+
+                return ExitOk;
+            }
+
+            case "undo":
+            {
+                if (opts.Argument is null)
+                {
+                    Console.Error.WriteLine("Укажите идентификатор записи: sentinel rollback undo <id>");
+                    return ExitError;
+                }
+
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.Error.WriteLine("Отмена изменений конфигурации доступна только в Windows.");
+                    return ExitError;
+                }
+
+                var action = RemediationEngine.CreateDefault(DefaultWhitelist(), options).Undo(opts.Argument);
+                (action.Success ? Console.Out : Console.Error).WriteLine($"{action.Target}: {action.Message}");
+                return action.Success ? ExitOk : ExitError;
+            }
+
+            default:
+                Console.Error.WriteLine("Использование: sentinel rollback list | sentinel rollback undo <id>");
+                return ExitError;
+        }
+    }
+
+    // ---- Сеанс: отчёт и нейтрализация ------------------------------------------
+
+    private static object? ActionSummary(SentinelReport report, CliOptions opts) =>
+        opts.Remediate
+            ? new
+            {
+                mode = report.Mode,
+                quarantined = report.Quarantined,
+                terminated = report.ProcessesTerminated,
+                cleaned = report.ConfigCleaned,
+                findings = report.Findings
+                    .Where(f => f.ActionStatus != FindingActionStatus.Detected)
+                    .Select(f => new { f.Name, f.Path, status = f.ActionStatus.ToString(), f.ActionMessage }),
+            }
+            : null;
+
+    private static void PrintActions(SentinelReport report, CliOptions opts)
+    {
+        if (!opts.Remediate)
+        {
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(opts.DryRun ? "=== Предпросмотр нейтрализации (изменений нет) ===" : "=== Нейтрализация ===");
+        var acted = report.Findings.Where(f => f.ActionStatus != FindingActionStatus.Detected).ToArray();
+        if (acted.Length == 0)
+        {
+            Console.WriteLine("  Действий не требуется.");
+        }
+
+        foreach (var f in acted)
+        {
+            Console.WriteLine($"  [{ReportGenerator.StatusLabel(f.ActionStatus)}] {f.Name}");
+            if (!string.IsNullOrEmpty(f.ActionMessage))
+            {
+                Console.WriteLine($"      {f.ActionMessage}");
+            }
+        }
+
+        if (!opts.DryRun)
+        {
+            Console.WriteLine($"  Изолировано: {report.Quarantined}; процессов завершено: {report.ProcessesTerminated}; параметров очищено: {report.ConfigCleaned}");
+            Console.WriteLine("  Отмена: sentinel quarantine restore <id> / sentinel rollback undo <id>");
+        }
+    }
+
+    /// <summary>Один запуск команды: сборщик отчёта, таймер и (по требованию) средства нейтрализации.</summary>
+    private sealed class Session
+    {
+        private readonly CliOptions _opts;
+        private readonly System.Diagnostics.Stopwatch _watch = System.Diagnostics.Stopwatch.StartNew();
+
+        public Session(string command, CliOptions opts)
+        {
+            _opts = opts;
+            Report = new ReportBuilder(command + (opts.Target is null ? string.Empty : " " + opts.Target)
+                + (opts.Remediate ? " --remediate" : string.Empty) + (opts.DryRun ? " --dry-run" : string.Empty));
+        }
+
+        public ReportBuilder Report { get; }
+
+        public Response CreateResponse(Sentinel.Core.Trust.IWhitelistProvider? analyzerWhitelist, bool requireEngine)
+        {
+            // Карантин и нейтрализация обязаны работать с белым списком: без него действия не выполняются.
+            var whitelist = analyzerWhitelist ?? DefaultWhitelist();
+            var quarantine = CreateQuarantine(_opts, whitelist);
+            RemediationEngine? engine = null;
+            if (requireEngine || OperatingSystem.IsWindows())
+            {
+                engine = RemediationEngine.CreateDefault(whitelist, RemediationOptions.CreateDefault(DataDirectory(_opts), _opts.DryRun));
+            }
+
+            return new Response(quarantine, new ResponseCoordinator(quarantine, engine, Report, new ResponsePolicy { DryRun = _opts.DryRun }));
+        }
+
+        public SentinelReport Finish()
+        {
+            var report = Report.Build(_watch.Elapsed, !_opts.Remediate ? "audit" : _opts.DryRun ? "dry-run" : "remediate");
+            if (_opts.ReportJson is not null)
+            {
+                ReportGenerator.WriteJson(report, _opts.ReportJson);
+                Console.Error.WriteLine($"JSON-отчёт: {Path.GetFullPath(_opts.ReportJson)}");
+            }
+
+            if (_opts.ReportHtml is not null)
+            {
+                ReportGenerator.WriteHtml(report, _opts.ReportHtml);
+                Console.Error.WriteLine($"HTML-отчёт: {Path.GetFullPath(_opts.ReportHtml)}");
+            }
+
+            return report;
+        }
+    }
+
+    private sealed record Response(QuarantineManager Quarantine, ResponseCoordinator Coordinator) : IDisposable
+    {
+        public void Dispose() => Quarantine.Dispose();
     }
 }
 
@@ -516,6 +856,15 @@ internal sealed class CliOptions
     public bool Recurse { get; private set; } = true;
     public int MaxSizeMb { get; private set; } = 64;
     public bool NoFileScan { get; private set; }
+    public bool Remediate { get; private set; }
+    public bool DryRun { get; private set; }
+    public bool Overwrite { get; private set; }
+    public string? ReportHtml { get; private set; }
+    public string? ReportJson { get; private set; }
+    public string? DataDir { get; private set; }
+
+    /// <summary>Второй позиционный аргумент (идентификатор для <c>quarantine restore</c> / <c>rollback undo</c>).</summary>
+    public string? Argument { get; private set; }
     public string? Error { get; private set; }
 
     public static CliOptions Parse(string[] args)
@@ -537,6 +886,24 @@ internal sealed class CliOptions
                 case "--no-file-scan":
                     o.NoFileScan = true;
                     break;
+                case "--remediate":
+                    o.Remediate = true;
+                    break;
+                case "--dry-run":
+                    o.DryRun = true;
+                    break;
+                case "--overwrite":
+                    o.Overwrite = true;
+                    break;
+                case "--report-html" when i + 1 < args.Length:
+                    o.ReportHtml = args[++i];
+                    break;
+                case "--report-json" when i + 1 < args.Length:
+                    o.ReportJson = args[++i];
+                    break;
+                case "--data-dir" when i + 1 < args.Length:
+                    o.DataDir = args[++i];
+                    break;
                 case "--max-size" when i + 1 < args.Length:
                     if (!int.TryParse(args[++i], NumberStyles.None, CultureInfo.InvariantCulture, out var mb) || mb is < 1 or > 4096)
                     {
@@ -556,6 +923,10 @@ internal sealed class CliOptions
                     else if (o.Target is null)
                     {
                         o.Target = args[i];
+                    }
+                    else if (o.Argument is null)
+                    {
+                        o.Argument = args[i];
                     }
                     else
                     {

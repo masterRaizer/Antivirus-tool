@@ -51,6 +51,36 @@ sentinel audit-config    [--json]                                        # то�
 - **`ConfigIntegrityAuditor`** — исключения встроенной защиты (Windows Defender), разрешающие
   правила брандмауэра, нештатные корневые сертификаты (store `Root`) и настройки системного прокси.
 
+## Этап 3: нейтрализация, карантин и отчёты
+
+Окружение Linux: `scripts/setup-linux.sh` (ставит `dotnet-sdk-8.0` через apt, `--check` — только проверка).
+
+- **Связная проверка исключений** — `ConfigIntegrityAuditor` отдаёт все `ExclusionPath` / `ExclusionProcess` /
+  `ExclusionExtension` / `ExclusionIpAddress`; `ExclusionPriorityScanner` передаёт их в `FileAnalyzer`
+  (глубокий режим: без обычного лимита размера, подпись проверяется всегда, неподписанный исполняемый
+  код под исключением — подозрение) и в `ProcessAuditor` (такие процессы проверяются первыми,
+  находка `PROC-DEFENDER-EXCLUDED`). `SystemWhitelist` исключения не читает вовсе.
+- **`QuarantineManager`** — проверка белого списка до любых изменений, снятие `ReadOnly`/`Hidden`/`System`,
+  SHA-256, XOR-контейнер (проверяется обратным декодированием до удаления оригинала),
+  `quarantine_manifest.json`, `RestoreAsync(id)` со сверкой SHA-256 и возвратом атрибутов.
+- **`RemediationEngine`** — завершение дерева процессов (`TerminateProcess`; белый список, критические
+  процессы и сам Sentinel защищены), откат `Run`/`RunOnce`, `Winlogon`, IFEO, служб (отключение, `Start=4`),
+  задач планировщика (`schtasks`, копия XML) и `hosts`; удаление исключений Defender методом
+  `MSFT_MpPreference.Remove` (`root\Microsoft\Windows\Defender`). Каждое изменение сначала сохраняется
+  в `rollback_manifest.json`; `Undo(id)` возвращает прежнее значение.
+- **`ReportGenerator`** — JSON и самодостаточный HTML (тёмная тема, без внешних ресурсов, CSP `default-src 'none'`).
+
+```
+sentinel scan <путь> --remediate --dry-run          # предпросмотр без изменений
+sentinel scan <путь> --remediate --report-html r.html --report-json r.json
+sentinel audit-config --remediate                   # файлы/процессы под исключениями + сами исключения
+sentinel quarantine list | quarantine restore <id>
+sentinel rollback list   | rollback undo <id>
+```
+
+Пороги `--remediate`: карантин — детекты Medium+, завершение процессов — находки High+, откат автозагрузки — Medium+.
+Данные (карантин, манифесты) — в `%ProgramData%\Sentinel` либо в `--data-dir`.
+
 Интеграционные тесты для Windows работают только в изолированной ветке `HKCU\Software\TestAV`
 (на других ОС помечаются как пропущенные).
 
@@ -66,6 +96,8 @@ JSON: см. `rules/miners.json`.
 ## Безопасность
 
 - Анализатор только читает файлы (`FileShare.ReadWrite | Delete`), никогда их не изменяет.
+- Изменяют систему только `QuarantineManager` и `RemediationEngine`, только по `--remediate`, и каждое
+  действие обратимо (манифест карантина / манифест отката).
 - Белый список срабатывает только при одновременном выполнении: путь (после разрешения ссылок) в
   защищённом каталоге + действительная подпись + доверенный издатель (Microsoft). На ОС без WinTrust — fail-closed.
 - Тесты используют только безопасные артефакты: EICAR (собирается в рантайме) и PE-заглушки без кода.

@@ -59,6 +59,9 @@ public sealed class FileAnalyzer
         _options = options ?? new FileAnalyzerOptions();
     }
 
+    /// <summary>Белый список, с которым работает анализатор (его же обязаны использовать карантин и нейтрализация).</summary>
+    public IWhitelistProvider? Whitelist => _whitelist;
+
     public FileScanResult Analyze(string path) => Analyze(path, null);
 
     /// <summary>

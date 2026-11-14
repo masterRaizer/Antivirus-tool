@@ -146,6 +146,16 @@ public sealed class ReportBuilder
         return AddArea(areaName, results.Count, added, errors > 0 ? $"ошибок чтения: {errors}" : null);
     }
 
+    /// <summary>
+    /// Гарантирует, что файл представлен отдельной находкой (например, образ завершённого процесса),
+    /// чтобы итог его изоляции попал в отчёт. Чистые файлы не добавляются.
+    /// </summary>
+    public bool EnsureFileFinding(string areaName, FileScanResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return result.Detections.Count > 0 && AddFileFinding(areaName, result);
+    }
+
     private bool AddFileFinding(string areaName, FileScanResult r)
     {
         var key = FileKey(r.Path);
@@ -182,24 +192,37 @@ public sealed class ReportBuilder
         ArgumentNullException.ThrowIfNull(report);
         foreach (var e in report.Flagged)
         {
-            var top = e.Findings.OrderByDescending(f => f.Severity).First();
-            _findings.Add(new ReportFinding
-            {
-                Key = ProcessKey(e.Process.Pid),
-                Area = "Процессы",
-                Name = $"{e.Process.Name} (PID {e.Process.Pid})",
-                Path = e.Process.ExecutablePath,
-                Sha256 = e.FileScan?.Sha256,
-                Entropy = e.FileScan?.Entropy,
-                SignatureStatus = e.FileScan is null ? "не проверялась" : DescribeSignature(e.FileScan),
-                Rule = string.Join("; ", e.Findings.Select(f => f.Id).Distinct()),
-                Severity = top.Severity,
-                Description = string.Join(" ", e.Findings.Select(f => f.Description)),
-                Evidence = e.Findings.SelectMany(f => f.Evidence).Distinct().ToArray(),
-            });
+            AddProcessFinding(e, "Процессы");
         }
 
         return AddArea("Процессы", report.ProcessCount, report.FlaggedCount);
+    }
+
+    /// <summary>Добавляет находку по одному процессу (если у него есть находки и он ещё не учтён).</summary>
+    public bool AddProcessFinding(ProcessAuditEntry entry, string areaName)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        var key = ProcessKey(entry.Process.Pid);
+        if (!entry.HasFindings || _findings.Any(f => f.Key == key))
+        {
+            return false;
+        }
+
+        _findings.Add(new ReportFinding
+        {
+            Key = key,
+            Area = areaName,
+            Name = $"{entry.Process.Name} (PID {entry.Process.Pid})",
+            Path = entry.Process.ExecutablePath,
+            Sha256 = entry.FileScan?.Sha256,
+            Entropy = entry.FileScan?.Entropy,
+            SignatureStatus = entry.FileScan is null ? "не проверялась" : DescribeSignature(entry.FileScan),
+            Rule = string.Join("; ", entry.Findings.Select(f => f.Id).Distinct()),
+            Severity = entry.Findings.Max(f => f.Severity),
+            Description = string.Join(" ", entry.Findings.Select(f => f.Description)),
+            Evidence = entry.Findings.SelectMany(f => f.Evidence).Distinct().ToArray(),
+        });
+        return true;
     }
 
     public ReportBuilder AddPersistenceAudit(PersistenceAuditReport report)
