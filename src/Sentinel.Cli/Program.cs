@@ -3,6 +3,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Sentinel.Core.Analysis;
+using Sentinel.Core.Audit.Persistence;
+using Sentinel.Core.Audit.Persistence.Registry;
+using Sentinel.Core.Audit.Persistence.Tasks;
+using Sentinel.Core.Audit.Persistence.Wmi;
 using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Detection;
 using Sentinel.Core.Hashing;
@@ -53,6 +57,7 @@ internal static class Program
                 "rules" => Rules(opts),
                 "selftest" => SelfTest(opts),
                 "audit-processes" => AuditProcesses(opts),
+                "audit-startup" => AuditStartup(opts),
                 _ => Unknown(args[0]),
             };
         }
@@ -83,6 +88,8 @@ internal static class Program
               sentinel selftest [--rules <каталог>] самопроверка на синтетических артефактах (EICAR, PE-заглушки)
               sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan]
                                                    аудит активных процессов (только Windows)
+              sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan]
+                                                   аудит автозагрузки и персистентности (только Windows)
 
             Коды возврата: 0 — чисто, 1 — обнаружены угрозы/подозрения, 2 — ошибка.
             """);
@@ -380,6 +387,66 @@ internal static class Program
                 {
                     Console.WriteLine($"  [{f.Severity,-8}] {f.Id,-18} {f.Title}");
                     Console.WriteLine($"             {f.Description}");
+                }
+            }
+        }
+
+        return report.FlaggedCount > 0 ? ExitDetected : ExitOk;
+    }
+
+    private static int AuditStartup(CliOptions opts)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.Error.WriteLine("Аудит автозагрузки доступен только в Windows (реестр, планировщик, WMI).");
+            return ExitError;
+        }
+
+        var (_, analyzer) = CreateAnalyzer(opts, printRuleErrors: !opts.Json);
+        var auditor = new PersistenceAuditor(
+            PersistenceAuditorOptions.CreateDefault(),
+            RegistryProviderFactory.CreateDefault(),
+            new WindowsTaskSchedulerProvider(),
+            new WindowsWmiSubscriptionProvider(),
+            opts.NoFileScan ? null : analyzer);
+
+        var report = auditor.Audit();
+
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                total = report.Count,
+                flagged = report.FlaggedCount,
+                entries = report.Flagged.Select(e => new
+                {
+                    kind = e.Kind.ToString(),
+                    e.Location,
+                    e.Name,
+                    e.Command,
+                    e.ResolvedTarget,
+                    severity = e.MaxSeverity.ToString(),
+                    verdict = e.FileScan?.Verdict,
+                    findings = e.Findings,
+                }),
+            }, JsonOptions));
+        }
+        else
+        {
+            Console.WriteLine($"Точек автозапуска проверено: {report.Count}; с находками: {report.FlaggedCount}");
+            foreach (var e in report.Flagged.OrderByDescending(x => x.MaxSeverity))
+            {
+                Console.WriteLine();
+                Console.WriteLine($"[{e.Kind}] {e.Name}  ({e.Location})");
+                if (!string.IsNullOrEmpty(e.Command))
+                {
+                    Console.WriteLine($"   команда: {e.Command}");
+                }
+
+                foreach (var f in e.Findings.OrderByDescending(f => f.Severity))
+                {
+                    Console.WriteLine($"   [{f.Severity,-8}] {f.Id,-24} {f.Title}");
+                    Console.WriteLine($"              {f.Description}");
                 }
             }
         }

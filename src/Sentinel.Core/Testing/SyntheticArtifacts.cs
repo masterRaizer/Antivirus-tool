@@ -137,6 +137,69 @@ public static class SyntheticArtifacts
         "{\n  \"autosave\": true,\n  \"donate-level\": 1,\n  \"randomx\": { \"mode\": \"auto\" },\n" +
         "  \"pools\": [ { \"url\": \"stratum+tcp://127.0.0.1:3333\", \"user\": \"SENTINEL-TEST\" } ]\n}\n");
 
+    /// <summary>
+    /// Строит минимальный, корректный по формату ярлык Windows (.lnk) с заданной целью и
+    /// (опционально) аргументами. Путь цели кодируется в LinkInfo (ANSI), аргументы — в StringData (Unicode).
+    /// Используется для тестирования разбора ярлыков автозагрузки.
+    /// </summary>
+    public static byte[] BuildShellLink(string targetPath, string? arguments = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(targetPath);
+        var hasArgs = !string.IsNullOrEmpty(arguments);
+        using var ms = new MemoryStream();
+
+        // ShellLinkHeader
+        var header = new byte[0x4C];
+        BinaryPrimitives.WriteInt32LittleEndian(header, 0x4C);
+        byte[] clsid =
+        [
+            0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+        ];
+        clsid.CopyTo(header, 4);
+        uint flags = 0x2; // HasLinkInfo
+        if (hasArgs)
+        {
+            flags |= 0x20 | 0x80; // HasArguments | IsUnicode
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x14), flags);
+        ms.Write(header);
+
+        // LinkInfo (без VolumeID/Network; только LocalBasePath + пустой CommonPathSuffix)
+        var pathBytes = Encoding.ASCII.GetBytes(targetPath);
+        const int headerSize = 0x1C;
+        var localBasePathOffset = headerSize;
+        var commonPathSuffixOffset = headerSize + pathBytes.Length + 1;
+        var linkInfoSize = commonPathSuffixOffset + 1;
+
+        var linkInfo = new byte[linkInfoSize];
+        BinaryPrimitives.WriteUInt32LittleEndian(linkInfo.AsSpan(0), (uint)linkInfoSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(linkInfo.AsSpan(4), headerSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(linkInfo.AsSpan(8), 0x1); // VolumeIDAndLocalBasePath
+        BinaryPrimitives.WriteUInt32LittleEndian(linkInfo.AsSpan(12), 0); // VolumeIDOffset
+        BinaryPrimitives.WriteUInt32LittleEndian(linkInfo.AsSpan(16), (uint)localBasePathOffset);
+        BinaryPrimitives.WriteUInt32LittleEndian(linkInfo.AsSpan(20), 0); // CommonNetworkRelativeLinkOffset
+        BinaryPrimitives.WriteUInt32LittleEndian(linkInfo.AsSpan(24), (uint)commonPathSuffixOffset);
+        pathBytes.CopyTo(linkInfo.AsSpan(localBasePathOffset));
+        // завершающие нули уже на месте
+        ms.Write(linkInfo);
+
+        // StringData: COMMAND_LINE_ARGUMENTS (Unicode)
+        if (hasArgs)
+        {
+            var argBytes = Encoding.Unicode.GetBytes(arguments!);
+            var count = new byte[2];
+            BinaryPrimitives.WriteUInt16LittleEndian(count, (ushort)arguments!.Length);
+            ms.Write(count);
+            ms.Write(argBytes);
+        }
+
+        // Терминальный ExtraData-блок (размер < 4 → конец)
+        ms.Write(new byte[] { 0, 0, 0, 0 });
+        return ms.ToArray();
+    }
+
     private static void WriteSection(Span<byte> s, string name, uint virtualSize, uint va, uint rawSize, uint rawPtr, uint flags)
     {
         Encoding.ASCII.GetBytes(name).CopyTo(s);
