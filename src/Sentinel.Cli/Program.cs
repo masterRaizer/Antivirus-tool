@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Sentinel.Core.Analysis;
+using Sentinel.Core.Audit.Config;
 using Sentinel.Core.Audit.Persistence;
 using Sentinel.Core.Audit.Persistence.Registry;
 using Sentinel.Core.Audit.Persistence.Tasks;
@@ -58,6 +59,7 @@ internal static class Program
                 "selftest" => SelfTest(opts),
                 "audit-processes" => AuditProcesses(opts),
                 "audit-startup" => AuditStartup(opts),
+                "audit-config" => AuditConfig(opts),
                 _ => Unknown(args[0]),
             };
         }
@@ -90,6 +92,8 @@ internal static class Program
                                                    аудит активных процессов (только Windows)
               sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan]
                                                    аудит автозагрузки и персистентности (только Windows)
+              sentinel audit-config [--json]       аудит целостности конфигурации безопасности
+                                                   (исключения защиты, брандмауэр, корневые сертификаты, прокси; только Windows)
 
             Коды возврата: 0 — чисто, 1 — обнаружены угрозы/подозрения, 2 — ошибка.
             """);
@@ -452,6 +456,55 @@ internal static class Program
         }
 
         return report.FlaggedCount > 0 ? ExitDetected : ExitOk;
+    }
+
+    private static int AuditConfig(CliOptions opts)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.Error.WriteLine("Аудит конфигурации доступен только в Windows (реестр, хранилище сертификатов).");
+            return ExitError;
+        }
+
+        var auditor = new ConfigIntegrityAuditor(
+            ConfigIntegrityAuditorOptions.CreateDefault(),
+            RegistryProviderFactory.CreateDefault(),
+            new WindowsRootCertificateProvider());
+
+        var report = auditor.Audit();
+
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                total = report.Count,
+                findings = report.Findings.Select(f => new
+                {
+                    area = f.Area.ToString(),
+                    severity = f.Severity.ToString(),
+                    f.Finding.Id,
+                    f.Finding.Title,
+                    f.Finding.Description,
+                    f.Finding.Evidence,
+                }),
+            }, JsonOptions));
+        }
+        else
+        {
+            Console.WriteLine($"Находок по конфигурации: {report.Count}");
+            foreach (var group in report.Findings.GroupBy(f => f.Area))
+            {
+                Console.WriteLine();
+                Console.WriteLine($"=== {group.Key} ===");
+                foreach (var f in group.OrderByDescending(x => x.Severity))
+                {
+                    Console.WriteLine($"  [{f.Severity,-8}] {f.Finding.Id,-20} {f.Finding.Title}");
+                    Console.WriteLine($"             {f.Finding.Description}");
+                }
+            }
+        }
+
+        return report.Count > 0 ? ExitDetected : ExitOk;
     }
 }
 
