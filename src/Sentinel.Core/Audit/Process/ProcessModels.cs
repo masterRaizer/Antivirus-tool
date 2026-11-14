@@ -28,6 +28,12 @@ public sealed record ProcessSnapshot
     /// <summary>Доля загрузки GPU (0..100). Отрицательное — неизвестно/не измерено.</summary>
     public double GpuPercent { get; init; } = -1;
 
+    /// <summary>
+    /// Время создания процесса (UTC) или <c>null</c>, если недоступно. Позволяет отличить настоящего
+    /// потомка от процесса, чей <see cref="ParentPid"/> совпал с повторно выданным идентификатором.
+    /// </summary>
+    public DateTime? StartTimeUtc { get; init; }
+
     public bool CpuKnown => CpuPercent >= 0;
     public bool GpuKnown => GpuPercent >= 0;
 }

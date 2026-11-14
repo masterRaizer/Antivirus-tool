@@ -58,6 +58,7 @@ public sealed class WindowsProcessProvider : IProcessProvider
                 ParentPid = info.ParentPid,
                 Name = info.Name,
                 ExecutablePath = TryGetImagePath(pid),
+                StartTimeUtc = TryGetStartTime(pid),
                 CommandLine = TryGetCommandLine(pid),
                 CpuPercent = cpu,
                 GpuPercent = -1,
@@ -127,6 +128,30 @@ public sealed class WindowsProcessProvider : IProcessProvider
     }
 
     private static long ToTicks(NativeMethods.FILETIME ft) => ((long)ft.dwHighDateTime << 32) | (uint)ft.dwLowDateTime;
+
+    private static DateTime? TryGetStartTime(int pid)
+    {
+        var handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+        if (handle == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!NativeMethods.GetProcessTimes(handle, out var creation, out _, out _, out _))
+            {
+                return null;
+            }
+
+            var ticks = ToTicks(creation);
+            return ticks > 0 ? DateTime.FromFileTimeUtc(ticks) : null;
+        }
+        finally
+        {
+            NativeMethods.CloseHandle(handle);
+        }
+    }
 
     private static string? TryGetImagePath(int pid)
     {

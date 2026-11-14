@@ -4,7 +4,7 @@ namespace Sentinel.Core.Audit.Persistence.Registry;
 /// Реестр в памяти для unit-тестов (и как эталон семантики провайдера).
 /// Ключи сопоставляются по (куст, представление, нормализованный путь без учёта регистра).
 /// </summary>
-public sealed class InMemoryRegistryProvider : IRegistryProvider
+public sealed class InMemoryRegistryProvider : IRegistryEditor
 {
     private readonly Dictionary<string, List<RegistryValue>> _keys = new(StringComparer.OrdinalIgnoreCase);
 
@@ -27,6 +27,12 @@ public sealed class InMemoryRegistryProvider : IRegistryProvider
         list.Add(new RegistryValue(name, value, kind));
         return this;
     }
+
+    public void SetValue(RegistryKeyPath key, string name, string? value, RegistryValueKind kind) => Set(key, name, value, kind);
+
+    public bool DeleteValue(RegistryKeyPath key, string name) =>
+        _keys.TryGetValue(Key(key), out var list)
+        && list.RemoveAll(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase)) > 0;
 
     /// <summary>Создаёт пустой ключ без значений.</summary>
     public InMemoryRegistryProvider CreateKey(RegistryKeyPath key)
