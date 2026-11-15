@@ -17,6 +17,9 @@ using Sentinel.Core.Reporting;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Settings;
 using Sentinel.Core.Signatures;
+using Sentinel.Core.ThreatIntel;
+using Sentinel.Core.Scanning.Pool;
+using Sentinel.Core.Runtime;
 using Sentinel.Core.Testing;
 using Sentinel.Core.Trust;
 
@@ -37,6 +40,12 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        // Рабочий процесс пула: общение только через Named Pipe, в консоль ничего не пишется.
+        if (args.Length > 0 && args[0] == "--scan-worker")
+        {
+            return RunScanWorker(args);
+        }
+
         Console.OutputEncoding = Encoding.UTF8;
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
@@ -72,6 +81,7 @@ internal static class Program
                 "quarantine" => Quarantine(opts),
                 "rollback" => Rollback(opts),
                 "service-status" => ServiceStatus(opts),
+                "threatdb" => ThreatDb(opts),
                 _ => Unknown(args[0]),
             };
         }
@@ -146,21 +156,123 @@ internal static class Program
 
     private static (RuleSet Rules, FileAnalyzer Analyzer) CreateAnalyzer(CliOptions opts, bool printRuleErrors = true)
     {
-        var ruleDir = ResolveRulesDirectory(opts);
-        var rules = RuleLoader.LoadDirectory(ruleDir);
+        var services = SentinelServices.Create(DataDirectory(opts), ResolveRulesDirectory(opts), opts.AllowedExclusions, opts.MaxSizeMb * 1024L * 1024);
         if (printRuleErrors)
         {
-            foreach (var e in rules.Errors)
+            foreach (var e in services.Rules.Errors)
             {
                 Console.Error.WriteLine($"[правила] {e}");
             }
         }
 
-        var verifier = SignatureVerifierFactory.CreateDefault();
-        var whitelist = new SystemWhitelist(verifier, WhitelistOptions.CreateDefault());
-        var analyzer = new FileAnalyzer(new SignatureEngine(rules), verifier, whitelist,
-            new FileAnalyzerOptions { MaxScanBytes = opts.MaxSizeMb * 1024L * 1024 });
-        return (rules, analyzer);
+        return (services.Rules, services.Analyzer);
+    }
+
+    /// <summary><c>--scan-worker --pipe &lt;имя&gt; --parent-pid &lt;pid&gt; [--rules каталог] [--data-dir каталог] [--allowed-exclusions файл]</c>.</summary>
+    private static int RunScanWorker(string[] args)
+    {
+        string? pipe = null, rules = null, data = null, allowed = null;
+        var parent = 0;
+        for (var i = 1; i < args.Length - 1; i++)
+        {
+            switch (args[i])
+            {
+                case "--pipe": pipe = args[++i]; break;
+                case "--parent-pid": parent = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
+                case "--rules": rules = args[++i]; break;
+                case "--data-dir": data = args[++i]; break;
+                case "--allowed-exclusions": allowed = args[++i]; break;
+            }
+        }
+
+        if (string.IsNullOrEmpty(pipe) || parent <= 0)
+        {
+            return ExitError;
+        }
+
+        try
+        {
+            // Фоновая проверка не должна мешать работе пользователя.
+            System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or PlatformNotSupportedException or InvalidOperationException)
+        {
+            // приоритет — оптимизация
+        }
+
+        using var services = SentinelServices.Create(data ?? SentinelRuntimeOptions.DefaultDataDirectory(), rules ?? SentinelRuntimeOptions.DefaultRulesDirectory(), allowed);
+        return ScanWorkerHost.RunAsync(pipe, parent, path => services.Analyzer.Analyze(path)).GetAwaiter().GetResult();
+    }
+
+    /// <summary><c>threatdb build --out файл [--signature-base каталог] [--eset каталог]</c>, <c>threatdb info</c>, <c>threatdb lookup &lt;sha256&gt;</c>.</summary>
+    private static int ThreatDb(CliOptions opts)
+    {
+        switch (opts.Target)
+        {
+            case "build":
+            {
+                if (opts.Output is null)
+                {
+                    Console.Error.WriteLine("Укажите файл: sentinel threatdb build --out data/threat_hashes.bin --signature-base <каталог> --eset <каталог>");
+                    return ExitError;
+                }
+
+                var entries = new List<ThreatHashEntry>(ThreatDatabaseSources.Eicar());
+                if (opts.SignatureBaseDir is not null)
+                {
+                    entries.AddRange(ThreatDatabaseSources.FromSignatureBase(opts.SignatureBaseDir));
+                }
+
+                if (opts.EsetDir is not null)
+                {
+                    entries.AddRange(ThreatDatabaseSources.FromEset(opts.EsetDir));
+                }
+
+                var timestamp = opts.Timestamp ?? DateTimeOffset.UtcNow;
+                var count = ThreatHashDatabaseBuilder.BuildToFile(entries, timestamp, opts.Output);
+                using var db = ThreatHashDatabase.Open(opts.Output);
+                Console.WriteLine($"База собрана: {opts.Output} — {count} SHA-256, семейств: {db.FamilyCount}, метка {timestamp:u}.");
+                return ExitOk;
+            }
+
+            case "info":
+            {
+                using var engine = new ThreatIntelligenceEngine(DataDirectory(opts), ThreatIntelligenceEngine.DefaultBundledPath());
+                Console.WriteLine($"Активная база: {engine.ActivePath ?? "нет"}; записей: {engine.Count}; метка: {engine.TimestampUtc:u}");
+                return engine.Count > 0 ? ExitOk : ExitError;
+            }
+
+            case "lookup" when opts.Argument is not null:
+            {
+                using var engine = new ThreatIntelligenceEngine(DataDirectory(opts), ThreatIntelligenceEngine.DefaultBundledPath());
+                if (engine.TryGetFamily(opts.Argument, out var family))
+                {
+                    Console.WriteLine($"Найден: {family}");
+                    return ExitDetected;
+                }
+
+                Console.WriteLine("Не найден в базе угроз.");
+                return ExitOk;
+            }
+
+            case "update":
+            {
+                using var engine = new ThreatIntelligenceEngine(DataDirectory(opts), ThreatIntelligenceEngine.DefaultBundledPath());
+                using var updater = new ThreatFeedUpdater(DataDirectory(opts), SentinelConfigStore.ForDataDirectory(DataDirectory(opts)), engine, SentinelServices.Http);
+                var status = updater.UpdateAsync().GetAwaiter().GetResult();
+                foreach (var source in status.Sources)
+                {
+                    Console.WriteLine($"  [{source.Status}] {source.Name}: хешей {source.Hashes}, сетевых {source.NetworkIndicators}. {source.Message}");
+                }
+
+                Console.WriteLine(status.LastStatus);
+                return status.LastSuccessUtc is null ? ExitError : ExitOk;
+            }
+
+            default:
+                Console.Error.WriteLine("Использование: sentinel threatdb build|info|update|lookup <sha256>");
+                return ExitError;
+        }
     }
 
     private static int Scan(CliOptions opts)
@@ -360,7 +472,7 @@ internal static class Program
                     r => r.Detections.All(d => d.Name != Eicar.DetectionName), "не EICAR (нарушена спецификация)"),
                 ("clean.txt", "Hello, Sentinel!"u8.ToArray(), r => r.Verdict == Verdict.Clean, "Clean"),
                 ("stub-low.exe", SyntheticArtifacts.BuildPe(), r => r.Verdict == Verdict.Clean && r.Pe!.IsPe, "Clean/PE"),
-                ("stub-packed.exe", SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, TextSize = 0x4000 }),
+                ("stub-packed.exe", SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, WritableText = true, TextSize = 0x4000 }),
                     r => r.Verdict == Verdict.Suspicious && r.Detections.Any(d => d.Source == DetectionSource.Heuristic), "Suspicious/Packed"),
                 ("miner-config.json", SyntheticArtifacts.MinerConfigSample(),
                     r => rules.Rules.All(x => x.Id != "SNT-MINER-0001") || r.Detections.Any(d => d.RuleId == "SNT-MINER-0001"), "SNT-MINER-0001"),
@@ -916,6 +1028,10 @@ internal sealed class CliOptions
     public string? DataDir { get; private set; }
     public string? AllowedExclusions { get; private set; }
     public string? Pipe { get; private set; }
+    public string? Output { get; private set; }
+    public string? SignatureBaseDir { get; private set; }
+    public string? EsetDir { get; private set; }
+    public DateTimeOffset? Timestamp { get; private set; }
 
     /// <summary>Второй позиционный аргумент (идентификатор для <c>quarantine restore</c> / <c>rollback undo</c>).</summary>
     public string? Argument { get; private set; }
@@ -960,6 +1076,26 @@ internal sealed class CliOptions
                     break;
                 case "--pipe" when i + 1 < args.Length:
                     o.Pipe = args[++i];
+                    break;
+                case "--out" when i + 1 < args.Length:
+                    o.Output = args[++i];
+                    break;
+                case "--signature-base" when i + 1 < args.Length:
+                    o.SignatureBaseDir = args[++i];
+                    break;
+                case "--eset" when i + 1 < args.Length:
+                    o.EsetDir = args[++i];
+                    break;
+                case "--timestamp" when i + 1 < args.Length:
+                    if (DateTimeOffset.TryParse(args[++i], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var ts))
+                    {
+                        o.Timestamp = ts;
+                    }
+                    else
+                    {
+                        o.Error = "--timestamp: ожидается дата ISO 8601.";
+                    }
+
                     break;
                 case "--allowed-exclusions" when i + 1 < args.Length:
                     o.AllowedExclusions = args[++i];

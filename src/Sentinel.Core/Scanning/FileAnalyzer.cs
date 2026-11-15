@@ -189,7 +189,8 @@ public sealed class FileAnalyzer
             }
         }
 
-        if (_intel is not null && _intel.TryGetFamily(sha256, out var family))
+        if (_intel is not null && _intel.TryGetFamily(sha256, out var family)
+            && !(definitive == "EICAR" && family is not null && family.StartsWith("EICAR", StringComparison.Ordinal)))
         {
             detections.Add(new Detection($"ThreatDB.{family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
                 $"SHA-256 найден в базе известных угроз ({family ?? "семейство не указано"}).", []));
