@@ -1,0 +1,135 @@
+<UserControl x:Class="Sentinel.App.Views.ReportsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="28,6,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="380" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <DockPanel Grid.ColumnSpan="2" LastChildFill="False" Margin="0,0,0,14">
+            <StackPanel>
+                <TextBlock Style="{StaticResource H1}" Text="История отчётов" />
+                <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0" Text="Каждая проверка сохраняется; отчёт экспортируется в самодостаточный HTML или JSON одним нажатием" />
+            </StackPanel>
+            <Button DockPanel.Dock="Right" VerticalAlignment="Center" Command="{Binding RefreshCommand}" Content="Обновить" />
+        </DockPanel>
+
+        <!-- Список проверок -->
+        <DataGrid Grid.Row="1" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}"
+                  Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}, ConverterParameter=invert}">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="Проверка" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Title}" ToolTip="{Binding Title}" />
+                                <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Text="{Binding StartedAtUtc, Converter={StaticResource LocalTime}}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Находок" Binding="{Binding Found}" Width="90" />
+            </DataGrid.Columns>
+        </DataGrid>
+        <Border Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Card}" VerticalAlignment="Top"
+                Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}">
+            <TextBlock Style="{StaticResource Muted}" Text="Проверок ещё не было. Запустите проверку в разделе «Сканирование» — отчёт появится здесь." />
+        </Border>
+
+        <!-- Детали отчёта -->
+        <Grid Grid.Row="1" Grid.Column="1" Margin="14,0,0,0" Visibility="{Binding HasDetails, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H2}" FontSize="16" Text="{Binding Details.Command}" ToolTip="{Binding Details.Command}" />
+                    <TextBlock Style="{StaticResource Muted}" Margin="0,5,0,0">
+                        <Run Text="{Binding Details.StartedAtUtc, Mode=OneWay, Converter={StaticResource LocalTime}}" />
+                        <Run Text=" · " />
+                        <Run Text="{Binding Details.Host, Mode=OneWay}" />
+                        <Run Text=" · " />
+                        <Run Text="{Binding Details.Mode, Mode=OneWay, Converter={StaticResource ReportModeText}}" />
+                    </TextBlock>
+                    <UniformGrid Columns="4" Margin="0,14,0,0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="ПРОВЕРЕНО" />
+                            <TextBlock Margin="0,3,0,0" FontSize="17" FontWeight="SemiBold" Text="{Binding Details.TotalChecked, StringFormat={}{0:N0}}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="НАХОДОК" />
+                            <TextBlock Margin="0,3,0,0" FontSize="17" FontWeight="SemiBold" Text="{Binding Details.Found}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="В КАРАНТИНЕ" />
+                            <TextBlock Margin="0,3,0,0" FontSize="17" FontWeight="SemiBold" Text="{Binding Details.Quarantined}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="ДЛИТЕЛЬНОСТЬ" />
+                            <TextBlock Margin="0,3,0,0" FontSize="17" FontWeight="SemiBold" Text="{Binding Selected.DurationSeconds, Converter={StaticResource Duration}}" />
+                        </StackPanel>
+                    </UniformGrid>
+                    <ItemsControl Margin="0,14,0,0" ItemsSource="{Binding Details.Areas}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Style="{StaticResource Muted}" Margin="0,1">
+                                    <Run Text="{Binding Name, Mode=OneWay}" Foreground="{StaticResource TextBrush}" />
+                                    <Run Text="{Binding Checked, Mode=OneWay, StringFormat= — проверено {0:N0}}" />
+                                    <Run Text="{Binding Found, Mode=OneWay, StringFormat=\, находок {0}}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding ExportHtmlCommand}" Content="Экспорт в HTML"
+                                ToolTip="Сохранить самодостаточный HTML-отчёт в «Документы\Sentinel Reports» и открыть его" />
+                        <Button Margin="10,0,0,0" Command="{Binding ExportJsonCommand}" Content="Экспорт в JSON"
+                                ToolTip="Сохранить структурированный JSON-отчёт в «Документы\Sentinel Reports»" />
+                        <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Command="{Binding OpenExportFolderCommand}" Content="Показать файл"
+                                Visibility="{Binding LastExportPath, Converter={StaticResource BoolToVis}}" ToolTip="{Binding LastExportPath}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <DataGrid Grid.Row="1" Margin="0,12,0,0" ItemsSource="{Binding Details.Findings}">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="Критичность" Width="115">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Pill}" Background="{Binding Severity, Converter={StaticResource SeverityBrush}, ConverterParameter=soft}">
+                                    <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Severity, Converter={StaticResource SeverityText}}"
+                                               Foreground="{Binding Severity, Converter={StaticResource SeverityBrush}}" />
+                                </Border>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Находка" Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="{Binding Name}" ToolTip="{Binding Description}" />
+                                    <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Text="{Binding Path, Converter={StaticResource Dash}}" ToolTip="{Binding Path}" />
+                                    <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Text="{Binding Rule}" ToolTip="{Binding Rule}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Действие" Width="210">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding ActionStatus, Converter={StaticResource ActionStatusText}}" />
+                                    <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Text="{Binding ActionMessage}" ToolTip="{Binding ActionMessage}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+    </Grid>
+</UserControl>

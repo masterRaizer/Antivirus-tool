@@ -1,0 +1,120 @@
+<UserControl x:Class="Sentinel.App.Views.ScanView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:Sentinel.App.Controls">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="28,6,22,24">
+            <TextBlock Style="{StaticResource H1}" Text="Сканирование" />
+            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,18" Text="Опасные находки нейтрализуются сразу, о спорных Sentinel спросит" />
+
+            <!-- Режим -->
+            <UniformGrid Columns="3" Margin="-6,0,-6,0" IsEnabled="{Binding IsIdle}">
+                <RadioButton Style="{StaticResource ChoiceCard}" GroupName="ScanMode" Margin="6"
+                             IsChecked="{Binding Mode, Converter={StaticResource EnumMatch}, ConverterParameter=Quick}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H2}" Text="Быстрое" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Text="Процессы, автозагрузка, конфигурация защиты и каталоги, куда чаще всего попадает вредоносное ПО." />
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton Style="{StaticResource ChoiceCard}" GroupName="ScanMode" Margin="6"
+                             IsChecked="{Binding Mode, Converter={StaticResource EnumMatch}, ConverterParameter=Full}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H2}" Text="Полное" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Text="Всё из быстрой проверки и все файлы на локальных дисках. Может занять длительное время." />
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton Style="{StaticResource ChoiceCard}" GroupName="ScanMode" Margin="6"
+                             IsChecked="{Binding Mode, Converter={StaticResource EnumMatch}, ConverterParameter=Custom}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H2}" Text="Выборочная папка" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Text="Только выбранная папка со всеми вложенными файлами — например, флешка или загрузки." />
+                    </StackPanel>
+                </RadioButton>
+            </UniformGrid>
+
+            <!-- Папка для выборочной проверки -->
+            <Grid Margin="0,12,0,0" Visibility="{Binding IsCustom, Converter={StaticResource BoolToVis}}" IsEnabled="{Binding IsIdle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Text="{Binding CustomPath, UpdateSourceTrigger=PropertyChanged}" ToolTip="Полный путь к папке или файлу" />
+                <Button Grid.Column="1" Margin="10,0,0,0" Command="{Binding BrowseCommand}" Content="Выбрать папку…" />
+            </Grid>
+
+            <!-- Ход проверки -->
+            <Border Style="{StaticResource Card}" Margin="0,16,0,0" Padding="22">
+                <StackPanel>
+                    <DockPanel LastChildFill="False">
+                        <TextBlock Text="{Binding StateText}" FontFamily="{StaticResource DisplayFont}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding PercentText}" FontFamily="{StaticResource DisplayFont}" FontSize="26" FontWeight="SemiBold" />
+                    </DockPanel>
+                    <ProgressBar Margin="0,14,0,0" Minimum="0" Maximum="100" controls:SmoothProgress.Value="{Binding Progress.Percent}" />
+
+                    <TextBlock Style="{StaticResource Label}" Margin="0,18,0,5" Text="СЕЙЧАС ПРОВЕРЯЕТСЯ" />
+                    <Border Background="{StaticResource BgBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="12,9">
+                        <TextBlock Style="{StaticResource Mono}" Text="{Binding CurrentItemText}" ToolTip="{Binding CurrentItemText}" />
+                    </Border>
+
+                    <UniformGrid Columns="4" Margin="0,18,0,0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="ПРОВЕРЕНО ОБЪЕКТОВ" />
+                            <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding ScannedText}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="СКОРОСТЬ" />
+                            <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding SpeedText}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="НАХОДОК" />
+                            <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding Progress.Threats}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Progress.Threats, Converter={StaticResource BoolToVis}}" Value="Visible">
+                                                <Setter Property="Foreground" Value="{StaticResource CriticalBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="ВРЕМЯ" />
+                            <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding ElapsedText}" />
+                        </StackPanel>
+                    </UniformGrid>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
+                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding StartCommand}" Content="Начать проверку" MinWidth="150" />
+                        <Button Margin="10,0,0,0" Command="{Binding PauseResumeCommand}" Content="{Binding PauseResumeText}" MinWidth="110" />
+                        <Button Margin="10,0,0,0" Style="{StaticResource DangerButton}" Command="{Binding StopCommand}" Content="Стоп" MinWidth="90" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Итог -->
+            <Border Margin="0,12,0,0" Padding="18,14" CornerRadius="10" BorderThickness="1" Visibility="{Binding HasResult, Converter={StaticResource BoolToVis}}">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="{StaticResource OkSoftBrush}" />
+                        <Setter Property="BorderBrush" Value="{StaticResource OkBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ResultIsWarning}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource WarnSoftBrush}" />
+                                <Setter Property="BorderBrush" Value="{StaticResource WarnBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <DockPanel LastChildFill="True">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Command="{Binding OpenReportCommand}" Content="Открыть отчёт" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Progress.Message}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,14,0" />
+                </DockPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,0 +1,30 @@
+<Application x:Class="Sentinel.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Sentinel.App"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/Dark.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <local:BoolToVisibilityConverter x:Key="BoolToVis" />
+            <local:EnumMatchConverter x:Key="EnumMatch" />
+            <local:EnumVisibilityConverter x:Key="EnumToVis" />
+            <local:LocalTimeConverter x:Key="LocalTime" />
+            <local:BytesConverter x:Key="Bytes" />
+            <local:DurationConverter x:Key="Duration" />
+            <local:EntropyConverter x:Key="Entropy" />
+            <local:DashIfEmptyConverter x:Key="Dash" />
+            <local:SeverityTextConverter x:Key="SeverityText" />
+            <local:SeverityBrushConverter x:Key="SeverityBrush" />
+            <local:ThreatStatusTextConverter x:Key="ThreatStatusText" />
+            <local:ThreatStatusBrushConverter x:Key="ThreatStatusBrush" />
+            <local:ThreatKindTextConverter x:Key="ThreatKindText" />
+            <local:ThreatSourceTextConverter x:Key="ThreatSourceText" />
+            <local:ActionStatusTextConverter x:Key="ActionStatusText" />
+            <local:ReportModeTextConverter x:Key="ReportModeText" />
+            <local:StartupRowBrushConverter x:Key="StartupRowBrush" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
