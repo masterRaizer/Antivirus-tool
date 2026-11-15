@@ -538,7 +538,8 @@ internal static class Program
         var auditor = new ConfigIntegrityAuditor(
             ConfigIntegrityAuditorOptions.CreateDefault(),
             RegistryProviderFactory.CreateDefault(),
-            new WindowsRootCertificateProvider());
+            new WindowsRootCertificateProvider(),
+            new WindowsDefenderExclusionSource());
 
         var session = new Session("audit-config", opts);
         var report = auditor.Audit();
