@@ -372,7 +372,7 @@ public sealed class ReportBuilder
         return idx < 0 || idx == path.Length - 1 ? path : path[(idx + 1)..];
     }
 
-    private static string DescribeSignature(FileScanResult r)
+    public static string DescribeSignature(FileScanResult r)
     {
         if (r.Signature is null)
         {

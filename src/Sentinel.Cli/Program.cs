@@ -15,6 +15,7 @@ using Sentinel.Core.Pe;
 using Sentinel.Core.Remediation;
 using Sentinel.Core.Reporting;
 using Sentinel.Core.Scanning;
+using Sentinel.Core.Settings;
 using Sentinel.Core.Signatures;
 using Sentinel.Core.Testing;
 using Sentinel.Core.Trust;
@@ -117,6 +118,9 @@ internal static class Program
                                      в карантин (детекты Medium+), откат автозагрузки и удаление исключений Defender
               --dry-run              вместе с --remediate: только показать, что было бы сделано, без изменений
               --data-dir <каталог>   каталог данных (карантин и манифест отката); по умолчанию %ProgramData%\Sentinel
+              --allowed-exclusions <файл>
+                                     белый список пользователя (пути и процессы, которые не изолируются, и исключения
+                                     Defender, которые не удаляются); по умолчанию <каталог данных>\allowed_exclusions.json
 
             Отчёт:
               --report-html <путь>   самодостаточный HTML-отчёт (тёмная тема, фильтры)
@@ -820,7 +824,17 @@ internal static class Program
                 engine = RemediationEngine.CreateDefault(whitelist, RemediationOptions.CreateDefault(DataDirectory(_opts), _opts.DryRun));
             }
 
-            return new Response(quarantine, new ResponseCoordinator(quarantine, engine, Report, new ResponsePolicy { DryRun = _opts.DryRun }));
+            // Пользовательский белый список: его пути, процессы и исключения Defender нейтрализации не подлежат.
+            var allowedStore = _opts.AllowedExclusions is not null
+                ? new AllowedExclusionStore(_opts.AllowedExclusions)
+                : AllowedExclusionStore.ForDataDirectory(DataDirectory(_opts));
+            var allowed = allowedStore.Load();
+            if (!allowed.IsEmpty)
+            {
+                Console.Error.WriteLine($"Разрешённые исключения: {allowedStore.Path} (путей: {allowed.Paths.Count}, процессов: {allowed.Processes.Count})");
+            }
+
+            return new Response(quarantine, new ResponseCoordinator(quarantine, engine, Report, new ResponsePolicy { DryRun = _opts.DryRun }, allowed));
         }
 
         public SentinelReport Finish()
@@ -862,6 +876,7 @@ internal sealed class CliOptions
     public string? ReportHtml { get; private set; }
     public string? ReportJson { get; private set; }
     public string? DataDir { get; private set; }
+    public string? AllowedExclusions { get; private set; }
 
     /// <summary>Второй позиционный аргумент (идентификатор для <c>quarantine restore</c> / <c>rollback undo</c>).</summary>
     public string? Argument { get; private set; }
@@ -903,6 +918,9 @@ internal sealed class CliOptions
                     break;
                 case "--data-dir" when i + 1 < args.Length:
                     o.DataDir = args[++i];
+                    break;
+                case "--allowed-exclusions" when i + 1 < args.Length:
+                    o.AllowedExclusions = args[++i];
                     break;
                 case "--max-size" when i + 1 < args.Length:
                     if (!int.TryParse(args[++i], NumberStyles.None, CultureInfo.InvariantCulture, out var mb) || mb is < 1 or > 4096)
