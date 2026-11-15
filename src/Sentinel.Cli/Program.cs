@@ -71,6 +71,7 @@ internal static class Program
                 "audit-config" => AuditConfig(opts),
                 "quarantine" => Quarantine(opts),
                 "rollback" => Rollback(opts),
+                "service-status" => ServiceStatus(opts),
                 _ => Unknown(args[0]),
             };
         }
@@ -112,6 +113,8 @@ internal static class Program
                                                    вернуть файл на исходное место (с проверкой SHA-256)
               sentinel rollback list [--json]      резервные копии изменённых параметров
               sentinel rollback undo <id>          отменить изменение конфигурации/автозагрузки
+              sentinel service-status [--pipe <имя>] [--json]
+                                                   состояние фоновой службы Sentinel.Service (по именованному каналу)
 
             Действия:
               --remediate            нейтрализация: завершение деревьев процессов (находки High+), изоляция файлов
@@ -751,6 +754,40 @@ internal static class Program
         }
     }
 
+    private static int ServiceStatus(CliOptions opts)
+    {
+        var client = Sentinel.Core.Ipc.SentinelIpcClient
+            .TryConnectAsync(opts.Pipe ?? Sentinel.Core.Ipc.IpcProtocol.DefaultPipeName, TimeSpan.FromSeconds(3)).GetAwaiter().GetResult();
+        if (client is null)
+        {
+            Console.Error.WriteLine("Служба Sentinel не запущена или недоступна.");
+            return ExitError;
+        }
+
+        try
+        {
+            var status = client.GetStatusAsync().GetAwaiter().GetResult();
+            if (opts.Json)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(status, JsonOptions));
+                return ExitOk;
+            }
+
+            Console.WriteLine($"Служба Sentinel {status.Version} ({status.Platform}), запущена {status.StartedAtUtc:u}");
+            Console.WriteLine($"  Защита в реальном времени : {(status.RealtimeEnabled ? "включена" : "приостановлена")}");
+            Console.WriteLine($"  Наблюдаемых каталогов     : {status.WatchedDirectories.Count}");
+            Console.WriteLine($"  Правил загружено          : {status.RulesLoaded}");
+            Console.WriteLine($"  Проверено файлов/процессов: {status.FilesChecked} / {status.ProcessesChecked}");
+            Console.WriteLine($"  Находок / ждут решения    : {status.ThreatsTotal} / {status.PendingDecisions}");
+            Console.WriteLine($"  В карантине               : {status.Quarantined}");
+            return ExitOk;
+        }
+        finally
+        {
+            client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
     // ---- Сеанс: отчёт и нейтрализация ------------------------------------------
 
     private static object? ActionSummary(SentinelReport report, CliOptions opts) =>
@@ -877,6 +914,7 @@ internal sealed class CliOptions
     public string? ReportJson { get; private set; }
     public string? DataDir { get; private set; }
     public string? AllowedExclusions { get; private set; }
+    public string? Pipe { get; private set; }
 
     /// <summary>Второй позиционный аргумент (идентификатор для <c>quarantine restore</c> / <c>rollback undo</c>).</summary>
     public string? Argument { get; private set; }
@@ -918,6 +956,9 @@ internal sealed class CliOptions
                     break;
                 case "--data-dir" when i + 1 < args.Length:
                     o.DataDir = args[++i];
+                    break;
+                case "--pipe" when i + 1 < args.Length:
+                    o.Pipe = args[++i];
                     break;
                 case "--allowed-exclusions" when i + 1 < args.Length:
                     o.AllowedExclusions = args[++i];

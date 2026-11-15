@@ -310,7 +310,9 @@ public sealed class RealtimeEventDispatcher
         {
             // Повторное срабатывание по тому же объекту, пока по нему не принято решение, не дублируется.
             var existing = _entries.FindLast(e => e.Key == key);
-            if (existing is not null && (existing.Busy || existing.Event.IsActionable))
+            // То же — если действие запрещено или неприменимо: повтор ничего не изменит, а журнал засорит.
+            if (existing is not null && (existing.Busy || existing.Event.IsActionable
+                || existing.Event.Status is ThreatStatus.Blocked or ThreatStatus.Skipped))
             {
                 return existing.Event;
             }
