@@ -15,6 +15,8 @@
 | 3 | QuarantineManager, RemediationEngine (манифесты отката), JSON/HTML-отчёты, CLI remediation/quarantine/rollback, сквозной тест | Готов (6/6). Тесты после этапа 3 (Linux, SDK 8.0.134): 331 всего, 327 passed, 0 failed, 4 skipped (все 4 — Windows-only `WindowsFact`) |
 | 4 | `allowed_exclusions.json`, диспетчер «опасное сразу, спорное спросить», IPC по Named Pipes, `SentinelRuntime`, `Sentinel.Service`, `Sentinel.App` (WPF), `scripts/publish-windows.ps1` | Готов (5/5). Linux, SDK 8.0.428: build 0 ошибок / 0 предупреждений; 403 теста — 399 passed, 0 failed, 4 skipped (`WindowsFact`). На Windows не запускался |
 
+| 5 | Релизы в GitHub Actions: `.github/workflows/release.yml` (windows-latest: тесты, `publish-windows.ps1`, MSI на WiX 5.0.2, portable zip, GitHub Release), `installer/Sentinel.Installer/` (вне `Sentinel.sln`), шаблон `allowed_exclusions.json` в корне | Написано. Linux: build 0/0, 404 теста — 400 passed, 4 skipped. Workflow и MSI на Windows ещё не запускались |
+
 ## Следующие шаги
 1. Проверка этапа 4 на Windows (см. ниже): запуск `Sentinel.App.exe` в автономном режиме, установка службы, `publish-windows.ps1`.
 2. По итогам проверки — правки UI/службы; слияние ветки в `main` по решению пользователя.

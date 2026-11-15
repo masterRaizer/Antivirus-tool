@@ -1,0 +1,93 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package Name="Sentinel"
+           Manufacturer="Sentinel"
+           Version="$(ProductVersion)"
+           UpgradeCode="6B1F3C52-8D4A-4E7B-9A21-5C0E7D93F4A8"
+           Scope="perMachine"
+           Language="1033"
+           InstallerVersion="500">
+
+    <!-- Обновление поверх старой версии: старая удаляется, новая ставится; откат на более раннюю версию запрещён. -->
+    <MajorUpgrade DowngradeErrorMessage="Установлена более новая версия Sentinel. Сначала удалите её." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Sentinel">
+        <Directory Id="RulesFolder" Name="rules" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuFolder" Name="Sentinel" />
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- Файлы .exe берутся из dist\, подготовленного scripts/publish-windows.ps1. -->
+    <ComponentGroup Id="ProgramComponents" Directory="INSTALLFOLDER">
+      <Component Id="AppExe" Bitness="always64">
+        <File Id="SentinelAppExe" Source="$(DistDir)Sentinel.App.exe" KeyPath="yes" />
+      </Component>
+
+      <Component Id="ServiceExe" Bitness="always64">
+        <File Id="SentinelServiceExe" Source="$(DistDir)Sentinel.Service.exe" KeyPath="yes" />
+        <!-- Имя службы совпадает с ServiceOptions.ServiceName. Запуск — LocalSystem, автозапуск при загрузке. -->
+        <ServiceInstall Id="SentinelServiceInstall"
+                        Name="SentinelService"
+                        DisplayName="Sentinel Realtime Protection"
+                        Description="Защита в реальном времени: аудит процессов, автозагрузки и файлов (Sentinel)."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Vital="yes" />
+        <ServiceControl Id="SentinelServiceControl"
+                        Name="SentinelService"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+
+      <Component Id="CliExe" Bitness="always64">
+        <File Id="SentinelCliExe" Source="$(DistDir)Sentinel.Cli.exe" KeyPath="yes" />
+      </Component>
+
+      <Component Id="AllowedExclusions" Bitness="always64">
+        <File Id="AllowedExclusionsJson" Source="$(DistDir)allowed_exclusions.json" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Каталог rules\ копируется целиком (все файлы из dist\rules). -->
+    <ComponentGroup Id="RulesComponents" Directory="RulesFolder">
+      <Files Include="$(DistDir)rules\**" />
+    </ComponentGroup>
+
+    <ComponentGroup Id="ShortcutComponents">
+      <Component Id="StartMenuShortcut" Directory="StartMenuFolder" Bitness="always64">
+        <Shortcut Id="AppStartMenuShortcut"
+                  Name="Sentinel"
+                  Description="Sentinel — защита и аудит Windows"
+                  Target="[INSTALLFOLDER]Sentinel.App.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\Sentinel\Installer" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <Component Id="DesktopShortcut" Directory="DesktopFolder" Bitness="always64">
+        <Shortcut Id="AppDesktopShortcut"
+                  Name="Sentinel"
+                  Description="Sentinel — защита и аудит Windows"
+                  Target="[INSTALLFOLDER]Sentinel.App.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\Sentinel\Installer" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Sentinel" Level="1">
+      <ComponentGroupRef Id="ProgramComponents" />
+      <ComponentGroupRef Id="RulesComponents" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+    </Feature>
+
+  </Package>
+</Wix>

@@ -9,6 +9,7 @@
         dist\Sentinel.Service.exe  — фоновая служба защиты в реальном времени
         dist\Sentinel.Cli.exe      — консольный сканер
         dist\rules\                — сигнатурные правила (общие для всех трёх программ)
+        dist\allowed_exclusions.json — шаблон белого списка пользователя (безопасные исключения по умолчанию)
 
     Перед публикацией выполняются сборка без предупреждений и модульные тесты.
     Скрипт работает в Windows PowerShell 5.1 и PowerShell 7+ (в том числе в Linux — кросс-сборка).
@@ -101,6 +102,10 @@ try {
     }
 
     if (-not (Test-Path (Join-Path $Output 'rules'))) { throw 'В dist не попал каталог rules.' }
+
+    $Exclusions = Join-Path $Root 'allowed_exclusions.json'
+    if (-not (Test-Path $Exclusions)) { throw "Не найден шаблон $Exclusions." }
+    Copy-Item $Exclusions (Join-Path $Output 'allowed_exclusions.json')
 
     Write-Host ''
     Write-Host "Готово: $Output" -ForegroundColor Green

@@ -151,3 +151,12 @@ JSON: см. `rules/miners.json`.
 - Белый список срабатывает только при одновременном выполнении: путь (после разрешения ссылок) в
   защищённом каталоге + действительная подпись + доверенный издатель (Microsoft). На ОС без WinTrust — fail-closed.
 - Тесты используют только безопасные артефакты: EICAR (собирается в рантайме) и PE-заглушки без кода.
+
+## Релизы (GitHub Actions)
+
+Workflow `.github/workflows/release.yml` на `windows-latest` запускается при пуше в `main`, при пуше тегов `v*`
+и вручную (`workflow_dispatch`, параметр `version`, по умолчанию `1.0.0`). Он прогоняет тесты, публикует
+однофайловые `win-x64` `.exe` (`scripts/publish-windows.ps1`), собирает MSI (`installer/Sentinel.Installer`,
+WiX `5.0.2`, установка в `C:\Program Files\Sentinel`, служба `SentinelService` под `LocalSystem` с автозапуском,
+ярлыки в меню «Пуск» и на рабочем столе), упаковывает portable-архив и публикует всё в GitHub Releases.
+Проект установщика намеренно не входит в `Sentinel.sln`: на Linux `dotnet build Sentinel.sln` собирается без WiX.
