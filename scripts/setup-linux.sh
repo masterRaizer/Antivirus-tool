@@ -4,9 +4,19 @@
 # проверяет, что SDK действительно работает. Идемпотентен: повторный запуск
 # в уже настроенном контейнере ничего не меняет.
 #
+# WPF-проект Sentinel.App собирается из Linux кросс-сборкой (EnableWindowsTargeting),
+# для чего нужен пакет Microsoft.NET.Sdk.WindowsDesktop. В SDK из репозиториев
+# Ubuntu/Debian (source-build) его нет, поэтому при его отсутствии дополнительно
+# ставится официальная сборка SDK Microsoft (dotnet-install.sh) в
+# /usr/local/share/dotnet-ms со ссылкой /usr/local/bin/dotnet.
+#
 #   scripts/setup-linux.sh           — установить при необходимости и проверить
 #   scripts/setup-linux.sh --check   — только проверить, ничего не устанавливать
 set -euo pipefail
+
+MS_SDK_DIR="/usr/local/share/dotnet-ms"
+MS_SDK_LINK="/usr/local/bin/dotnet"
+INSTALL_SCRIPT_URL="https://dot.net/v1/dotnet-install.sh"
 
 REQUIRED_MAJOR=8
 PACKAGE="dotnet-sdk-8.0"
@@ -16,7 +26,7 @@ for arg in "$@"; do
   case "$arg" in
     --check) CHECK_ONLY=1 ;;
     -h|--help)
-      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
       echo "Неизвестный аргумент: $arg" >&2
@@ -77,6 +87,45 @@ else
   hash -r
   if ! has_required_sdk; then
     log "После установки .NET SDK ${REQUIRED_MAJOR} по-прежнему недоступен." >&2
+    exit 1
+  fi
+fi
+
+# Есть ли у выбранного dotnet пакет Microsoft.NET.Sdk.WindowsDesktop (нужен для сборки WPF).
+has_windows_desktop() {
+  local root
+  root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+  compgen -G "${root}/sdk/${REQUIRED_MAJOR}.*/Sdks/Microsoft.NET.Sdk.WindowsDesktop" >/dev/null 2>&1
+}
+
+install_ms_sdk() {
+  if ! command -v curl >/dev/null 2>&1; then
+    log "curl не найден — не могу загрузить ${INSTALL_SCRIPT_URL}." >&2
+    return 1
+  fi
+
+  local installer
+  installer="$(mktemp)"
+  log "Загрузка dotnet-install.sh…"
+  curl -fsSL "$INSTALL_SCRIPT_URL" -o "$installer"
+  log "Установка официального .NET SDK ${REQUIRED_MAJOR} (с Microsoft.NET.Sdk.WindowsDesktop) в ${MS_SDK_DIR}…"
+  run_as_root bash "$installer" --channel "${REQUIRED_MAJOR}.0" --install-dir "$MS_SDK_DIR" --no-path
+  rm -f "$installer"
+  run_as_root ln -sf "${MS_SDK_DIR}/dotnet" "$MS_SDK_LINK"
+}
+
+if has_windows_desktop; then
+  log "Microsoft.NET.Sdk.WindowsDesktop доступен (сборка WPF возможна)."
+elif [ "$CHECK_ONLY" -eq 1 ]; then
+  log "В SDK нет Microsoft.NET.Sdk.WindowsDesktop — Sentinel.App не соберётся (режим --check)." >&2
+  exit 1
+else
+  log "В установленном SDK нет Microsoft.NET.Sdk.WindowsDesktop (сборка из исходников дистрибутива)."
+  install_ms_sdk
+  hash -r
+  if ! has_windows_desktop; then
+    log "dotnet в PATH ($(command -v dotnet)) по-прежнему без WindowsDesktop." >&2
+    log "Поставьте ${MS_SDK_LINK%/dotnet} раньше в PATH: export PATH=\"${MS_SDK_LINK%/dotnet}:\$PATH\"" >&2
     exit 1
   fi
 fi

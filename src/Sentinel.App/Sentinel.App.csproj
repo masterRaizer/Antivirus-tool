@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Windows Forms нужен только ради NotifyIcon (значок в системном трее). -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Позволяет собирать проект для Windows из Linux/macOS (кросс-сборка в CI). -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>Sentinel.App</AssemblyName>
+    <RootNamespace>Sentinel.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Неявные using Windows Forms конфликтуют с WPF (Application, Button, …): типы трея указываются явно. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sentinel.Core\Sentinel.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\rules\**\*" Link="rules\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

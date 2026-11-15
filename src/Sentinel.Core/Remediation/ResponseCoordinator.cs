@@ -3,6 +3,7 @@ using Sentinel.Core.Audit.Persistence;
 using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Reporting;
 using Sentinel.Core.Scanning;
+using Sentinel.Core.Settings;
 using Sentinel.Core.Signatures;
 
 namespace Sentinel.Core.Remediation;
@@ -34,10 +35,16 @@ public sealed class ResponseCoordinator
     private readonly RemediationEngine? _engine;
     private readonly ReportBuilder _report;
     private readonly ResponsePolicy _policy;
+    private readonly AllowedExclusions _allowed;
     private readonly HashSet<string> _handledFiles = new(StringComparer.OrdinalIgnoreCase);
 
-    public ResponseCoordinator(QuarantineManager quarantine, RemediationEngine? engine, ReportBuilder report, ResponsePolicy? policy = null)
+    public const string AllowedByUserMessage = "Разрешено пользователем (allowed_exclusions.json) — действие не выполняется.";
+
+    /// <param name="allowed">Пользовательский белый список: его пути, процессы и исключения Defender не трогаются.</param>
+    public ResponseCoordinator(
+        QuarantineManager quarantine, RemediationEngine? engine, ReportBuilder report, ResponsePolicy? policy = null, AllowedExclusions? allowed = null)
     {
+        _allowed = allowed ?? AllowedExclusions.Empty;
         ArgumentNullException.ThrowIfNull(quarantine);
         ArgumentNullException.ThrowIfNull(report);
         _quarantine = quarantine;
@@ -58,6 +65,12 @@ public sealed class ResponseCoordinator
         var outcomes = new List<QuarantineResult>();
         foreach (var r in results)
         {
+            if (IsFlagged(r) && _allowed.IsPathAllowed(r.Path))
+            {
+                _report.SetAction(ReportBuilder.FileKey(r.Path), FindingActionStatus.Skipped, AllowedByUserMessage);
+                continue;
+            }
+
             if (!ShouldQuarantine(r) || !_handledFiles.Add(r.Path))
             {
                 continue;
@@ -89,6 +102,12 @@ public sealed class ResponseCoordinator
             }
 
             var key = ReportBuilder.ProcessKey(entry.Process.Pid);
+            if (_allowed.IsProcessAllowed(entry.Process.Name, entry.Process.ExecutablePath))
+            {
+                _report.SetAction(key, FindingActionStatus.Skipped, AllowedByUserMessage);
+                continue;
+            }
+
             if (_engine is null)
             {
                 _report.SetAction(key, FindingActionStatus.Skipped, "Завершение процессов недоступно на этой платформе.");
@@ -178,13 +197,22 @@ public sealed class ResponseCoordinator
 
         foreach (var exclusion in config.DefenderExclusions)
         {
+            if (_allowed.IsAllowed(exclusion))
+            {
+                _report.SetAction(ReportBuilder.ExclusionKey(exclusion), FindingActionStatus.Skipped, AllowedByUserMessage);
+                continue;
+            }
+
             var action = _engine.RemoveDefenderExclusion(exclusion, "CFG-DEFENDER-EXCL");
             _report.SetAction(ReportBuilder.ExclusionKey(exclusion), action, FindingActionStatus.Cleaned);
         }
     }
 
+    private static bool IsFlagged(FileScanResult r) =>
+        r.Verdict is Verdict.Malicious or Verdict.Suspicious && r.Detections.Count > 0;
+
     private bool ShouldQuarantine(FileScanResult r) =>
-        r.Verdict is Verdict.Malicious or Verdict.Suspicious
-        && r.Detections.Count > 0
-        && r.Detections.Max(d => d.Severity) >= _policy.QuarantineThreshold;
+        IsFlagged(r)
+        && r.Detections.Max(d => d.Severity) >= _policy.QuarantineThreshold
+        && !_allowed.IsPathAllowed(r.Path);
 }

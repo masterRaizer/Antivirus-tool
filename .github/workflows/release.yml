@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия релиза (например 1.0.0), без префикса v'
+        required: false
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $version = '${{ github.ref_name }}'.TrimStart('v')
+          } elseif ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.version }}' -ne '') {
+            $version = '${{ inputs.version }}'.TrimStart('v')
+          } else {
+            $version = '1.0.0'
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Версия '$version' должна иметь вид X.Y.Z (требование MSI)."
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test
+        run: dotnet test Sentinel.sln --configuration Release
+
+      - name: Publish single-file win-x64 executables
+        shell: pwsh
+        run: pwsh -File ./scripts/publish-windows.ps1
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          dotnet build installer/Sentinel.Installer/Sentinel.Installer.wixproj -c Release -p:ProductVersion=${{ env.VERSION }}
+          if ($LASTEXITCODE -ne 0) { throw "Сборка установщика завершилась с кодом $LASTEXITCODE." }
+          $msi = Get-ChildItem installer/Sentinel.Installer/bin -Recurse -Filter Sentinel.msi | Select-Object -First 1
+          if (-not $msi) { throw 'Sentinel.msi не найден после сборки установщика.' }
+          Copy-Item $msi.FullName "dist/Sentinel-v${{ env.VERSION }}-setup-win-x64.msi"
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Force `
+            -Path dist/Sentinel.App.exe, dist/Sentinel.Service.exe, dist/Sentinel.Cli.exe, dist/rules, dist/allowed_exclusions.json `
+            -DestinationPath "dist/Sentinel-v${{ env.VERSION }}-portable-win-x64.zip"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Sentinel v${{ env.VERSION }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/Sentinel-v${{ env.VERSION }}-setup-win-x64.msi
+            dist/Sentinel-v${{ env.VERSION }}-portable-win-x64.zip
+            dist/Sentinel.App.exe
+            dist/Sentinel.Service.exe
+            dist/Sentinel.Cli.exe

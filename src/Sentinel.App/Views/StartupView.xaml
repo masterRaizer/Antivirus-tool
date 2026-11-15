@@ -1,0 +1,99 @@
+<UserControl x:Class="Sentinel.App.Views.StartupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="28,6,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Style="{StaticResource H1}" Text="Автозагрузка и службы" />
+            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,14" Text="{Binding Summary}" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" ToolTip="Поиск по имени, расположению и команде" />
+            <CheckBox Grid.Column="1" Style="{StaticResource Switch}" Margin="18,0,0,0" VerticalAlignment="Center"
+                      IsChecked="{Binding OnlyFlagged, Mode=TwoWay}" Content="Только нестандартные и неподписанные" />
+            <Button Grid.Column="2" Command="{Binding RefreshCommand}" Content="Обновить" />
+        </Grid>
+
+        <Border Grid.Row="2" Margin="0,0,0,12" Padding="14,10" CornerRadius="8" Background="{StaticResource WarnSoftBrush}"
+                Visibility="{Binding Note, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding Note}" TextWrapping="Wrap" />
+        </Border>
+
+        <DataGrid Grid.Row="3" ItemsSource="{Binding View}">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow" BasedOn="{StaticResource GridRow}">
+                    <Setter Property="Background" Value="{Binding Converter={StaticResource StartupRowBrush}}" />
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Тип" Binding="{Binding Category}" Width="150" />
+                <DataGridTemplateColumn Header="Запись" Width="2*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Name}" ToolTip="{Binding Name}" />
+                                <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Text="{Binding Location}" ToolTip="{Binding Location}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Команда и подпись" Width="3*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource Mono}" FontSize="11.5" Text="{Binding Command, Converter={StaticResource Dash}}" ToolTip="{Binding Command}" />
+                                <TextBlock FontSize="11.5" Text="{Binding SignatureStatus}" ToolTip="{Binding SignatureStatus}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NotSigned}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource WarnBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Замечания" Width="2*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Visibility="{Binding Flagged, Converter={StaticResource BoolToVis}}">
+                                <Border Style="{StaticResource Pill}" Background="{Binding Severity, Converter={StaticResource SeverityBrush}, ConverterParameter=soft}">
+                                    <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Severity, Converter={StaticResource SeverityText}}"
+                                               Foreground="{Binding Severity, Converter={StaticResource SeverityBrush}}" />
+                                </Border>
+                                <TextBlock Margin="0,4,0,0" FontSize="12" Text="{Binding Remarks}" ToolTip="{Binding Remarks}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Действие" Width="120">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button Style="{StaticResource SmallButton}" Content="Очистить" HorizontalAlignment="Left"
+                                    ToolTip="Вернуть запись к эталону или удалить её; изменение можно отменить в разделе «Карантин и откат»"
+                                    Visibility="{Binding CanClean, Converter={StaticResource BoolToVis}}"
+                                    Command="{Binding DataContext.CleanCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </Grid>
+</UserControl>
