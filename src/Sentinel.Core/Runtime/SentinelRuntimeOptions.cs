@@ -81,8 +81,9 @@ public sealed class SentinelRuntimeOptions
             var tasks = new WindowsTaskSchedulerProvider();
             var wmi = new WindowsWmiSubscriptionProvider();
             var certificates = new WindowsRootCertificateProvider();
+            var defenderExclusions = new WindowsDefenderExclusionSource();
             persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault(), registry, tasks, wmi, analyzer).Audit();
-            config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault(), registry, certificates).Audit();
+            config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault(), registry, certificates, defenderExclusions).Audit();
         }
 
         return new SentinelRuntimeOptions

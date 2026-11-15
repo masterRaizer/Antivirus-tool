@@ -15,10 +15,10 @@
 | 3 | QuarantineManager, RemediationEngine (манифесты отката), JSON/HTML-отчёты, CLI remediation/quarantine/rollback, сквозной тест | Готов (6/6). Тесты после этапа 3 (Linux, SDK 8.0.134): 331 всего, 327 passed, 0 failed, 4 skipped (все 4 — Windows-only `WindowsFact`) |
 | 4 | `allowed_exclusions.json`, диспетчер «опасное сразу, спорное спросить», IPC по Named Pipes, `SentinelRuntime`, `Sentinel.Service`, `Sentinel.App` (WPF), `scripts/publish-windows.ps1` | Готов (5/5). Linux, SDK 8.0.428: build 0 ошибок / 0 предупреждений; 403 теста — 399 passed, 0 failed, 4 skipped (`WindowsFact`). На Windows не запускался |
 
-| 5 | Релизы в GitHub Actions: `.github/workflows/release.yml` (windows-latest: тесты, `publish-windows.ps1`, MSI на WiX 5.0.2, portable zip, GitHub Release), `installer/Sentinel.Installer/` (вне `Sentinel.sln`), шаблон `allowed_exclusions.json` в корне | Написано. Linux: build 0/0, 404 теста — 400 passed, 4 skipped. Workflow и MSI на Windows ещё не запускались |
+| 5 | Релизы в GitHub Actions: `.github/workflows/release.yml` (windows-latest: тесты, `publish-windows.ps1`, MSI на WiX 5.0.2, GitHub Release с `.msi` и `Sentinel.App.exe`), `installer/Sentinel.Installer/` (вне `Sentinel.sln`), шаблон `allowed_exclusions.json` | Release `v1.0.0` опубликован (run на `main` зелёный: тесты, publish, MSI). Linux: build 0/0, 411 тестов — 407 passed, 4 skipped. Запуск MSI/службы/WPF на живой Windows не проверялся |
 
 ## Следующие шаги
-1. Проверка этапа 4 на Windows (см. ниже): запуск `Sentinel.App.exe` в автономном режиме, установка службы, `publish-windows.ps1`.
+1. Проверка на Windows (см. ниже): установка MSI из релиза `v1.0.0`, запуск службы и `Sentinel.App.exe`. `publish-windows.ps1` в CI отработал.
 2. По итогам проверки — правки UI/службы; слияние ветки в `main` по решению пользователя.
 3. После каждого модуля обновлять этот файл.
 
@@ -29,7 +29,7 @@
 - `Sentinel.App` (WPF): только скомпилирован кросс-сборкой, ни разу не запускался — вёрстка, шаблоны контролов, трей, всплывающее окно решения, диалог выбора папки, экспорт отчётов.
 - `Sentinel.Service`: установка через `sc.exe`, запуск под LocalSystem, ACL каталога данных и именованного канала, подключение приложения пользователя к службе SYSTEM. На Linux служба проверена как консольный процесс (канал, монитор файлов, карантин EICAR).
 - `WindowsTelemetryProvider` (GetSystemTimes, GlobalMemoryStatusEx, PDH) — только компиляция.
-- `scripts/publish-windows.ps1` — сам скрипт не запускался (нет PowerShell); те же команды `dotnet publish` выполнены на Linux и дали три однофайловых .exe и `rules/`.
+- `WindowsDefenderExclusionSource` (WMI `MSFT_MpPreference` через CIM) — только компиляция и разбор JSON в тестах; на Windows не запускался.
 
 ## Команды
 ```

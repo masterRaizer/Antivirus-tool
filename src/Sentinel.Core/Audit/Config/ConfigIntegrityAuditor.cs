@@ -43,24 +43,31 @@ public sealed class ConfigIntegrityAuditor
     private readonly ConfigIntegrityAuditorOptions _options;
     private readonly IRegistryProvider? _registry;
     private readonly ICertificateStoreProvider? _certificates;
+    private readonly IDefenderExclusionSource? _defender;
 
     public ConfigIntegrityAuditor(
         ConfigIntegrityAuditorOptions? options = null,
         IRegistryProvider? registry = null,
-        ICertificateStoreProvider? certificates = null)
+        ICertificateStoreProvider? certificates = null,
+        IDefenderExclusionSource? defenderExclusions = null)
     {
         _options = options ?? new ConfigIntegrityAuditorOptions();
         _registry = registry;
         _certificates = certificates;
+        _defender = defenderExclusions;
     }
 
     public ConfigAuditReport Audit()
     {
         var findings = new List<ConfigFinding>();
         var exclusions = new List<DefenderExclusion>();
-        if (_registry is not null)
+        if (_registry is not null || _defender is not null)
         {
             AuditDefenderExclusions(findings, exclusions);
+        }
+
+        if (_registry is not null)
+        {
             AuditFirewall(findings);
             AuditProxy(findings);
         }
@@ -77,38 +84,59 @@ public sealed class ConfigIntegrityAuditor
 
     private void AuditDefenderExclusions(List<ConfigFinding> findings, List<DefenderExclusion> exclusions)
     {
-        for (var r = 0; r < DefenderExclusionRoots.Length; r++)
+        var seen = new HashSet<(DefenderExclusionKind, string)>();
+        if (_registry is not null)
         {
-            foreach (var (subKey, kind) in ExclusionKinds)
+            for (var r = 0; r < DefenderExclusionRoots.Length; r++)
             {
-                var key = new RegistryKeyPath(RegistryHive.LocalMachine, DefenderExclusionRoots[r] + "\\" + subKey);
-                foreach (var value in _registry!.GetValues(key))
+                foreach (var (subKey, kind) in ExclusionKinds)
                 {
-                    var target = value.Name;
-                    if (string.IsNullOrWhiteSpace(target))
+                    var key = new RegistryKeyPath(RegistryHive.LocalMachine, DefenderExclusionRoots[r] + "\\" + subKey);
+                    foreach (var value in _registry.GetValues(key))
                     {
-                        continue;
+                        if (!string.IsNullOrWhiteSpace(value.Name))
+                        {
+                            seen.Add((kind, value.Name.Trim().Trim('"').ToLowerInvariant()));
+                            AddExclusion(findings, exclusions, new DefenderExclusion(kind, value.Name, key.ToString(), FromPolicy: r > 0), subKey);
+                        }
                     }
-
-                    exclusions.Add(new DefenderExclusion(kind, target, key.ToString(), FromPolicy: r > 0));
-                    var (severity, note) = ClassifyExclusion(kind, target);
-                    var what = kind switch
-                    {
-                        DefenderExclusionKind.Path => "путь",
-                        DefenderExclusionKind.Process => "процесс",
-                        DefenderExclusionKind.Extension => "тип файлов",
-                        _ => "IP-адрес",
-                    };
-                    findings.Add(new ConfigFinding(ConfigArea.DefenderExclusion, AuditFinding.Create(
-                        "CFG-DEFENDER-EXCL", severity,
-                        $"Исключение встроенной защиты ({subKey})",
-                        $"Из проверки исключён {what} '{target}'. {note}",
-                        Evidence.Of("kind", subKey),
-                        Evidence.Of("target", target),
-                        Evidence.Of("key", key.ToString()))));
                 }
             }
         }
+
+        // Действующие настройки Defender (WMI MSFT_MpPreference): исключения, которых нет в прочитанных ветках реестра.
+        if (_defender is not null)
+        {
+            foreach (var exclusion in _defender.GetExclusions())
+            {
+                if (seen.Add((exclusion.Kind, exclusion.Value.Trim().Trim('"').ToLowerInvariant())))
+                {
+                    var subKey = ExclusionKinds.First(k => k.Kind == exclusion.Kind).SubKey;
+                    AddExclusion(findings, exclusions, exclusion, subKey);
+                }
+            }
+        }
+    }
+
+    private static void AddExclusion(List<ConfigFinding> findings, List<DefenderExclusion> exclusions, DefenderExclusion exclusion, string subKey)
+    {
+        var (kind, target) = (exclusion.Kind, exclusion.Value);
+        exclusions.Add(exclusion);
+        var (severity, note) = ClassifyExclusion(kind, target);
+        var what = kind switch
+        {
+            DefenderExclusionKind.Path => "путь",
+            DefenderExclusionKind.Process => "процесс",
+            DefenderExclusionKind.Extension => "тип файлов",
+            _ => "IP-адрес",
+        };
+        findings.Add(new ConfigFinding(ConfigArea.DefenderExclusion, AuditFinding.Create(
+            "CFG-DEFENDER-EXCL", severity,
+            $"Исключение встроенной защиты ({subKey})",
+            $"Из проверки исключён {what} '{target}'. {note}",
+            Evidence.Of("kind", subKey),
+            Evidence.Of("target", target),
+            Evidence.Of("key", exclusion.SourceKey))));
     }
 
     private static (Severity Severity, string Note) ClassifyExclusion(DefenderExclusionKind kind, string target)
