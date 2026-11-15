@@ -591,7 +591,13 @@ public sealed class PersistenceAuditor
         byte[] bytes;
         try
         {
-            bytes = File.ReadAllBytes(file);
+            using (var lnk = Hashing.FileHasher.OpenShared(file))
+            {
+                // Ярлык — это единицы килобайт; читаем не больше 1 МБ, чтобы подложенный огромный файл не занял память.
+                var length = (int)Math.Min(lnk.Length, 1 << 20);
+                bytes = new byte[length];
+                lnk.ReadExactly(bytes);
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -639,7 +645,7 @@ public sealed class PersistenceAuditor
         FileScanResult scan;
         try
         {
-            scan = _analyzer.Analyze(full);
+            scan = _analyzer.Analyze(full, null, new ScoreContext(PersistenceBound: true));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {

@@ -118,6 +118,13 @@ public sealed class QuarantineManager : IDisposable
             return new QuarantineResult(QuarantineStatus.Failed, "Файл уже находится в каталоге карантина.");
         }
 
+        // Самозащита: файлы ядра ОС и каталоги самого Sentinel не изолируются ни при каких вердиктах.
+        if (Scanning.SelfProtection.IsProtectedFile(fullPath, _directory))
+        {
+            return new QuarantineResult(QuarantineStatus.BlockedByWhitelist,
+                $"Изоляция запрещена: '{fullPath}' — критический файл Windows или каталог Sentinel (самозащита).");
+        }
+
         // Жёсткий запрет: белый список проверяется до любых изменений файла или его атрибутов.
         var decision = _whitelist.Evaluate(fullPath);
         if (decision.IsWhitelisted)

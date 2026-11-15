@@ -163,6 +163,12 @@ public sealed class RemediationEngine
             return "Собственный процесс Sentinel.";
         }
 
+        if (Scanning.SelfProtection.IsProtectedImageName(process.Name) || Scanning.SelfProtection.IsOwnImageName(process.Name)
+            || Scanning.SelfProtection.IsProtectedFile(process.ExecutablePath))
+        {
+            return $"'{process.Name}' — критический процесс Windows или компонент Sentinel (самозащита).";
+        }
+
         if (string.IsNullOrWhiteSpace(process.ExecutablePath))
         {
             // Путь недоступен обычно у защищённых системных процессов: по одному имени их не трогаем.
