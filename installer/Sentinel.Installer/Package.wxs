@@ -9,7 +9,7 @@
            InstallerVersion="500">
 
     <!-- Обновление поверх старой версии: старая удаляется, новая ставится; откат на более раннюю версию запрещён. -->
-    <MajorUpgrade DowngradeErrorMessage="Установлена более новая версия Sentinel. Сначала удалите её." />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Sentinel is already installed. Uninstall it first." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -34,7 +34,7 @@
         <ServiceInstall Id="SentinelServiceInstall"
                         Name="SentinelService"
                         DisplayName="Sentinel Realtime Protection"
-                        Description="Защита в реальном времени: аудит процессов, автозагрузки и файлов (Sentinel)."
+                        Description="Sentinel realtime protection: process, startup and file auditing."
                         Type="ownProcess"
                         Start="auto"
                         ErrorControl="normal"
@@ -66,7 +66,7 @@
       <Component Id="StartMenuShortcut" Directory="StartMenuFolder" Bitness="always64">
         <Shortcut Id="AppStartMenuShortcut"
                   Name="Sentinel"
-                  Description="Sentinel — защита и аудит Windows"
+                  Description="Sentinel - Windows protection and audit"
                   Target="[INSTALLFOLDER]Sentinel.App.exe"
                   WorkingDirectory="INSTALLFOLDER" />
         <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
@@ -76,7 +76,7 @@
       <Component Id="DesktopShortcut" Directory="DesktopFolder" Bitness="always64">
         <Shortcut Id="AppDesktopShortcut"
                   Name="Sentinel"
-                  Description="Sentinel — защита и аудит Windows"
+                  Description="Sentinel - Windows protection and audit"
                   Target="[INSTALLFOLDER]Sentinel.App.exe"
                   WorkingDirectory="INSTALLFOLDER" />
         <RegistryValue Root="HKCU" Key="Software\Sentinel\Installer" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />

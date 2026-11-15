@@ -44,12 +44,15 @@ $Root = Split-Path -Parent $PSScriptRoot
 if (-not $Output) { $Output = Join-Path $Root 'dist' }
 $Output = [System.IO.Path]::GetFullPath($Output)
 
+# Аргументы передаются одним массивом, а не «хвостом» параметров функции: иначе PowerShell разбирает
+# -o / -p:... как сокращения общих параметров (-OutVariable, -OutBuffer, -PipelineVariable) и падает
+# с ошибкой "Parameter name 'o' is ambiguous". Длинные флаги dotnet CLI (--output и т. д.) не конфликтуют.
 function Invoke-DotNet {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    Write-Host "> dotnet $($Arguments -join ' ')" -ForegroundColor DarkGray
-    & dotnet @Arguments
+    param([Parameter(Mandatory = $true)][string[]]$DotNetArguments)
+    Write-Host "> dotnet $($DotNetArguments -join ' ')" -ForegroundColor DarkGray
+    & dotnet $DotNetArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "dotnet $($Arguments[0]) завершился с кодом $LASTEXITCODE."
+        throw "dotnet $($DotNetArguments[0]) завершился с кодом $LASTEXITCODE."
     }
 }
 
@@ -61,8 +64,8 @@ Push-Location $Root
 try {
     if (-not $SkipTests) {
         Write-Host '== Сборка и тесты ==' -ForegroundColor Cyan
-        Invoke-DotNet build Sentinel.sln -c $Configuration -nologo
-        Invoke-DotNet test Sentinel.sln -c $Configuration --no-build -nologo
+        Invoke-DotNet -DotNetArguments @('build', 'Sentinel.sln', '--configuration', $Configuration, '--nologo')
+        Invoke-DotNet -DotNetArguments @('test', 'Sentinel.sln', '--configuration', $Configuration, '--no-build', '--nologo')
     }
 
     if (Test-Path $Output) { Remove-Item $Output -Recurse -Force }
@@ -80,12 +83,17 @@ try {
         foreach ($p in $Projects) {
             Write-Host "== Публикация $($p.Final) ==" -ForegroundColor Cyan
             $target = Join-Path $Stage ([System.IO.Path]::GetFileNameWithoutExtension($p.Final))
-            Invoke-DotNet publish $p.Project -c $Configuration -r $Runtime --self-contained true -nologo `
-                -p:PublishSingleFile=true `
-                -p:IncludeNativeLibrariesForSelfExtract=true `
-                -p:EnableCompressionInSingleFile=true `
-                -p:DebugType=none `
-                -o $target
+            Invoke-DotNet -DotNetArguments @(
+                'publish', $p.Project,
+                '--configuration', $Configuration,
+                '--runtime', $Runtime,
+                '--self-contained', 'true',
+                '--nologo',
+                '--output', $target,
+                '-p:PublishSingleFile=true',
+                '-p:IncludeNativeLibrariesForSelfExtract=true',
+                '-p:EnableCompressionInSingleFile=true',
+                '-p:DebugType=none')
 
             $exe = Join-Path $target $p.Built
             if (-not (Test-Path $exe)) { throw "После публикации не найден файл $exe." }
