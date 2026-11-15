@@ -8,15 +8,22 @@
 |---|---|
 | `src/Sentinel.Core` | Движок анализа: SHA-256, энтропия Шеннона, PE-парсер, сигнатурные правила (JSON и YARA-подобные), EICAR, проверка подписей (WinVerifyTrust + каталоги), белый список системных файлов; аудит процессов, автозагрузки/персистентности и целостности конфигурации безопасности |
 | `src/Sentinel.Cli` | Консольный интерфейс (`sentinel`) |
+| `src/Sentinel.Service` | Фоновая служба Windows (LocalSystem): защита в реальном времени и IPC-сервер |
+| `src/Sentinel.App` | Десктопное приложение WPF в тёмной теме (служба или автономный режим) |
 | `tests/Sentinel.Core.Tests` | Unit-тесты xUnit на синтетических артефактах |
 | `rules/` | Правила сигнатур (`*.json`, `*.yar`, `*.yara`, `*.rule`) |
 
 ## Сборка и тесты
 
 ```bash
+bash scripts/setup-linux.sh   # только Linux: .NET SDK 8 с Microsoft.NET.Sdk.WindowsDesktop
 dotnet build
 dotnet test
 ```
+
+WPF-проект собирается из Linux кросс-сборкой (`EnableWindowsTargeting`); запускается он только в Windows.
+SDK из репозиториев Ubuntu/Debian не содержит `Microsoft.NET.Sdk.WindowsDesktop`, поэтому
+`setup-linux.sh` при необходимости доустанавливает официальную сборку SDK.
 
 ## CLI
 
@@ -83,6 +90,49 @@ sentinel rollback list   | rollback undo <id>
 
 Интеграционные тесты для Windows работают только в изолированной ветке `HKCU\Software\TestAV`
 (на других ОС помечаются как пропущенные).
+
+## Этап 4: защита в реальном времени и приложение
+
+**Политика «Опасное сразу, спорное спросить».** Находки `High`/`Critical` нейтрализуются автоматически
+(процесс → файл → параметр), находки `Medium` ждут решения пользователя — «В карантин» или «В исключения»,
+находки ниже только фиксируются в журнале.
+
+**`allowed_exclusions.json`** (в каталоге данных; для CLI — `--allowed-exclusions <файл>`) — белый список пользователя:
+
+```json
+{ "paths": ["C:\\Dev\\Tools"], "processes": ["mytool.exe"] }
+```
+
+Файлы и процессы из списка не изолируются и не завершаются, а совпадающие с ним исключения Defender
+не удаляются при `audit-config --remediate`. Исключения по расширению, IP-адресу и с шаблонами не разрешаются никогда.
+
+**`Sentinel.Service`** — Worker Service под `LocalSystem`:
+
+- `FileSystemWatcher` по профилям пользователей, `ProgramData`, временным каталогам, задачам планировщика и `hosts`
+  с дебаунсом и отсевом системного шума;
+- аудит новых процессов каждые 15 секунд; автозагрузка и исключения конфигурации — каждые 5 минут
+  и сразу после изменения `hosts` или задач;
+- встроенный IPC-сервер на именованном канале `\\.\pipe\Sentinel.Service.v1` (JSON с префиксом длины).
+
+```powershell
+sc.exe create SentinelService binPath= "C:\Program Files\Sentinel\Sentinel.Service.exe" start= auto obj= LocalSystem
+sc.exe start SentinelService
+sentinel service-status
+```
+
+Каталог данных службы (`%ProgramData%\Sentinel`) закрыт для всех, кроме SYSTEM и администраторов; канал
+доступен только интерактивным пользователям, сетевые подключения запрещены, размер запроса ограничен.
+
+**`Sentinel.App`** подключается к службе, а если она не запущена — работает автономно через `Sentinel.Core`
+(портативный `.exe`; данные в `%ProgramData%\Sentinel` или, без прав записи, в `%LocalAppData%\Sentinel`).
+Разделы: дашборд, сканирование, угрозы и события, карантин и откат, автозагрузка и службы, история отчётов.
+Значок в трее, всплывающее окно решения по спорным объектам; `--tray` — запуск свёрнутым.
+
+**Релизные сборки:**
+
+```powershell
+.\scripts\publish-windows.ps1     # dist\Sentinel.App.exe, Sentinel.Service.exe, Sentinel.Cli.exe, rules\
+```
 
 ## Формат правил
 

@@ -482,3 +482,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Релизные сборки (scripts/publish-windows.ps1)
+/dist/
