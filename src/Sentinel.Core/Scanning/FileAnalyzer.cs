@@ -1,8 +1,11 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using Sentinel.Core.Analysis;
 using Sentinel.Core.Detection;
 using Sentinel.Core.Hashing;
 using Sentinel.Core.Pe;
+using Sentinel.Core.Scoring;
+using Sentinel.Core.ThreatIntel;
 using Sentinel.Core.Signatures;
 using Sentinel.Core.Trust;
 
@@ -10,8 +13,11 @@ namespace Sentinel.Core.Scanning;
 
 public sealed class FileAnalyzerOptions
 {
-    /// <summary>Максимум байт, загружаемых для сигнатурного поиска. Хеш всегда считается по всему файлу.</summary>
-    public long MaxScanBytes { get; init; } = 64L * 1024 * 1024;
+    /// <summary>
+    /// Размер окна (первые байты файла), загружаемого в память для сигнатурного поиска. SHA-256 и энтропия
+    /// всегда считаются потоком по всему файлу буфером 64 КБ, поэтому память не зависит от размера файла.
+    /// </summary>
+    public long MaxScanBytes { get; init; } = 16L * 1024 * 1024;
 
     /// <summary>Проверять подпись только у PE-файлов (неисполняемые файлы Authenticode не несут).</summary>
     public bool VerifySignatureOnlyForPe { get; init; } = true;
@@ -20,7 +26,13 @@ public sealed class FileAnalyzerOptions
     /// Лимит сигнатурного поиска для приоритетной глубокой проверки (файлы, скрытые от встроенной
     /// защиты исключениями). Заметно выше обычного: такие файлы проверяются целиком.
     /// </summary>
-    public long DeepMaxScanBytes { get; init; } = 512L * 1024 * 1024;
+    public long DeepMaxScanBytes { get; init; } = 128L * 1024 * 1024;
+
+    /// <summary>Проверка пользовательского списка <c>allowed_exclusions.json</c> (−100 к баллу).</summary>
+    public Func<string, bool>? IsUserAllowed { get; init; }
+
+    /// <summary>Порог балла, с которого неподписанный файл отправляется на облачную проверку хеша.</summary>
+    public int CloudLookupScore { get; init; } = 45;
 }
 
 /// <summary>
@@ -44,13 +56,20 @@ public sealed record PriorityScanContext(string Reason)
 /// </summary>
 public sealed class FileAnalyzer
 {
+    private const int StreamBufferSize = 64 * 1024;
+
     private readonly SignatureEngine _engine;
     private readonly ISignatureVerifier _verifier;
     private readonly IWhitelistProvider? _whitelist;
     private readonly FileAnalyzerOptions _options;
+    private readonly IThreatHashLookup? _intel;
+    private readonly ICloudReputationProvider? _cloud;
 
-    public FileAnalyzer(SignatureEngine engine, ISignatureVerifier verifier, IWhitelistProvider? whitelist = null, FileAnalyzerOptions? options = null)
+    public FileAnalyzer(SignatureEngine engine, ISignatureVerifier verifier, IWhitelistProvider? whitelist = null, FileAnalyzerOptions? options = null,
+        IThreatHashLookup? threatIntel = null, ICloudReputationProvider? cloud = null)
     {
+        _intel = threatIntel;
+        _cloud = cloud;
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(verifier);
         _engine = engine;
@@ -62,18 +81,20 @@ public sealed class FileAnalyzer
     /// <summary>Белый список, с которым работает анализатор (его же обязаны использовать карантин и нейтрализация).</summary>
     public IWhitelistProvider? Whitelist => _whitelist;
 
-    public FileScanResult Analyze(string path) => Analyze(path, null);
+    public FileScanResult Analyze(string path) => Analyze(path, null, null);
+
+    public FileScanResult Analyze(string path, PriorityScanContext? priority) => Analyze(path, priority, null);
 
     /// <summary>
     /// Анализ файла; при заданном <paramref name="priority"/> — приоритетная глубокая проверка
     /// (см. <see cref="PriorityScanContext"/>).
     /// </summary>
-    public FileScanResult Analyze(string path, PriorityScanContext? priority)
+    public FileScanResult Analyze(string path, PriorityScanContext? priority, ScoreContext? context)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         try
         {
-            return AnalyzeCore(Path.GetFullPath(path), priority);
+            return AnalyzeCore(Path.GetFullPath(path), priority, context ?? ScoreContext.None);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -81,53 +102,56 @@ public sealed class FileAnalyzer
         }
     }
 
-    private FileScanResult AnalyzeCore(string path, PriorityScanContext? priority)
+    private FileScanResult AnalyzeCore(string path, PriorityScanContext? priority, ScoreContext context)
     {
-        // Массив байтов ограничен int.MaxValue, поэтому даже глубокий лимит не превышает ~2 ГБ.
         var maxScan = priority is null
             ? _options.MaxScanBytes
             : Math.Min(Math.Max(_options.MaxScanBytes, _options.DeepMaxScanBytes), Array.MaxLength);
+
+        // Один проход потоком по всему файлу: SHA-256 (IncrementalHash), гистограмма для энтропии Шеннона
+        // и копия ограниченного окна для сигнатурного поиска. Весь файл в память не загружается.
         byte[] content;
         string sha256;
         long size;
         bool truncated;
-        using (var stream = FileHasher.OpenShared(path))
+        double entropy;
+        PeParseResult pe;
+        using var stream = FileHasher.OpenShared(path);
         {
             size = stream.Length;
             truncated = size > maxScan;
-            var toRead = (int)Math.Min(size, maxScan);
-            content = new byte[toRead];
-            stream.ReadExactly(content);
-            if (truncated)
+            content = new byte[(int)Math.Min(size, maxScan)];
+            var counts = new long[256];
+            using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = ArrayPool<byte>.Shared.Rent(StreamBufferSize);
+            try
             {
-                using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                sha.AppendData(content);
-                var buffer = new byte[1 << 16];
+                var filled = 0;
                 int read;
-                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                while ((read = stream.Read(buffer, 0, StreamBufferSize)) > 0)
                 {
                     sha.AppendData(buffer, 0, read);
+                    for (var i = 0; i < read; i++)
+                    {
+                        counts[buffer[i]]++;
+                    }
+
+                    if (filled < content.Length)
+                    {
+                        var take = Math.Min(read, content.Length - filled);
+                        Buffer.BlockCopy(buffer, 0, content, filled, take);
+                        filled += take;
+                    }
                 }
-
-                sha256 = Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
             }
-            else
+            finally
             {
-                sha256 = FileHasher.ComputeSha256(content);
+                ArrayPool<byte>.Shared.Return(buffer);
             }
-        }
 
-        var entropy = EntropyCalculator.Calculate(content);
-        PeParseResult pe;
-        if (truncated)
-        {
-            using var s = FileHasher.OpenShared(path);
-            pe = PeParser.Parse(s);
-        }
-        else
-        {
-            using var ms = new MemoryStream(content, writable: false);
-            pe = PeParser.Parse(ms);
+            sha256 = Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
+            entropy = EntropyCalculator.FromHistogram(counts, size);
+            pe = PeParser.Parse(stream);
         }
 
         SignatureVerificationResult? signature = null;
@@ -137,12 +161,16 @@ public sealed class FileAnalyzer
         }
 
         var whitelist = _whitelist?.Evaluate(path);
+        var microsoftTrusted = whitelist is { IsWhitelisted: true };
+        var signatureValid = signature is { IsValid: true };
 
         var detections = new List<Detection>();
+        string? definitive = null;
         if (Eicar.IsEicar(content))
         {
             detections.Add(new Detection(Eicar.DetectionName, Severity.High, "test", DetectionSource.Builtin, null,
                 "Стандартный антивирусный тестовый файл EICAR (безопасен).", [new PatternHit("eicar", 0)]));
+            definitive = "EICAR";
         }
 
         foreach (var m in _engine.Scan(content, size, sha256))
@@ -155,19 +183,59 @@ public sealed class FileAnalyzer
 
             detections.Add(new Detection(m.RuleName, m.Severity, m.Category, DetectionSource.Signature, m.RuleId,
                 m.MatchedByHash ? $"{m.Description} (совпадение по SHA-256)" : m.Description, m.Hits));
-        }
-
-        if (pe is { IsPe: true, Info: { } info } && signature is not { IsValid: true })
-        {
-            var packed = info.Sections.FirstOrDefault(s => s.IsExecutable && s.Entropy >= EntropyCalculator.HighEntropyThreshold);
-            if (packed is not null)
+            if (m.Severity >= Severity.Medium)
             {
-                detections.Add(new Detection("Heuristic.PackedUnsignedPE", Severity.Medium, "packer", DetectionSource.Heuristic, null,
-                    $"Неподписанный PE с упакованной исполняемой секцией '{packed.Name}' (энтропия {packed.Entropy:F2}).", []));
+                definitive ??= m.RuleName;
             }
         }
 
-        if (priority is not null && signature is not { IsValid: true })
+        if (_intel is not null && _intel.TryGetFamily(sha256, out var family))
+        {
+            detections.Add(new Detection($"ThreatDB.{family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
+                $"SHA-256 найден в базе известных угроз ({family ?? "семейство не указано"}).", []));
+            definitive = $"ThreatDB.{family}";
+        }
+
+        ThreatScore? score = null;
+        if (pe is { IsPe: true, Info: { } info })
+        {
+            var imports = signatureValid ? new HashSet<string>() : PeImportReader.ReadFunctionNames(stream, info);
+            var input = new ScoringInput
+            {
+                Path = path,
+                Pe = info,
+                Entropy = entropy,
+                SignatureValid = signatureValid,
+                MicrosoftTrusted = microsoftTrusted,
+                UserAllowed = _options.IsUserAllowed?.Invoke(path) ?? false,
+                DefinitiveMatch = definitive,
+                Imports = imports,
+                Markers = FindMarkers(content, imports),
+                PersistenceBound = context.PersistenceBound,
+                ObfuscatedCommandLine = context.ObfuscatedCommandLine,
+            };
+            score = ThreatScoringEngine.Evaluate(input);
+
+            // Облако: только хеш и только для неподписанных файлов с подозрительным баллом.
+            if (_cloud is not null && !signatureValid && !microsoftTrusted && score.Value >= _options.CloudLookupScore && definitive is null)
+            {
+                var cloud = _cloud.Lookup(sha256);
+                if (cloud.Reputation == CloudReputation.Malicious)
+                {
+                    score = ThreatScoringEngine.Evaluate(input with { CloudMalicious = $"{cloud.Source} {cloud.Detail}".Trim() });
+                    detections.Add(new Detection($"Cloud.{cloud.Source}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
+                        $"Облачная репутация ({cloud.Source}): хеш признан вредоносным. {cloud.Detail}".Trim(), []));
+                }
+            }
+
+            if (definitive is null && score.Level is { } level && level >= Severity.Low)
+            {
+                detections.Add(new Detection("Heuristic.ThreatScore", level, "score", DetectionSource.Heuristic, null,
+                    $"Балл угрозы {score.Value}/100: {score.Describe()}.", []));
+            }
+        }
+
+        if (priority is not null && !signatureValid)
         {
             var isScript = PriorityScanContext.ScriptExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
             if (pe.IsPe || isScript)
@@ -177,7 +245,7 @@ public sealed class FileAnalyzer
             }
         }
 
-        var verdict = whitelist is { IsWhitelisted: true } ? Verdict.Trusted : VerdictFrom(detections);
+        var verdict = microsoftTrusted ? Verdict.Trusted : VerdictFrom(detections);
 
         return new FileScanResult
         {
@@ -192,7 +260,49 @@ public sealed class FileAnalyzer
             Detections = detections,
             Verdict = verdict,
             PriorityReason = priority?.Reason,
+            Score = score,
         };
+    }
+
+    private static HashSet<string> FindMarkers(byte[] content, IReadOnlySet<string> imports)
+    {
+        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Probe(string text)
+        {
+            if (ContainsText(content, text))
+            {
+                found.Add(text);
+            }
+        }
+
+        if (imports.Contains("MiniDumpWriteDump"))
+        {
+            Probe("lsass");
+            Probe("SeDebugPrivilege");
+        }
+
+        if (imports.Contains("VirtualProtect"))
+        {
+            Probe("AmsiScanBuffer");
+            Probe("EtwEventWrite");
+        }
+
+        return found;
+    }
+
+    /// <summary>Поиск строки в содержимом в кодировках ASCII и UTF-16LE (без учёта регистра для ASCII-варианта).</summary>
+    private static bool ContainsText(ReadOnlySpan<byte> content, string text)
+    {
+        if (content.IndexOf(System.Text.Encoding.ASCII.GetBytes(text)) >= 0
+            || content.IndexOf(System.Text.Encoding.Unicode.GetBytes(text)) >= 0)
+        {
+            return true;
+        }
+
+        var lower = text.ToLowerInvariant();
+        return !string.Equals(lower, text, StringComparison.Ordinal)
+            && (content.IndexOf(System.Text.Encoding.ASCII.GetBytes(lower)) >= 0
+                || content.IndexOf(System.Text.Encoding.Unicode.GetBytes(lower)) >= 0);
     }
 
     internal static Verdict VerdictFrom(IReadOnlyCollection<Detection> detections)
@@ -205,4 +315,10 @@ public sealed class FileAnalyzer
         var max = detections.Max(d => d.Severity);
         return max >= Severity.High ? Verdict.Malicious : max >= Severity.Low ? Verdict.Suspicious : Verdict.Clean;
     }
+}
+
+/// <summary>Сведения об использовании файла, которые повышают балл угрозы: автозагрузка и обфусцированная командная строка.</summary>
+public sealed record ScoreContext(bool PersistenceBound = false, bool ObfuscatedCommandLine = false)
+{
+    public static ScoreContext None { get; } = new();
 }

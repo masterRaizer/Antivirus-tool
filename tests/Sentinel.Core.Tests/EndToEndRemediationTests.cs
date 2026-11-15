@@ -181,7 +181,7 @@ public class EndToEndRemediationTests
         Assert.Equal("audit", report.Mode);
         Assert.Equal(3, report.Findings.Count(f => f.Key.StartsWith("excl:", StringComparison.Ordinal)));
         Assert.Contains(report.Findings, f => f.Path == s.Miner && f.Sha256 == FileHasher.ComputeSha256(s.MinerBytes) && f.Severity == Severity.High);
-        Assert.Contains(report.Findings, f => f.Path == s.Dropper && f.Rule.Contains("Heuristic.PackedUnsignedPE", StringComparison.Ordinal));
+        Assert.Contains(report.Findings, f => f.Path == s.Dropper && f.Rule.Contains("Heuristic.DefenderExcludedExecutable", StringComparison.Ordinal));
         Assert.Contains(report.Findings, f => f.Key == ReportBuilder.ProcessKey(MinerPid) && f.Rule.Contains("PROC-DEFENDER-EXCLUDED", StringComparison.Ordinal));
         Assert.Contains(report.Findings, f => f.Area == "Автозагрузка" && f.Name.StartsWith("WindowsUpdateSvc", StringComparison.Ordinal));
         Assert.Contains(report.Findings, f => f.Rule.Contains("PERS-HOSTS-SECURITY", StringComparison.Ordinal));
