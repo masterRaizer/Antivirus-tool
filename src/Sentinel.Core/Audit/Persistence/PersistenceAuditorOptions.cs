@@ -1,7 +1,7 @@
 namespace Sentinel.Core.Audit.Persistence;
 
 /// <summary>Параметры аудита персистентности. Каталоги инъектируются ради тестируемости на Linux.</summary>
-public sealed class PersistenceAuditorOptions
+public sealed record PersistenceAuditorOptions
 {
     public string WindowsDirectory { get; init; } = DefaultWindows();
 

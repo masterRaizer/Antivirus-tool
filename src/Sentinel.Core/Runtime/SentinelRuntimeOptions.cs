@@ -27,6 +27,9 @@ public sealed class SentinelRuntimeOptions
     public string Mode { get; init; } = "standalone";
 
     public required FileAnalyzer Analyzer { get; init; }
+
+    /// <summary>Общие сервисы (база угроз, облако, конфигурация); <c>null</c> в тестах с подставным анализатором.</summary>
+    public SentinelServices? Services { get; init; }
     public required QuarantineManager Quarantine { get; init; }
 
     /// <summary>Движок нейтрализации; <c>null</c> — действия над системой недоступны (не Windows).</summary>
@@ -62,10 +65,10 @@ public sealed class SentinelRuntimeOptions
     public static SentinelRuntimeOptions CreateDefault(string mode, string? dataDirectory = null, string? rulesDirectory = null)
     {
         var data = Path.GetFullPath(dataDirectory ?? DefaultDataDirectory());
-        var rules = RuleLoader.LoadDirectory(rulesDirectory ?? DefaultRulesDirectory());
-        var verifier = SignatureVerifierFactory.CreateDefault();
-        var whitelist = new SystemWhitelist(verifier, WhitelistOptions.CreateDefault());
-        var analyzer = new FileAnalyzer(new SignatureEngine(rules), verifier, whitelist);
+        var services = SentinelServices.Create(data, rulesDirectory ?? DefaultRulesDirectory());
+        var rules = services.Rules;
+        var whitelist = services.Whitelist;
+        var analyzer = services.Analyzer;
         var quarantine = new QuarantineManager(whitelist, new QuarantineOptions { QuarantineDirectory = Path.Combine(data, "Quarantine") });
 
         RemediationEngine? engine = null;
@@ -82,8 +85,8 @@ public sealed class SentinelRuntimeOptions
             var wmi = new WindowsWmiSubscriptionProvider();
             var certificates = new WindowsRootCertificateProvider();
             var defenderExclusions = new WindowsDefenderExclusionSource();
-            persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault(), registry, tasks, wmi, analyzer).Audit();
-            config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault(), registry, certificates, defenderExclusions).Audit();
+            persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, tasks, wmi, analyzer).Audit();
+            config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, certificates, defenderExclusions, analyzer).Audit();
         }
 
         return new SentinelRuntimeOptions
@@ -101,6 +104,7 @@ public sealed class SentinelRuntimeOptions
             QuickScanRoots = DefaultQuickRoots(),
             FullScanRoots = DefaultFullRoots(),
             RulesLoaded = rules.Rules.Count,
+            Services = services,
         };
     }
 

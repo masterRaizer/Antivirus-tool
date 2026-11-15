@@ -4,7 +4,7 @@ using Sentinel.Core.Signatures;
 namespace Sentinel.Core.Audit.Config;
 
 /// <summary>Параметры аудита целостности конфигурации безопасности.</summary>
-public sealed class ConfigIntegrityAuditorOptions
+public sealed record ConfigIntegrityAuditorOptions
 {
     /// <summary>Доверенные каталоги бинарников (для оценки правил брандмауэра и исключений).</summary>
     public IReadOnlyList<string> TrustedBinaryDirectories { get; init; } = [];
