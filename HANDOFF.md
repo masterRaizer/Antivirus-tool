@@ -16,9 +16,10 @@
 | 4 | `allowed_exclusions.json`, диспетчер «опасное сразу, спорное спросить», IPC по Named Pipes, `SentinelRuntime`, `Sentinel.Service`, `Sentinel.App` (WPF), `scripts/publish-windows.ps1` | Готов (5/5). Linux, SDK 8.0.428: build 0 ошибок / 0 предупреждений; 403 теста — 399 passed, 0 failed, 4 skipped (`WindowsFact`). На Windows не запускался |
 
 | 5 | Релизы в GitHub Actions: `.github/workflows/release.yml` (windows-latest: тесты, `publish-windows.ps1`, MSI на WiX 5.0.2, GitHub Release с `.msi` и `Sentinel.App.exe`), `installer/Sentinel.Installer/` (вне `Sentinel.sln`), шаблон `allowed_exclusions.json` | Release `v1.0.0` опубликован (run на `main` зелёный: тесты, publish, MSI). Linux: build 0/0, 411 тестов — 407 passed, 4 skipped. Запуск MSI/службы/WPF на живой Windows не проверялся |
+| 6 | Версия 1.1.0: скоринг угроз (0–100), потоковый `FileAnalyzer`, импорт PE и .NET, режимы Quick/Full/Custom с защитой от ReparsePoint, кэш чистых файлов, самозащита; база угроз `data/threat_hashes.bin` (11 743 SHA-256, MemoryMappedFile) с обновлятором (GitHub IOC, Feodo, abuse.ch API по ключу) и облачной проверкой по ключу; пул проверки (процессы `Sentinel.Cli.exe --scan-worker` или потоки); исправления по отчёту 1.0.0 (hosts, брандмауэр, сертификаты, WMI, IEX, geosite.dat); ACL канала для AuthenticatedUsers, автоподключение 2 с, «Запустить службу»; WPF — контраст, виртуализация, группировка Info, раздел «Настройки и базы»; WiX 1.1.0 с базой и восстановлением службы | Linux, Release: build 0/0, 538 тестов — 533 passed, 5 skipped (Windows-only). Сканирование памяти процессов, перехват запуска процессов и USB-щит в 1.1.0 не входят |
 
 ## Следующие шаги
-1. Проверка на Windows (см. ниже): установка MSI из релиза `v1.0.0`, запуск службы и `Sentinel.App.exe`. `publish-windows.ps1` в CI отработал.
+1. Проверка на Windows: установка MSI `v1.1.0` поверх `v1.0.0` (MajorUpgrade, сохранность `C:\ProgramData\Sentinel\allowed_exclusions.json`), запуск службы, автоподключение приложения, все 7 разделов, «Обновить базы».
 2. По итогам проверки — правки UI/службы; слияние ветки в `main` по решению пользователя.
 3. После каждого модуля обновлять этот файл.
 
@@ -38,3 +39,11 @@ dotnet build Sentinel.sln
 dotnet test Sentinel.sln
 ```
 SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Для сборки WPF нужен SDK с `Microsoft.NET.Sdk.WindowsDesktop`: в apt-пакете Ubuntu его нет, `setup-linux.sh` доустанавливает сборку Microsoft в `/usr/local/share/dotnet-ms`.
+
+## Не проверено в 1.1.0 (только Linux-тесты и компиляция)
+- Пул из процессов `Sentinel.Cli.exe --scan-worker` на Windows (на Linux проверен с `dotnet sentinel.dll`), скорость объектов/сек на живом диске, время замены упавшего рабочего.
+- `NamedPipeServerStreamAcl` с правилом AuthenticatedUsers и подключение приложения пользователя к службе SYSTEM; кнопка «Запустить службу» (UAC).
+- `WindowsDefenderExclusionSource` (CIM `MSFT_MpPreference`), чтение `LocalMachine\AuthRoot` и `CurrentUser\Root`.
+- Обновление баз с реальной сетью (`api.github.com`, `raw.githubusercontent.com`, Feodo Tracker, abuse.ch API с ключом), облачные Kaspersky OpenTIP и VirusTotal.
+- WPF 1.1.0: внешний вид тёмной темы, группировка Expander, раздел «Настройки и базы», PasswordBox.
+- WiX: `ServiceConfigFailureActions`, обновление поверх 1.0.0.

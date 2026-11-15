@@ -37,7 +37,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void Firewall_TcpAndUdpRulesOfOneApp_ProduceOneCard()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var app = tmp.Write(Path.Combine("AppData", "Local", "Programs", "Opera GX", "opera.exe"), SyntheticBytes());
         var reg = FirewallWith(("{1}", "opera.exe", app, "In", "6"), ("{2}", "opera.exe", app, "In", "17"));
 
@@ -50,7 +50,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void Firewall_TrustedPublisherSignature_IsClean()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var app = tmp.Write(Path.Combine("AppData", "Local", "Programs", "Discord", "Discord.exe"), SyntheticBytes());
         var verifier = FakeVerifier.Valid("CN=Discord Inc., O=Discord Inc., L=San Francisco, S=California, C=US");
         Assert.Empty(Firewall(FirewallWith(("{1}", "Discord", app, "In", "6")), Analyzer(verifier)));
@@ -59,7 +59,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void Firewall_ValidSignatureOfUnknownPublisher_IsNotTrustedAutomatically()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var app = tmp.Write(Path.Combine("AppData", "Local", "Programs", "Tool", "tool.exe"), SyntheticBytes());
         var verifier = FakeVerifier.Valid("CN=Red Fox UK Limited, O=Red Fox UK Limited");
         var finding = Assert.Single(Firewall(FirewallWith(("{1}", "tool", app, "In", "6")), Analyzer(verifier)));
@@ -69,7 +69,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void Firewall_AppInTemp_IsHigh_AndAllowListSilencesIt()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var app = tmp.Write(Path.Combine("Users", "Bob", "AppData", "Local", "Temp", "dropper.exe"), SyntheticBytes());
         var reg = FirewallWith(("{1}", "dropper", app, "In", "6"));
 
@@ -81,7 +81,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void Firewall_HighThreatScore_IsHighEvenOutsideTemp()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var app = tmp.Write(Path.Combine("AppData", "Local", "Programs", "Bad", "bad.exe"), Sentinel.Core.Detection.Eicar.CreateTestFileBytes());
         var finding = Assert.Single(Firewall(FirewallWith(("{1}", "bad", app, "In", "6")), Analyzer(new UnavailableSignatureVerifier())));
         Assert.Equal(Severity.High, finding.Severity);
@@ -165,7 +165,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void ServiceInUserDirectory_SignedByMicrosoftOrGoogle_IsNotFlagged_ButUnknownPublisherDriverIs()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var defender = tmp.Write(Path.Combine("ProgramData", "Microsoft", "Windows Defender", "Platform", "MpDefenderCoreService.exe"), SyntheticBytes());
         var driver = tmp.Write(Path.Combine("Users", "Bob", "AppData", "Local", "Temp", "72r2MSxm.sys"), SyntheticBytes());
         var reg = new InMemoryRegistryProvider();
@@ -182,7 +182,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void ServiceInUserDirectory_AllowedByUser_IsNotFlagged()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var tool = tmp.Write(Path.Combine("Users", "Bob", "AppData", "Local", "Tool", "svc.exe"), SyntheticBytes());
         var reg = new InMemoryRegistryProvider();
         Service(reg, "ToolSvc", "\"" + tool + "\"", "2");
@@ -193,7 +193,7 @@ public class AuditNoiseReductionTests
     [Fact]
     public void ScheduledTaskAndStartup_SignedByGoogle_AreNotFlagged()
     {
-        using var tmp = new TempDir();
+        using var tmp = TempDir.OutsideSystemTemp();
         var updater = tmp.Write(Path.Combine("Users", "Bob", "AppData", "Local", "Google", "GoogleUpdater", "updater.exe"), SyntheticBytes());
         var task = new ScheduledTaskInfo("GoogleUpdaterTask", "\\GoogleUser\\GoogleUpdater\\Task", true, [new ScheduledTaskAction(updater, "--wake")]);
         var report = Persistence(new InMemoryRegistryProvider(), Analyzer(FakeVerifier.Valid("CN=Google LLC, O=Google LLC, L=Mountain View")), tasks: new FakeTaskProvider(task));

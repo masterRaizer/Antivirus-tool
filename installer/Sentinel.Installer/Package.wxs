@@ -15,6 +15,7 @@
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Sentinel">
         <Directory Id="RulesFolder" Name="rules" />
+        <Directory Id="DataFolder" Name="data" />
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
@@ -34,12 +35,19 @@
         <ServiceInstall Id="SentinelServiceInstall"
                         Name="SentinelService"
                         DisplayName="Sentinel Realtime Protection"
-                        Description="Sentinel realtime protection: process, startup and file auditing."
+                        Description="Sentinel realtime protection: file, process, startup and configuration auditing; threat database updates."
                         Type="ownProcess"
                         Start="auto"
                         ErrorControl="normal"
                         Account="LocalSystem"
-                        Vital="yes" />
+                        Vital="yes">
+          <!-- Восстановление после сбоя: перезапуск через 5 с, затем через 30 с и 60 с; счётчик сбоев сбрасывается за сутки. -->
+          <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
+            <Failure Action="restartService" Delay="5000" />
+            <Failure Action="restartService" Delay="30000" />
+            <Failure Action="restartService" Delay="60000" />
+          </ServiceConfigFailureActions>
+        </ServiceInstall>
         <ServiceControl Id="SentinelServiceControl"
                         Name="SentinelService"
                         Start="install"
@@ -52,9 +60,21 @@
         <File Id="SentinelCliExe" Source="$(DistDir)Sentinel.Cli.exe" KeyPath="yes" />
       </Component>
 
+      <!-- Шаблон белого списка в каталоге программы. Рабочий список пользователя служба хранит в
+           C:\ProgramData\Sentinel\allowed_exclusions.json: установщик этот каталог не создаёт, не перезаписывает
+           и не удаляет, поэтому при обновлении 1.0.0 → 1.1.0 и при удалении программы пользовательские данные сохраняются. -->
       <Component Id="AllowedExclusions" Bitness="always64">
         <File Id="AllowedExclusionsJson" Source="$(DistDir)allowed_exclusions.json" KeyPath="yes" />
       </Component>
+
+      <Component Id="ThirdPartyNotices" Bitness="always64">
+        <File Id="ThirdPartyNoticesMd" Source="$(DistDir)THIRD_PARTY_NOTICES.md" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Стартовая база угроз data\threat_hashes.bin (обновлённая копия ведётся службой в каталоге данных). -->
+    <ComponentGroup Id="DataComponents" Directory="DataFolder">
+      <Files Include="$(DistDir)data\**" />
     </ComponentGroup>
 
     <!-- Каталог rules\ копируется целиком (все файлы из dist\rules). -->
@@ -86,6 +106,7 @@
     <Feature Id="Main" Title="Sentinel" Level="1">
       <ComponentGroupRef Id="ProgramComponents" />
       <ComponentGroupRef Id="RulesComponents" />
+      <ComponentGroupRef Id="DataComponents" />
       <ComponentGroupRef Id="ShortcutComponents" />
     </Feature>
 

@@ -8,6 +8,17 @@ internal sealed class TempDir : IDisposable
         Path = Directory.CreateTempSubdirectory("sentinel-tests-").FullName;
     }
 
+    private TempDir(string root)
+    {
+        Path = Directory.CreateDirectory(System.IO.Path.Combine(root, "sentinel-tests-" + Guid.NewGuid().ToString("N"))).FullName;
+    }
+
+    /// <summary>
+    /// Каталог вне системного %TEMP% (рядом со сборкой тестов). Нужен тестам, где важно, что путь НЕ временный:
+    /// в Windows %TEMP% лежит в ...\AppData\Local\Temp\ и сам по себе считается подозрительным расположением.
+    /// </summary>
+    public static TempDir OutsideSystemTemp() => new(System.IO.Path.Combine(AppContext.BaseDirectory, "test-data"));
+
     public string Path { get; }
 
     public string Write(string name, byte[] content)
