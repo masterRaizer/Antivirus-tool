@@ -61,7 +61,9 @@ public static partial class InterpreterHeuristics
                 Evidence.Of("name", name), Evidence.Of("cmdline", commandLine)));
         }
 
-        if (lower.Contains("iex", StringComparison.Ordinal) || lower.Contains("invoke-expression", StringComparison.Ordinal))
+        // IEX ищется только среди аргументов и только как отдельное слово: имя исполняемого файла (например msiexec.exe)
+        // и слова, содержащие «iex» внутри, не считаются.
+        if (IexRegex().IsMatch(string.Join(' ', args).ToLowerInvariant()))
         {
             findings.Add(AuditFinding.Create("PROC-CMD-IEX", Severity.High,
                 "Динамическое исполнение выражения",
@@ -173,6 +175,9 @@ public static partial class InterpreterHeuristics
 
     [GeneratedRegex(@"downloadstring|downloadfile|downloaddata|invoke-webrequest|invoke-restmethod|\bwebclient\b|start-bitstransfer|\biwr\b|\bcurl\b|\bwget\b", RegexOptions.IgnoreCase)]
     private static partial Regex DownloadRegex();
+
+    [GeneratedRegex(@"(?<![a-zA-Z0-9_-])iex(?![a-zA-Z0-9_-])|invoke-expression", RegexOptions.IgnoreCase)]
+    private static partial Regex IexRegex();
 
     [GeneratedRegex(@"certutil.*(urlcache|-decode|/decode|-urlcache)", RegexOptions.IgnoreCase)]
     private static partial Regex CertutilRegex();

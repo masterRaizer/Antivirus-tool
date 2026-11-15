@@ -24,6 +24,8 @@
       "category": "miner",
       "description": "Ссылки на популярные публичные майнинг-пулы Monero",
       "tags": ["miner"],
+      "appliesTo": ["executable", "script", "config"],
+      "excludeFileNames": ["geosite.dat", "geoip.dat", "geoip.metadb", "country.mmdb", "geosite.db", "geoip.db"],
       "strings": [
         { "id": "$p1", "text": "pool.minexmr.com", "nocase": true, "ascii": true, "wide": true },
         { "id": "$p2", "text": "xmr.2miners.com", "nocase": true, "ascii": true, "wide": true },

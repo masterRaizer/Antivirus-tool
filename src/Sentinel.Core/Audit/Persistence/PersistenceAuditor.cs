@@ -239,7 +239,7 @@ public sealed class PersistenceAuditor
             var scan = AnalyzeResolvedTarget(resolved, findings, key.ToString());
 
             if (resolved is not null && !PathClassifier.IsInTrustedDirectory(resolved, _options.TrustedBinaryDirectories)
-                && PathClassifier.IsUserWritableLocation(resolved))
+                && PathClassifier.IsUserWritableLocation(resolved) && !IsTrustedTarget(resolved, ref scan))
             {
                 findings.Add(AuditFinding.Create("PERS-SERVICE-USERWRITABLE",
                     autoStart ? Severity.High : Severity.Medium,
@@ -282,7 +282,7 @@ public sealed class PersistenceAuditor
                 var scan = AnalyzeResolvedTarget(resolved, findings, task.Path);
 
                 if (resolved is not null && !PathClassifier.IsInTrustedDirectory(resolved, _options.TrustedBinaryDirectories)
-                    && PathClassifier.IsUserWritableLocation(resolved))
+                    && PathClassifier.IsUserWritableLocation(resolved) && !IsTrustedTarget(resolved, ref scan))
                 {
                     findings.Add(AuditFinding.Create("PERS-TASK-USERWRITABLE", Severity.Medium,
                         "Задача запускает файл из пользовательского каталога",
@@ -316,11 +316,26 @@ public sealed class PersistenceAuditor
 
     // ---- Подписки WMI ----------------------------------------------------------
 
+    /// <summary>Встроенные потребители событий Windows: <c>SCM Event Log Consumer</c> (<c>NTEventLogEventConsumer</c>) создаётся самой системой.</summary>
+    internal static bool IsBuiltInWmiConsumer(WmiConsumer consumer) =>
+        string.Equals(consumer.Name, "SCM Event Log Consumer", StringComparison.OrdinalIgnoreCase)
+        && !consumer.ConsumerType.Contains("CommandLine", StringComparison.OrdinalIgnoreCase)
+        && !consumer.ConsumerType.Contains("ActiveScript", StringComparison.OrdinalIgnoreCase)
+        && string.IsNullOrWhiteSpace(consumer.ExecutablePath)
+        && string.IsNullOrWhiteSpace(consumer.CommandLineTemplate)
+        && string.IsNullOrWhiteSpace(consumer.ScriptText);
+
     private void AuditWmi(List<PersistenceEntry> entries)
     {
         var snapshot = _wmi!.GetSubscriptions();
         foreach (var consumer in snapshot.Consumers)
         {
+            // Штатный потребитель Windows (журнал событий служб) — не персистентность.
+            if (IsBuiltInWmiConsumer(consumer))
+            {
+                continue;
+            }
+
             var command = consumer.CommandLineTemplate ?? consumer.ExecutablePath;
             var findings = new List<AuditFinding>
             {
@@ -399,7 +414,7 @@ public sealed class PersistenceAuditor
                 {
                     scan = AnalyzeResolvedTarget(target, findings, file);
                     if (!PathClassifier.IsInTrustedDirectory(target, _options.TrustedBinaryDirectories)
-                        && PathClassifier.IsUserWritableLocation(target))
+                        && PathClassifier.IsUserWritableLocation(target) && !IsTrustedTarget(target, ref scan))
                     {
                         findings.Add(AuditFinding.Create("PERS-STARTUP-USERWRITABLE", Severity.Medium,
                             "Автозагрузка указывает в пользовательский каталог",
@@ -612,6 +627,45 @@ public sealed class PersistenceAuditor
         }
 
         return (null, file);
+    }
+
+    /// <summary>
+    /// Цель автозапуска из пользовательского каталога не считается подозрительной, если файл подписан действительной подписью
+    /// доверенного издателя (Microsoft, Google, Ollama…) либо внесён пользователем в <c>allowed_exclusions.json</c>.
+    /// Подпись проверяется здесь же, если анализ цели не выполнялся.
+    /// </summary>
+    private bool IsTrustedTarget(string target, ref FileScanResult? scan)
+    {
+        string full;
+        try
+        {
+            full = Environment.ExpandEnvironmentVariables(target);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        if (_options.IsUserAllowed?.Invoke(full) == true)
+        {
+            return true;
+        }
+
+        var signature = scan?.Signature;
+        if (signature is null && _analyzer is not null && File.Exists(full))
+        {
+            try
+            {
+                scan = _analyzer.Analyze(full, null, new ScoreContext(PersistenceBound: true));
+                signature = scan.Signature;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                return false;
+            }
+        }
+
+        return TrustedPublishers.IsTrusted(signature);
     }
 
     private FileScanResult? AnalyzeTargetFile(string? command, List<AuditFinding> findings, string context) =>

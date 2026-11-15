@@ -173,7 +173,7 @@ public sealed class FileAnalyzer
             definitive = "EICAR";
         }
 
-        foreach (var m in _engine.Scan(content, size, sha256))
+        foreach (var m in _engine.Scan(content, size, sha256, new ScanTarget(path, pe.IsPe)))
         {
             // Встроенный EICAR-детект уже сработал — не дублируем правило с тем же смыслом.
             if (m.Category == "test" && detections.Any(d => d.Source == DetectionSource.Builtin && d.Category == "test"))

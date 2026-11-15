@@ -76,6 +76,43 @@ public sealed class SignatureRule
     public IReadOnlySet<string> Sha256 { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     public Condition? Condition { get; init; }
     public required string SourceFile { get; init; }
+
+    /// <summary>
+    /// Типы файлов, к которым применимо правило: <c>executable</c>, <c>script</c>, <c>config</c>. Пусто — к любым.
+    /// PE-файл (по содержимому) считается исполняемым независимо от расширения.
+    /// </summary>
+    public IReadOnlyList<string> AppliesTo { get; init; } = [];
+
+    /// <summary>Имена файлов, на которые правило не срабатывает (например, базы <c>geosite.dat</c> и <c>geoip.dat</c>).</summary>
+    public IReadOnlyList<string> ExcludeFileNames { get; init; } = [];
+
+    /// <summary>Подходит ли правило данному файлу.</summary>
+    public bool Applies(ScanTarget? target)
+    {
+        if (target is null || (AppliesTo.Count == 0 && ExcludeFileNames.Count == 0))
+        {
+            return true;
+        }
+
+        var name = System.IO.Path.GetFileName(target.Path.Replace('\\', '/'));
+        if (ExcludeFileNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (AppliesTo.Count == 0)
+        {
+            return true;
+        }
+
+        if (target.IsPe && AppliesTo.Contains("executable", StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var extension = System.IO.Path.GetExtension(name);
+        return AppliesTo.Any(kind => ScanTarget.ExtensionsFor(kind).Contains(extension));
+    }
 }
 
 public sealed record RuleLoadError(string File, int Line, string Message)
@@ -132,4 +169,31 @@ public sealed class RuleFormatException : Exception
     }
 
     public int Line { get; }
+}
+
+/// <summary>Файл, который проверяется правилами: путь и признак PE (по заголовку).</summary>
+public sealed record ScanTarget(string Path, bool IsPe)
+{
+    private static readonly HashSet<string> Executable = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".dll", ".sys", ".scr", ".com", ".cpl", ".ocx", ".msi", ".msix", ".jar", ".elf", ".so", ".bin",
+    };
+
+    private static readonly HashSet<string> Script = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".py", ".pyw", ".sh", ".lnk",
+    };
+
+    private static readonly HashSet<string> Config = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".json", ".conf", ".cfg", ".ini", ".yaml", ".yml", ".toml", ".xml", ".txt", ".config", ".env", ".properties", "",
+    };
+
+    internal static IReadOnlySet<string> ExtensionsFor(string kind) => kind.ToLowerInvariant() switch
+    {
+        "executable" => Executable,
+        "script" => Script,
+        "config" => Config,
+        _ => new HashSet<string>(),
+    };
 }

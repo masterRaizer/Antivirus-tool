@@ -43,6 +43,14 @@ public static class PathClassifier
         return false;
     }
 
+    /// <summary>Каталоги, откуда запускаются преимущественно вредоносные файлы: временные и общедоступные (<c>%TEMP%</c>, <c>Users\Public</c>).</summary>
+    public static bool IsTempOrPublic(string path)
+    {
+        var norm = Normalize(path);
+        return norm.Contains("\\temp\\", StringComparison.Ordinal)
+            || norm.Contains("\\users\\public\\", StringComparison.Ordinal) || norm.Contains("\\$recycle.bin\\", StringComparison.Ordinal);
+    }
+
     /// <summary>Расположен ли путь в каталоге, в который обычно может писать непривилегированный пользователь.</summary>
     public static bool IsUserWritableLocation(string path)
     {

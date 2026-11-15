@@ -157,7 +157,31 @@ public static class JsonRuleParser
             condition = new OfCondition(1, null);
         }
 
-        return RuleFactory.Build(id, name, description, severity, category, tags, patterns, sha, condition, sourceFile, 0);
+        var appliesTo = new List<string>();
+        if (e.TryGetProperty("appliesTo", out var appliesEl))
+        {
+            foreach (var t in ArrayOf(appliesEl, "appliesTo", name))
+            {
+                var kind = t.GetString()?.ToLowerInvariant();
+                if (kind is not ("executable" or "script" or "config"))
+                {
+                    throw new RuleFormatException($"Правило {name}: appliesTo допускает executable, script, config (получено '{kind}').");
+                }
+
+                appliesTo.Add(kind);
+            }
+        }
+
+        var excludeFileNames = new List<string>();
+        if (e.TryGetProperty("excludeFileNames", out var excludeEl))
+        {
+            foreach (var t in ArrayOf(excludeEl, "excludeFileNames", name))
+            {
+                excludeFileNames.Add(t.GetString() ?? throw new RuleFormatException($"Правило {name}: имя файла должно быть строкой."));
+            }
+        }
+
+        return RuleFactory.Build(id, name, description, severity, category, tags, patterns, sha, condition, sourceFile, 0, appliesTo, excludeFileNames);
     }
 
     private static JsonElement.ArrayEnumerator ArrayOf(JsonElement el, string prop, string rule) =>

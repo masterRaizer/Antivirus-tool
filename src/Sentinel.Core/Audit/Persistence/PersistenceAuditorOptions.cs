@@ -29,6 +29,9 @@ public sealed class PersistenceAuditorOptions
         "bitdefender", "eset", "sophos", "malwarebytes", "virustotal.com", "drweb",
     ];
 
+    /// <summary>Пользовательский список разрешённого (<c>allowed_exclusions.json</c>): цели из него не считаются подозрительными.</summary>
+    public Func<string, bool>? IsUserAllowed { get; init; }
+
     /// <summary>Анализировать целевые файлы через FileAnalyzer (подпись, правила, энтропия).</summary>
     public bool AnalyzeTargets { get; init; } = true;
 
