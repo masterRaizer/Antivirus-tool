@@ -18,7 +18,7 @@
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="StartMenuFolder" Name="Sentinel" />
+      <Directory Id="SentinelMenuFolder" Name="Sentinel" />
     </StandardDirectory>
     <StandardDirectory Id="DesktopFolder" />
 
@@ -63,7 +63,7 @@
     </ComponentGroup>
 
     <ComponentGroup Id="ShortcutComponents">
-      <Component Id="StartMenuShortcut" Directory="StartMenuFolder" Bitness="always64">
+      <Component Id="StartMenuShortcut" Directory="SentinelMenuFolder" Bitness="always64">
         <Shortcut Id="AppStartMenuShortcut"
                   Name="Sentinel"
                   Description="Sentinel - Windows protection and audit"
