@@ -9,6 +9,8 @@
         dist\Sentinel.Service.exe  — фоновая служба защиты в реальном времени
         dist\Sentinel.Cli.exe      — консольный сканер
         dist\rules\                — сигнатурные правила (общие для всех трёх программ)
+        dist\data\threat_hashes.bin — стартовая база SHA-256 известных угроз
+        dist\THIRD_PARTY_NOTICES.md — атрибуция источников базы
         dist\allowed_exclusions.json — шаблон белого списка пользователя (безопасные исключения по умолчанию)
 
     Перед публикацией выполняются сборка без предупреждений и модульные тесты.
@@ -103,6 +105,11 @@ try {
             if (Test-Path $rules) {
                 Copy-Item $rules (Join-Path $Output 'rules') -Recurse -Force
             }
+
+            $data = Join-Path $target 'data'
+            if (Test-Path $data) {
+                Copy-Item $data (Join-Path $Output 'data') -Recurse -Force
+            }
         }
     }
     finally {
@@ -114,6 +121,11 @@ try {
     $Exclusions = Join-Path $Root 'allowed_exclusions.json'
     if (-not (Test-Path $Exclusions)) { throw "Не найден шаблон $Exclusions." }
     Copy-Item $Exclusions (Join-Path $Output 'allowed_exclusions.json')
+
+    if (-not (Test-Path (Join-Path $Output 'data\threat_hashes.bin'))) { throw 'В dist не попала база угроз data\threat_hashes.bin.' }
+    $Notices = Join-Path $Root 'THIRD_PARTY_NOTICES.md'
+    if (-not (Test-Path $Notices)) { throw "Не найден $Notices." }
+    Copy-Item $Notices (Join-Path $Output 'THIRD_PARTY_NOTICES.md')
 
     Write-Host ''
     Write-Host "Готово: $Output" -ForegroundColor Green

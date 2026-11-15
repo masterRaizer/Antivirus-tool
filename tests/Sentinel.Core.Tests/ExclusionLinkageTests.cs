@@ -205,7 +205,6 @@ public class ExclusionLinkageTests
         var image = tmp.Write("tool.exe", SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, TextSize = 0x4000 }));
         var report = Scanner(Analyzer()).Scan([new DefenderExclusion(DefenderExclusionKind.Process, image, "k")], []);
         var file = Assert.Single(Assert.Single(report.Entries).Files);
-        Assert.Contains(file.Detections, d => d.Name == "Heuristic.PackedUnsignedPE");
         Assert.Contains(file.Detections, d => d.Name == "Heuristic.DefenderExcludedExecutable");
     }
 

@@ -1,0 +1,122 @@
+<UserControl x:Class="Sentinel.App.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="28,6,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Style="{StaticResource H1}" Text="Настройки и базы" />
+            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,14" TextWrapping="Wrap"
+                       Text="{Binding DataDirectory, StringFormat=Список разрешённого и ключи хранятся в каталоге данных: {0}}" />
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="3*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="2*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Редактор allowed_exclusions.json -->
+            <Border Style="{StaticResource Card}">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top">
+                        <TextBlock Style="{StaticResource H2}" Text="Разрешённые объекты (allowed_exclusions.json)" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10" TextWrapping="Wrap"
+                                   Text="Файлы, папки, процессы и SHA-256 из этого списка не изолируются и не завершаются. Системный белый список Windows этим не затрагивается." />
+                        <WrapPanel>
+                            <Button Command="{Binding AddFolderCommand}" Content="Добавить папку" Margin="0,0,8,8" />
+                            <Button Command="{Binding AddFileCommand}" Content="Добавить файл" Margin="0,0,8,8" />
+                            <Button Style="{StaticResource DangerButton}" Command="{Binding RemoveCommand}" Content="Удалить" Margin="0,0,8,8" />
+                        </WrapPanel>
+                        <DockPanel Margin="0,0,0,10">
+                            <Button DockPanel.Dock="Right" Command="{Binding AddProcessCommand}" Content="Добавить процесс" Margin="8,0,0,0" />
+                            <Button DockPanel.Dock="Right" Command="{Binding AddHashCommand}" Content="Добавить SHA-256" Margin="8,0,0,0" />
+                            <TextBox Text="{Binding NewValue, UpdateSourceTrigger=PropertyChanged}" FontFamily="{StaticResource MonoFont}"
+                                     ToolTip="SHA-256 (64 шестнадцатеричных символа) или имя процесса, например tool.exe" />
+                        </DockPanel>
+                    </StackPanel>
+                    <DataGrid ItemsSource="{Binding Allowed}" SelectedItem="{Binding Selected, Mode=TwoWay}" MinHeight="160">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Тип" Binding="{Binding Kind}" Width="90" />
+                            <DataGridTemplateColumn Header="Значение" Width="*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Value}" FontFamily="{StaticResource MonoFont}" Foreground="{StaticResource TextBrush}" ToolTip="{Binding Value}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </Border>
+
+            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <!-- Базы угроз -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource H2}" Text="Базы угроз" />
+                            <TextBlock Margin="0,8,0,0" FontFamily="{StaticResource DisplayFont}" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextBrush}" Text="{Binding DatabaseSummary}" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10" TextWrapping="Wrap" Text="{Binding DatabaseDetail}" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Style="{StaticResource PrimaryButton}" Command="{Binding UpdateDatabasesCommand}" Content="Обновить базы" />
+                                <CheckBox Style="{StaticResource Switch}" Margin="16,0,0,0" VerticalAlignment="Center"
+                                          IsChecked="{Binding AutoUpdateDatabases, Mode=TwoWay}" Content="Автообновление каждые 6 часов" />
+                            </StackPanel>
+                            <ItemsControl Margin="0,12,0,0" ItemsSource="{Binding Feeds}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,0,0,8">
+                                            <TextBlock Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" TextWrapping="Wrap">
+                                                <Run Text="{Binding Name, Mode=OneWay}" />
+                                                <Run Text=" — " /><Run Text="{Binding Status, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap">
+                                                <Run Text="хеши / сетевые: " /><Run Text="{Binding Counts, Mode=OneWay}" />
+                                                <Run Text=" · " /><Run Text="{Binding Message, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Ключи облачных сервисов -->
+                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource H2}" Text="Облачная проверка и фиды (необязательно)" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,12" TextWrapping="Wrap"
+                                       Text="В облако отправляется только SHA-256 подозрительного неподписанного файла — сам файл никуда не загружается. Пустое поле оставляет текущий ключ." />
+
+                            <TextBlock Style="{StaticResource Label}" Text="KASPERSKY OPENTIP" />
+                            <TextBlock Style="{StaticResource Muted}" Text="{Binding KasperskyState}" />
+                            <PasswordBox x:Name="KasperskyBox" Margin="0,4,0,4" PasswordChanged="OnKasperskyChanged" />
+                            <CheckBox Content="Удалить ключ" Foreground="{StaticResource MutedBrush}" IsChecked="{Binding ClearKaspersky, Mode=TwoWay}" Margin="0,0,0,12" />
+
+                            <TextBlock Style="{StaticResource Label}" Text="VIRUSTOTAL" />
+                            <TextBlock Style="{StaticResource Muted}" Text="{Binding VirusTotalState}" />
+                            <PasswordBox x:Name="VirusTotalBox" Margin="0,4,0,4" PasswordChanged="OnVirusTotalChanged" />
+                            <CheckBox Content="Удалить ключ" Foreground="{StaticResource MutedBrush}" IsChecked="{Binding ClearVirusTotal, Mode=TwoWay}" Margin="0,0,0,12" />
+
+                            <TextBlock Style="{StaticResource Label}" Text="ABUSE.CH AUTH-KEY" />
+                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Text="{Binding AbuseChState}" />
+                            <PasswordBox x:Name="AbuseChBox" Margin="0,4,0,4" PasswordChanged="OnAbuseChChanged" />
+                            <CheckBox Content="Удалить ключ" Foreground="{StaticResource MutedBrush}" IsChecked="{Binding ClearAbuseCh, Mode=TwoWay}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Style="{StaticResource GhostButton}" Command="{Binding ReloadCommand}" Content="Отменить изменения" Margin="0,0,10,0" />
+            <Button Style="{StaticResource PrimaryButton}" Command="{Binding SaveCommand}" Content="Сохранить и применить" Click="OnSaved" />
+        </StackPanel>
+    </Grid>
+</UserControl>

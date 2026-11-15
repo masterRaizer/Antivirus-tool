@@ -589,3 +589,90 @@ public class RealtimeInfrastructureTests
         Assert.Throws<KeyNotFoundException>(() => store.Export("20261115-000000-abcdef", ReportFormat.Html));
     }
 }
+
+public class RuntimeSettingsTests
+{
+    [Fact]
+    public async Task SaveSettings_WritesConfigAndAllowList_KeysAreNeverReturned()
+    {
+        await using var b = new RuntimeBench();
+        var hash = new string('c', 64);
+
+        var saved = await b.Runtime.SaveSettingsAsync(new SettingsUpdate
+        {
+            KasperskyOpenTipApiKey = "kaspersky-secret",
+            VirusTotalApiKey = null,
+            AbuseChAuthKey = "abuse",
+            AutoUpdateDatabases = false,
+            AllowedPaths = [@"C:\Tools", @"c:\tools", "  "],
+            AllowedHashes = [hash.ToUpperInvariant()],
+        });
+        var settings = await b.Runtime.GetSettingsAsync();
+
+        Assert.True(saved.Success, saved.Message);
+        Assert.True(settings.HasKasperskyOpenTipApiKey);
+        Assert.False(settings.HasVirusTotalApiKey);
+        Assert.True(settings.HasAbuseChAuthKey);
+        Assert.False(settings.AutoUpdateDatabases);
+        Assert.Equal([@"C:\Tools"], settings.AllowedPaths);
+        Assert.Equal([hash], settings.AllowedHashes);
+        Assert.DoesNotContain("kaspersky-secret", System.Text.Json.JsonSerializer.Serialize(settings), StringComparison.Ordinal);
+        Assert.Contains("kaspersky-secret", File.ReadAllText(Path.Combine(b.DataDir, Sentinel.Core.ThreatIntel.SentinelConfigStore.FileName)), StringComparison.Ordinal);
+
+        // Пустая строка удаляет ключ, null оставляет как есть.
+        await b.Runtime.SaveSettingsAsync(new SettingsUpdate { KasperskyOpenTipApiKey = "", AbuseChAuthKey = null });
+        settings = await b.Runtime.GetSettingsAsync();
+        Assert.False(settings.HasKasperskyOpenTipApiKey);
+        Assert.True(settings.HasAbuseChAuthKey);
+        Assert.Empty(settings.AllowedPaths);
+    }
+
+    [Fact]
+    public async Task SaveSettings_RejectsMalformedHash()
+    {
+        await using var b = new RuntimeBench();
+        var result = await b.Runtime.SaveSettingsAsync(new SettingsUpdate { AllowedHashes = ["not-a-hash"] });
+        Assert.False(result.Success);
+        Assert.Empty((await b.Runtime.GetSettingsAsync()).AllowedHashes);
+    }
+
+    [Fact]
+    public async Task UpdateDatabases_WithoutThreatIntelServices_ReportsUnavailable()
+    {
+        await using var b = new RuntimeBench();
+        var status = await b.Runtime.UpdateDatabasesAsync();
+        Assert.Contains("недоступны", status.LastStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DeleteQuarantine_RemovesContainerPermanently_AndRestoreIsRefused()
+    {
+        await using var b = new RuntimeBench();
+        var file = b.Drop("eicar.com", Eicar.CreateTestFileBytes());
+        var threat = await b.Runtime.InspectFileAsync(file); // EICAR (High) изолируется сразу
+        var item = Assert.Single(await b.Runtime.GetQuarantineAsync());
+
+        var deleted = await b.Runtime.DeleteQuarantineAsync(item.Id);
+        var restore = await b.Runtime.RestoreQuarantineAsync(item.Id);
+
+        Assert.Equal(ThreatStatus.Quarantined, threat!.Status);
+        Assert.True(deleted.Success, deleted.Message);
+        Assert.True(Assert.Single(await b.Runtime.GetQuarantineAsync()).Deleted);
+        Assert.False(restore.Success);
+        Assert.False(File.Exists(file));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(b.DataDir, "Quarantine")).Where(f => !f.EndsWith(".json", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void AllowList_HashesRoundTrip_AndMatchCaseInsensitively()
+    {
+        using var tmp = new TempDir();
+        var store = new Sentinel.Core.Settings.AllowedExclusionStore(Path.Combine(tmp.Path, "allowed_exclusions.json"));
+        var hash = new string('d', 64);
+        store.Update(a => a.WithHash(hash.ToUpperInvariant()).WithPath(@"C:\Tools"));
+        var loaded = new Sentinel.Core.Settings.AllowedExclusionStore(store.Path).Load();
+        Assert.True(loaded.IsHashAllowed(hash.ToUpperInvariant()));
+        Assert.False(loaded.Without(hash).IsHashAllowed(hash));
+        Assert.Throws<ArgumentException>(() => loaded.WithHash("zz"));
+    }
+}

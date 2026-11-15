@@ -33,6 +33,7 @@ builder.Services.AddHostedService<TelemetryWorker>();
 builder.Services.AddHostedService<FileMonitorWorker>();
 builder.Services.AddHostedService<PeriodicAuditWorker>();
 builder.Services.AddHostedService<IpcServerWorker>();
+builder.Services.AddHostedService<DatabaseUpdateWorker>();
 
 using var host = builder.Build();
 await host.RunAsync().ConfigureAwait(false);

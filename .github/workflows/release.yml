@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Версия релиза (например 1.0.0), без префикса v'
+        description: 'Версия релиза (например 1.1.0), без префикса v'
         required: false
-        default: '1.0.0'
+        default: '1.1.0'
 
 permissions:
   contents: write
@@ -33,7 +33,7 @@ jobs:
           } elseif ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.version }}' -ne '') {
             $version = '${{ inputs.version }}'.TrimStart('v')
           } else {
-            $version = '1.0.0'
+            $version = '1.1.0'
           }
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Версия '$version' должна иметь вид X.Y.Z (требование MSI)."

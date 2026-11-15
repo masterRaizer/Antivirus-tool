@@ -76,7 +76,7 @@ public class EndToEndRemediationTests
         public byte[] MinerBytes { get; } = Eicar.CreateTestFileBytes();
         public byte[] DropperBytes { get; } = SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, TextSize = 0x4000 });
 
-        public const string HostsOriginal = "127.0.0.1 localhost\r\n0.0.0.0 wdcp.microsoft.com\r\n";
+        public const string HostsOriginal = "127.0.0.1 localhost\r\n203.0.113.9 wdcp.microsoft.com\r\n";
 
         public RegistryKeyPath Run { get; } = new(RegistryHive.CurrentUser, RunKey);
         public RegistryKeyPath ExclPaths { get; } = new(RegistryHive.LocalMachine, ExclusionsRoot + "Paths");
@@ -181,7 +181,7 @@ public class EndToEndRemediationTests
         Assert.Equal("audit", report.Mode);
         Assert.Equal(3, report.Findings.Count(f => f.Key.StartsWith("excl:", StringComparison.Ordinal)));
         Assert.Contains(report.Findings, f => f.Path == s.Miner && f.Sha256 == FileHasher.ComputeSha256(s.MinerBytes) && f.Severity == Severity.High);
-        Assert.Contains(report.Findings, f => f.Path == s.Dropper && f.Rule.Contains("Heuristic.PackedUnsignedPE", StringComparison.Ordinal));
+        Assert.Contains(report.Findings, f => f.Path == s.Dropper && f.Rule.Contains("Heuristic.DefenderExcludedExecutable", StringComparison.Ordinal));
         Assert.Contains(report.Findings, f => f.Key == ReportBuilder.ProcessKey(MinerPid) && f.Rule.Contains("PROC-DEFENDER-EXCLUDED", StringComparison.Ordinal));
         Assert.Contains(report.Findings, f => f.Area == "Автозагрузка" && f.Name.StartsWith("WindowsUpdateSvc", StringComparison.Ordinal));
         Assert.Contains(report.Findings, f => f.Rule.Contains("PERS-HOSTS-SECURITY", StringComparison.Ordinal));

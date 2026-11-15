@@ -47,8 +47,24 @@
                         <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding RealtimeEnabled, Mode=TwoWay}" Content="Защита" Margin="0,0,20,0"
                                   ToolTip="Включить или приостановить защиту в реальном времени" />
                         <Button Style="{StaticResource PrimaryButton}" Command="{Binding QuickScanCommand}" Content="Быстрая проверка" />
+                        <Button Margin="10,0,0,0" Command="{Binding FullScanCommand}" Content="Полная проверка" />
                     </StackPanel>
                 </Grid>
+            </Border>
+
+            <!-- Базы угроз -->
+            <Border Style="{StaticResource Card}" Margin="0,12,0,0" Padding="20,14">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding UpdateDatabasesCommand}" Content="Обновить базы" />
+                        <Button Style="{StaticResource GhostButton}" Margin="10,0,0,0" Command="{Binding OpenSettingsCommand}" Content="Настройки и базы" />
+                    </StackPanel>
+                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource Glyph}" Text="&#xE8F1;" FontSize="22" Foreground="{StaticResource InfoBrush}" Margin="0,0,16,0" VerticalAlignment="Center" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="{Binding DatabaseTitle}" Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" FontSize="15" />
+                        <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding DatabaseDetail}" />
+                    </StackPanel>
+                </DockPanel>
             </Border>
 
             <!-- Счётчики -->

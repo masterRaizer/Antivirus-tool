@@ -38,17 +38,23 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Действие" Width="150">
+                            <DataGridTemplateColumn Header="Действие" Width="250">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <Grid>
-                                            <Button Style="{StaticResource SmallButton}" Content="Восстановить" HorizontalAlignment="Left"
-                                                    ToolTip="Вернуть файл на исходное место с проверкой SHA-256"
-                                                    Visibility="{Binding Restored, Converter={StaticResource BoolToVis}, ConverterParameter=invert}"
-                                                    Command="{Binding DataContext.RestoreCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
+                                            <StackPanel Orientation="Horizontal" Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
+                                                <Button Style="{StaticResource SmallButton}" Content="Восстановить"
+                                                        ToolTip="Вернуть файл на исходное место с проверкой SHA-256"
+                                                        Command="{Binding DataContext.RestoreCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
+                                                <Button Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="Удалить навсегда" Foreground="{StaticResource DangerBrush}"
+                                                        ToolTip="Стереть изолированный файл без возможности восстановления"
+                                                        Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
+                                            </StackPanel>
                                             <TextBlock Style="{StaticResource Muted}" VerticalAlignment="Center"
-                                                       Visibility="{Binding Restored, Converter={StaticResource BoolToVis}}"
-                                                       Text="{Binding RestoredAtUtc, Converter={StaticResource LocalTime}, StringFormat=Восстановлен {0}}" />
+                                                       Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}, ConverterParameter=invert}">
+                                                <Run Text="{Binding StateText, Mode=OneWay}" />
+                                                <Run Text="{Binding RestoredAtUtc, Converter={StaticResource LocalTime}, Mode=OneWay}" />
+                                            </TextBlock>
                                         </Grid>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>

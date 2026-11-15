@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <None Include="..\..\rules\**\*" Link="rules\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\data\**\*" Link="data\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

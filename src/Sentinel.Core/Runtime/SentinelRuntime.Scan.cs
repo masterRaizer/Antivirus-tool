@@ -5,6 +5,7 @@ using Sentinel.Core.Ipc;
 using Sentinel.Core.Realtime;
 using Sentinel.Core.Reporting;
 using Sentinel.Core.Scanning;
+using Sentinel.Core.Settings;
 
 namespace Sentinel.Core.Runtime;
 
@@ -16,6 +17,7 @@ public sealed partial class SentinelRuntime
     private CancellationTokenSource? _scanCts;
     private Task? _scanTask;
     private long _lastPublish;
+    private Scanning.Pool.IScanPool? _activePool;
 
     /// <summary>Текущее состояние проверки.</summary>
     public ScanProgress CurrentScan
@@ -57,6 +59,14 @@ public sealed partial class SentinelRuntime
                 break;
             case ScanMode.Full:
                 roots = _o.FullScanRoots;
+                break;
+            case ScanMode.Removable:
+                roots = _o.RemovableRoots();
+                if (roots.Count == 0)
+                {
+                    return Task.FromResult(OperationResult.Fail("Нет подключённых съёмных дисков."));
+                }
+
                 break;
             default:
                 roots = _o.QuickScanRoots;
@@ -140,6 +150,7 @@ public sealed partial class SentinelRuntime
         {
             ScanMode.Quick => "Быстрая проверка",
             ScanMode.Full => "Полная проверка",
+            ScanMode.Removable => "Проверка съёмных дисков",
             _ => $"Выборочная проверка: {request.Path}",
         };
         var run = new ScanRun(new ReportBuilder(title, _o.TimeProvider.GetUtcNow().UtcDateTime));
@@ -147,18 +158,18 @@ public sealed partial class SentinelRuntime
         string? message = null;
         try
         {
-            run.Total = CountFiles(roots, run, token);
+            // Обход каталогов идёт параллельно с проверкой: пул получает файлы сразу, без предварительного подсчёта.
             Update(run, p => p with { State = ScanState.Running }, force: true);
             run.Active.Start();
 
-            if (request.Mode != ScanMode.Custom)
+            if (request.Mode is ScanMode.Quick or ScanMode.Full)
             {
                 await ScanProcessesAsync(run, token).ConfigureAwait(false);
                 await ScanPersistenceAsync(run, token).ConfigureAwait(false);
                 await ScanConfigAsync(run, token).ConfigureAwait(false);
             }
 
-            await ScanFilesAsync(roots, run, token).ConfigureAwait(false);
+            await ScanFilesAsync(roots, request.Mode, run, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -193,23 +204,6 @@ public sealed partial class SentinelRuntime
             Message = message ?? $"Проверено объектов: {run.Scanned}; находок: {run.Threats}.",
         }, force: true);
         PublishStatus();
-    }
-
-    private long CountFiles(IReadOnlyList<ScanRoot> roots, ScanRun run, CancellationToken token)
-    {
-        long count = 0;
-        foreach (var file in EnumerateFiles(roots))
-        {
-            if (++count % 500 == 0)
-            {
-                token.ThrowIfCancellationRequested();
-                var current = count;
-                Update(run, p => p with { Stage = "Подсчёт объектов", CurrentItem = file, Total = current });
-            }
-        }
-
-        token.ThrowIfCancellationRequested();
-        return count;
     }
 
     private async Task ScanProcessesAsync(ScanRun run, CancellationToken token)
@@ -322,68 +316,112 @@ public sealed partial class SentinelRuntime
         run.Threats += config.Findings.Count(f => f.Area != ConfigArea.DefenderExclusion);
     }
 
-    private async Task ScanFilesAsync(IReadOnlyList<ScanRoot> roots, ScanRun run, CancellationToken token)
+    private async Task ScanFilesAsync(IReadOnlyList<ScanRoot> roots, ScanMode mode, ScanRun run, CancellationToken token)
     {
+        var enumeration = mode switch
+        {
+            ScanMode.Quick => EnumerationMode.Quick,
+            ScanMode.Full => EnumerationMode.Full,
+            _ => EnumerationMode.Custom,
+        };
+
+        // Кэш чистых файлов — для быстрой и полной проверки; выборочная и USB-проверка всегда глубокие.
+        var cache = _o.UseVerdictCache && mode is ScanMode.Quick or ScanMode.Full ? OpenVerdictCache() : null;
+        await using var pool = _o.ScanPoolFactory?.Invoke(cache) ?? Scanning.Pool.ScanPoolFactory.Create(path => _o.Analyzer.Analyze(path),
+            _o.RulesDirectory ?? SentinelRuntimeOptions.DefaultRulesDirectory(), _o.DataDirectory, cache);
+        lock (_sync)
+        {
+            _activePool = pool;
+        }
+
         long files = 0;
         var found = 0;
-        var errors = 0;
-        foreach (var file in EnumerateFiles(roots))
+        var first = true;
+        var excluded = SelfProtection.OwnDirectories(_o.DataDirectory, _o.Quarantine.QuarantineDirectory).ToArray();
+        try
         {
-            Checkpoint(run, token);
+            await pool.RunAsync(Discover(ScanFileEnumerator.Enumerate(roots, enumeration, excluded, token), run), async r =>
+            {
+                // Пауза замораживает и выдачу уже готовых результатов: счётчики не растут, пока проверка приостановлена.
+                Checkpoint(run, token);
+                files++;
+                run.Scanned++;
+                Interlocked.Increment(ref _filesChecked);
+                Update(run, p => p with { Stage = "Файлы", CurrentItem = r.Path }, force: first);
+                first = false;
+                if (r.FromCache)
+                {
+                    run.CachedSkipped++;
+                    return;
+                }
 
-            // Первый файл этапа публикуется всегда, остальные — не чаще десяти раз в секунду.
-            Update(run, p => p with { Stage = "Файлы", CurrentItem = file }, force: files == 0);
-            var result = _o.Analyzer.Analyze(file);
-            files++;
-            run.Scanned++;
-            Interlocked.Increment(ref _filesChecked);
-            if (result.Verdict == Verdict.Error)
+                if (r.Result is null)
+                {
+                    run.Errors++;
+                    Log?.Invoke($"{r.Error}: {r.Path}");
+                    return;
+                }
+
+                if (r.Result.Verdict == Verdict.Error)
+                {
+                    run.Errors++;
+                }
+                else if (r.Result.Verdict is Verdict.Malicious or Verdict.Suspicious && run.Report.EnsureFileFinding("Файлы", r.Result))
+                {
+                    found++;
+                    Record(run, ReportBuilder.FileKey(r.Path),
+                        await _dispatcher.DispatchFileAsync(r.Result, "scan", token).ConfigureAwait(false), allowedWhenNull: true);
+                }
+            }, _pauseGate, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_sync)
             {
-                errors++;
-            }
-            else if (result.Verdict is Verdict.Malicious or Verdict.Suspicious && run.Report.EnsureFileFinding("Файлы", result))
-            {
-                found++;
-                Record(run, ReportBuilder.FileKey(file),
-                    await _dispatcher.DispatchFileAsync(result, "scan", token).ConfigureAwait(false), allowedWhenNull: true);
+                _activePool = null;
             }
         }
 
-        run.Report.AddArea("Файлы", (int)Math.Min(files, int.MaxValue), found, errors > 0 ? $"ошибок чтения: {errors}" : null);
+        var note = new List<string>();
+        if (run.Errors > 0)
+        {
+            note.Add($"не удалось проверить: {run.Errors}");
+        }
+
+        if (run.CachedSkipped > 0)
+        {
+            note.Add($"пропущено по кэшу: {run.CachedSkipped}");
+        }
+
+        note.Add($"пул: {(pool.Mode == Scanning.Pool.ScanPoolMode.MultiProcess ? "процессы" : "потоки")} × {pool.WorkerCount}");
+        run.Report.AddArea("Файлы", (int)Math.Min(files, int.MaxValue), found, string.Join("; ", note));
     }
 
-    /// <summary>Файлы всех корней. Точки повторного разбора не обходятся (защита от циклов), данные Sentinel пропускаются.</summary>
-    private IEnumerable<string> EnumerateFiles(IReadOnlyList<ScanRoot> roots)
+    /// <summary>Считает найденные файлы для оценки прогресса, пока обход ещё идёт.</summary>
+    private static IEnumerable<string> Discover(IEnumerable<string> files, ScanRun run)
     {
-        var own = _o.DataDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var root in roots)
+        foreach (var file in files)
         {
-            if (File.Exists(root.Path))
-            {
-                yield return root.Path;
-                continue;
-            }
+            Interlocked.Increment(ref run.DiscoveredCounter);
+            yield return file;
+        }
 
-            if (!Directory.Exists(root.Path))
-            {
-                continue;
-            }
+        Volatile.Write(ref run.EnumerationDoneFlag, 1);
+    }
 
-            var options = new EnumerationOptions
-            {
-                RecurseSubdirectories = root.MaxDepth > 0,
-                MaxRecursionDepth = Math.Max(0, root.MaxDepth),
-                IgnoreInaccessible = true,
-                AttributesToSkip = FileAttributes.ReparsePoint,
-                ReturnSpecialDirectories = false,
-            };
-            foreach (var file in Directory.EnumerateFiles(root.Path, "*", options))
-            {
-                if (!file.StartsWith(own, StringComparison.OrdinalIgnoreCase))
-                {
-                    yield return file;
-                }
-            }
+    private ScanVerdictCache? OpenVerdictCache()
+    {
+        try
+        {
+            var fingerprint = ScanVerdictCache.ComputeFingerprint(
+                _o.RulesDirectory ?? SentinelRuntimeOptions.DefaultRulesDirectory(),
+                _o.Services?.ThreatIntel.ActivePath,
+                Path.Combine(_o.DataDirectory, AllowedExclusionStore.DefaultFileName));
+            return new ScanVerdictCache(Path.Combine(_o.DataDirectory, "scan_cache.bin"), fingerprint);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 
@@ -434,7 +472,9 @@ public sealed partial class SentinelRuntime
         {
             var active = run.Active.Elapsed.TotalSeconds;
             var next = change(_scan);
-            var total = Math.Max(run.Total, run.Scanned);
+            var enumerationDone = Volatile.Read(ref run.EnumerationDoneFlag) == 1;
+            var total = Math.Max(run.Total + Interlocked.Read(ref run.DiscoveredCounter), run.Scanned);
+            var pool = _activePool;
             _scan = next with
             {
                 // Пауза выставляется из другого потока — рабочий поток не должен её затирать.
@@ -444,7 +484,14 @@ public sealed partial class SentinelRuntime
                 Threats = run.Threats,
                 ElapsedSeconds = run.Wall.Elapsed.TotalSeconds,
                 ItemsPerSecond = active > 0.2 ? run.Scanned / active : 0,
-                Percent = next.State == ScanState.Completed ? 100 : total == 0 ? 0 : Math.Min(99.9, 100.0 * run.Scanned / total),
+                Percent = next.State == ScanState.Completed ? 100 : total == 0 ? 0
+                    : Math.Min(enumerationDone ? 99.9 : 95, 100.0 * run.Scanned / total),
+                Workers = pool?.WorkerCount ?? 0,
+                ActiveWorkers = pool?.ActiveWorkers ?? 0,
+                PoolMode = pool is null ? next.PoolMode : pool.Mode == Scanning.Pool.ScanPoolMode.MultiProcess ? "процессы" : "потоки",
+                CachedSkipped = run.CachedSkipped,
+                Errors = run.Errors,
+                EnumerationComplete = enumerationDone,
             };
             snapshot = _scan;
             if (!force && _o.TimeProvider.GetElapsedTime(_lastPublish) < TimeSpan.FromMilliseconds(100))
@@ -473,6 +520,16 @@ public sealed partial class SentinelRuntime
         public long Total { get; set; }
 
         public int Threats { get; set; }
+
+        public long CachedSkipped { get; set; }
+
+        public long Errors { get; set; }
+
+        /// <summary>Найдено файлов при обходе (пишется потоком обхода).</summary>
+        public long DiscoveredCounter;
+
+        /// <summary>1 — обход каталогов завершён.</summary>
+        public int EnumerationDoneFlag;
 
         public IReadOnlyList<ProcessSnapshot> Processes { get; set; } = [];
     }

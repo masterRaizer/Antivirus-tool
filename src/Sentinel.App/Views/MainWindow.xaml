@@ -65,6 +65,10 @@
                                 </Ellipse>
                                 <TextBlock Margin="8,0,0,0" Text="{Binding ModeTitle}" FontWeight="SemiBold" />
                             </StackPanel>
+                            <Button Style="{StaticResource SmallButton}" Margin="0,10,0,0" HorizontalAlignment="Stretch"
+                                    Command="{Binding StartServiceCommand}" Content="Запустить службу"
+                                    ToolTip="sc.exe start SentinelService (потребуются права администратора). Подключение произойдёт автоматически."
+                                    Visibility="{Binding IsServiceMode, Converter={StaticResource BoolToVis}, ConverterParameter=invert}" />
                         </StackPanel>
                     </Border>
 
@@ -116,6 +120,13 @@
                                 <TextBlock Margin="10,0,0,0" Text="История отчётов" />
                             </StackPanel>
                         </RadioButton>
+                        <RadioButton Style="{StaticResource NavItem}" GroupName="Nav"
+                                     IsChecked="{Binding Section, Converter={StaticResource EnumMatch}, ConverterParameter=Settings}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE713;" Width="22" />
+                                <TextBlock Margin="10,0,0,0" Text="Настройки и базы" />
+                            </StackPanel>
+                        </RadioButton>
                     </StackPanel>
                 </DockPanel>
             </Border>
@@ -141,6 +152,8 @@
                                    Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EnumToVis}, ConverterParameter=Startup}" />
                 <views:ReportsView DataContext="{Binding Reports}"
                                    Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EnumToVis}, ConverterParameter=Reports}" />
+                <views:SettingsView DataContext="{Binding Settings}"
+                                    Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EnumToVis}, ConverterParameter=Settings}" />
             </Grid>
 
             <!-- Строка состояния -->

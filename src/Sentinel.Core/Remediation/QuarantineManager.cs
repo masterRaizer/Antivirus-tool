@@ -118,6 +118,13 @@ public sealed class QuarantineManager : IDisposable
             return new QuarantineResult(QuarantineStatus.Failed, "Файл уже находится в каталоге карантина.");
         }
 
+        // Самозащита: файлы ядра ОС и каталоги самого Sentinel не изолируются ни при каких вердиктах.
+        if (Scanning.SelfProtection.IsProtectedFile(fullPath, _directory))
+        {
+            return new QuarantineResult(QuarantineStatus.BlockedByWhitelist,
+                $"Изоляция запрещена: '{fullPath}' — критический файл Windows или каталог Sentinel (самозащита).");
+        }
+
         // Жёсткий запрет: белый список проверяется до любых изменений файла или его атрибутов.
         var decision = _whitelist.Evaluate(fullPath);
         if (decision.IsWhitelisted)
@@ -254,6 +261,49 @@ public sealed class QuarantineManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Удаляет изолированный файл навсегда: контейнер стирается из карантина, запись манифеста помечается удалённой
+    /// (история сохраняется). Восстановить такой файл больше нельзя.
+    /// </summary>
+    public async Task<RestoreResult> DeleteAsync(string id, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var manifest = await LoadManifestAsync(cancellationToken).ConfigureAwait(false);
+            var record = manifest.Entries.FirstOrDefault(e => string.Equals(e.Id, id.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (record is null)
+            {
+                return new RestoreResult(RestoreStatus.NotFound, $"Запись карантина '{id}' не найдена.");
+            }
+
+            if (record.State != QuarantineState.Quarantined)
+            {
+                return new RestoreResult(RestoreStatus.Failed, $"Запись {record.Id} уже не в карантине ({record.State}).", record);
+            }
+
+            var storedPath = Path.GetFullPath(Path.Combine(_directory, record.StoredFileName));
+            if (IsInsideQuarantine(storedPath) && File.Exists(storedPath))
+            {
+                File.Delete(storedPath);
+            }
+
+            var updated = record with { State = QuarantineState.Deleted, RestoredAtUtc = _time.GetUtcNow().UtcDateTime };
+            manifest.Entries[manifest.Entries.IndexOf(record)] = updated;
+            await SaveManifestAsync(manifest, cancellationToken).ConfigureAwait(false);
+            return new RestoreResult(RestoreStatus.Restored, $"Файл удалён из карантина навсегда: {record.OriginalPath}", updated);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new RestoreResult(RestoreStatus.Failed, $"Не удалось удалить запись '{id}': {ex.Message}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task<RestoreResult> RestoreCoreAsync(string id, bool overwrite, CancellationToken ct)
     {
         var manifest = await LoadManifestAsync(ct).ConfigureAwait(false);
@@ -275,6 +325,11 @@ public sealed class QuarantineManager : IDisposable
         if (record.State == QuarantineState.Restored)
         {
             return new RestoreResult(RestoreStatus.AlreadyRestored, $"Запись {record.Id} уже восстановлена.", record);
+        }
+
+        if (record.State == QuarantineState.Deleted)
+        {
+            return new RestoreResult(RestoreStatus.Failed, $"Запись {record.Id} удалена навсегда — восстановление невозможно.", record);
         }
 
         // Имя контейнера берётся из манифеста, но обязано оставаться внутри каталога карантина.

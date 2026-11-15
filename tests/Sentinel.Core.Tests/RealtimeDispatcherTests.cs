@@ -222,6 +222,22 @@ public class RealtimeEventDispatcherTests
     }
 
     [Fact]
+    public async Task Resolve_Ignore_LeavesFileAndAllowListUntouched()
+    {
+        using var b = new DispatcherBench();
+        var scan = b.Flagged("tool.exe", Severity.Medium);
+        var pending = await b.Dispatcher.DispatchFileAsync(scan);
+
+        var resolved = await b.Dispatcher.ResolveAsync(pending!.Id, ThreatDecision.Ignore);
+
+        Assert.Equal(ThreatStatus.Skipped, resolved.Status);
+        Assert.True(File.Exists(scan.Path));
+        Assert.Empty(b.Allowed.Load().Paths);
+        Assert.Empty(b.Dispatcher.Pending());
+        Assert.Empty(await b.Quarantine.ListAsync());
+    }
+
+    [Fact]
     public async Task Resolve_Allow_AddsToExclusions_AndSuppressesFutureEvents()
     {
         using var b = new DispatcherBench();

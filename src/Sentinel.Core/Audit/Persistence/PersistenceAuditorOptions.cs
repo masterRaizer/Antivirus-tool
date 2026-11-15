@@ -1,7 +1,7 @@
 namespace Sentinel.Core.Audit.Persistence;
 
 /// <summary>Параметры аудита персистентности. Каталоги инъектируются ради тестируемости на Linux.</summary>
-public sealed class PersistenceAuditorOptions
+public sealed record PersistenceAuditorOptions
 {
     public string WindowsDirectory { get; init; } = DefaultWindows();
 
@@ -23,11 +23,14 @@ public sealed class PersistenceAuditorOptions
     /// </summary>
     public IReadOnlyList<string> SecuritySensitiveHosts { get; init; } =
     [
-        "windowsupdate.com", "update.microsoft.com", "microsoft.com", "windowsdefender",
+        "windowsupdate.com", "update.microsoft.com", "windowsdefender", "download.microsoft.com",
         "wdcp.microsoft.com", "wdcpalt.microsoft.com", "smartscreen.microsoft.com",
         "clamav", "avast", "avg", "kaspersky", "mcafee", "symantec", "norton",
         "bitdefender", "eset", "sophos", "malwarebytes", "virustotal.com", "drweb",
     ];
+
+    /// <summary>Пользовательский список разрешённого (<c>allowed_exclusions.json</c>): цели из него не считаются подозрительными.</summary>
+    public Func<string, bool>? IsUserAllowed { get; init; }
 
     /// <summary>Анализировать целевые файлы через FileAnalyzer (подпись, правила, энтропия).</summary>
     public bool AnalyzeTargets { get; init; } = true;

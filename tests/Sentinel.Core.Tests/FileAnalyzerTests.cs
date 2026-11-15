@@ -1,4 +1,5 @@
 using Sentinel.Core.Detection;
+using Sentinel.Core.Hashing;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Signatures;
 using Sentinel.Core.Testing;
@@ -36,17 +37,56 @@ public class FileAnalyzerTests
     }
 
     [Fact]
-    public void PackedUnsignedPe_IsSuspicious_LowEntropyPeIsClean()
+    public void HighEntropyNativeUnsignedExe_AloneIsNotAThreat_ButPackedWritableSectionIs()
     {
         using var tmp = new TempDir();
         var analyzer = Create();
-        var packed = analyzer.Analyze(tmp.Write("packed.exe", SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, TextSize = 0x4000 })));
+        var highEntropy = analyzer.Analyze(tmp.Write("high.exe", SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, TextSize = 0x4000 })));
+        var packed = analyzer.Analyze(tmp.Write("packed.exe", SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, WritableText = true, TextSize = 0x4000 })));
         var plain = analyzer.Analyze(tmp.Write("plain.exe", SyntheticArtifacts.BuildPe()));
 
+        // Неподписанный нативный exe с высокой энтропией: 10 + 15 = 25 — только тихая запись (Info), не находка.
+        Assert.Equal(Verdict.Clean, highEntropy.Verdict);
+        Assert.Equal(25, highEntropy.Score!.Value);
+
+        // + секция записи и исполнения (+20) = 45 — уровень Low.
         Assert.Equal(Verdict.Suspicious, packed.Verdict);
-        Assert.Contains(packed.Detections, d => d.Name == "Heuristic.PackedUnsignedPE");
+        Assert.Contains(packed.Detections, d => d.Name == "Heuristic.ThreatScore" && d.Severity == Severity.Low);
+
         Assert.Equal(Verdict.Clean, plain.Verdict);
         Assert.Equal(SignatureStatus.Unsupported, plain.Signature!.Status);
+    }
+
+    [Fact]
+    public void UnsignedManagedDll_WithHighEntropy_IsClean()
+    {
+        using var tmp = new TempDir();
+        var r = Create().Analyze(tmp.Write("Plugin.dll", SyntheticArtifacts.BuildPe(new() { IsDll = true, Managed = true, HighEntropyText = true, TextSize = 0x4000 })));
+        Assert.Equal(Verdict.Clean, r.Verdict);
+        Assert.Equal(5, r.Score!.Value); // только «библиотека без подписи»; энтропия .NET даёт 0
+    }
+
+    [Fact]
+    public void BigFile_IsHashedAndMeasuredByStream_WhileMemoryWindowStaysBounded()
+    {
+        using var tmp = new TempDir();
+        var path = Path.Combine(tmp.Path, "big.bin");
+        var chunk = new byte[1 << 20];
+        new Random(5).NextBytes(chunk);
+        using (var fs = File.Create(path))
+        {
+            for (var i = 0; i < 6; i++)
+            {
+                fs.Write(chunk);
+            }
+        }
+
+        var analyzer = new FileAnalyzer(new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory)), new UnavailableSignatureVerifier(), null, new FileAnalyzerOptions { MaxScanBytes = 2 * 1024 * 1024 });
+        var r = analyzer.Analyze(path);
+        Assert.True(r.Truncated);
+        Assert.Equal(6L << 20, r.Size);
+        Assert.Equal(FileHasher.ComputeSha256(path), r.Sha256);
+        Assert.True(r.Entropy > 7.99);
     }
 
     [Fact]

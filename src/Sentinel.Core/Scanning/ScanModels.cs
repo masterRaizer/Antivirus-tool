@@ -1,4 +1,5 @@
 using Sentinel.Core.Pe;
+using Sentinel.Core.Scoring;
 using Sentinel.Core.Signatures;
 using Sentinel.Core.Trust;
 
@@ -19,6 +20,7 @@ public enum DetectionSource
     Builtin,
     Signature,
     Heuristic,
+    ThreatIntel,
 }
 
 public sealed record Detection(
@@ -52,4 +54,7 @@ public sealed record FileScanResult
     /// <c>null</c> — обычная проверка.
     /// </summary>
     public string? PriorityReason { get; init; }
+
+    /// <summary>Многофакторный балл угрозы (0–100) и его составляющие; <c>null</c> для не-PE и ошибок.</summary>
+    public ThreatScore? Score { get; init; }
 }

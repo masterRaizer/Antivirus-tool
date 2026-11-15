@@ -42,7 +42,9 @@ internal static partial class RuleFactory
         IReadOnlySet<string> sha256,
         Condition? condition,
         string sourceFile,
-        int line)
+        int line,
+        IReadOnlyList<string>? appliesTo = null,
+        IReadOnlyList<string>? excludeFileNames = null)
     {
         ValidateName(name, line);
         if (string.IsNullOrWhiteSpace(id))
@@ -79,6 +81,8 @@ internal static partial class RuleFactory
             Sha256 = sha256,
             Condition = condition,
             SourceFile = sourceFile,
+            AppliesTo = appliesTo ?? [],
+            ExcludeFileNames = excludeFileNames ?? [],
         };
     }
 }

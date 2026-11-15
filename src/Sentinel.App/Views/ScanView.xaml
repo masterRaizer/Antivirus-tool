@@ -63,10 +63,14 @@
                         <StackPanel>
                             <TextBlock Style="{StaticResource Label}" Text="ПРОВЕРЕНО ОБЪЕКТОВ" />
                             <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding ScannedText}" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,0" Text="{Binding WorkersText, StringFormat=Рабочие {0}}"
+                                       ToolTip="Пул проверки: изолированные процессы Sentinel.Cli.exe или потоки портативного приложения" />
                         </StackPanel>
                         <StackPanel>
                             <TextBlock Style="{StaticResource Label}" Text="СКОРОСТЬ" />
                             <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding SpeedText}" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,0" Text="{Binding CacheText}"
+                                       ToolTip="Неизменённые файлы, ранее признанные чистыми, пропускаются без повторной проверки" />
                         </StackPanel>
                         <StackPanel>
                             <TextBlock Style="{StaticResource Label}" Text="НАХОДОК" />

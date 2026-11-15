@@ -25,6 +25,8 @@
             <local:ActionStatusTextConverter x:Key="ActionStatusText" />
             <local:ReportModeTextConverter x:Key="ReportModeText" />
             <local:StartupRowBrushConverter x:Key="StartupRowBrush" />
+            <local:GroupTitleConverter x:Key="GroupTitle" />
+            <local:GroupExpandedConverter x:Key="GroupExpanded" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

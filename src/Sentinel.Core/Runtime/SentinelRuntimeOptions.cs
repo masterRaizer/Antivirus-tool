@@ -27,6 +27,9 @@ public sealed class SentinelRuntimeOptions
     public string Mode { get; init; } = "standalone";
 
     public required FileAnalyzer Analyzer { get; init; }
+
+    /// <summary>Общие сервисы (база угроз, облако, конфигурация); <c>null</c> в тестах с подставным анализатором.</summary>
+    public SentinelServices? Services { get; init; }
     public required QuarantineManager Quarantine { get; init; }
 
     /// <summary>Движок нейтрализации; <c>null</c> — действия над системой недоступны (не Windows).</summary>
@@ -39,6 +42,18 @@ public sealed class SentinelRuntimeOptions
     public FileMonitorOptions Monitor { get; init; } = new();
     public IReadOnlyList<ScanRoot> QuickScanRoots { get; init; } = [];
     public IReadOnlyList<ScanRoot> FullScanRoots { get; init; } = [];
+
+    /// <summary>Каталог правил (передаётся рабочим процессам пула).</summary>
+    public string? RulesDirectory { get; init; }
+
+    /// <summary>Кэш чистых файлов <c>scan_cache.bin</c> для быстрой и полной проверки.</summary>
+    public bool UseVerdictCache { get; init; } = true;
+
+    /// <summary>Фабрика пула проверки (по умолчанию — <see cref="Scanning.Pool.ScanPoolFactory"/>, выбор режима по наличию Sentinel.Cli.exe).</summary>
+    public Func<Scanning.ScanVerdictCache?, Scanning.Pool.IScanPool>? ScanPoolFactory { get; init; }
+
+    /// <summary>Корни проверки «Подключённые USB»: готовые съёмные диски.</summary>
+    public Func<IReadOnlyList<ScanRoot>> RemovableRoots { get; init; } = DefaultRemovableRoots;
     public int RulesLoaded { get; init; }
     public bool RealtimeEnabledByDefault { get; init; } = true;
     public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
@@ -62,10 +77,10 @@ public sealed class SentinelRuntimeOptions
     public static SentinelRuntimeOptions CreateDefault(string mode, string? dataDirectory = null, string? rulesDirectory = null)
     {
         var data = Path.GetFullPath(dataDirectory ?? DefaultDataDirectory());
-        var rules = RuleLoader.LoadDirectory(rulesDirectory ?? DefaultRulesDirectory());
-        var verifier = SignatureVerifierFactory.CreateDefault();
-        var whitelist = new SystemWhitelist(verifier, WhitelistOptions.CreateDefault());
-        var analyzer = new FileAnalyzer(new SignatureEngine(rules), verifier, whitelist);
+        var services = SentinelServices.Create(data, rulesDirectory ?? DefaultRulesDirectory());
+        var rules = services.Rules;
+        var whitelist = services.Whitelist;
+        var analyzer = services.Analyzer;
         var quarantine = new QuarantineManager(whitelist, new QuarantineOptions { QuarantineDirectory = Path.Combine(data, "Quarantine") });
 
         RemediationEngine? engine = null;
@@ -82,8 +97,8 @@ public sealed class SentinelRuntimeOptions
             var wmi = new WindowsWmiSubscriptionProvider();
             var certificates = new WindowsRootCertificateProvider();
             var defenderExclusions = new WindowsDefenderExclusionSource();
-            persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault(), registry, tasks, wmi, analyzer).Audit();
-            config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault(), registry, certificates, defenderExclusions).Audit();
+            persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, tasks, wmi, analyzer).Audit();
+            config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, certificates, defenderExclusions, analyzer).Audit();
         }
 
         return new SentinelRuntimeOptions
@@ -101,6 +116,8 @@ public sealed class SentinelRuntimeOptions
             QuickScanRoots = DefaultQuickRoots(),
             FullScanRoots = DefaultFullRoots(),
             RulesLoaded = rules.Rules.Count,
+            Services = services,
+            RulesDirectory = rulesDirectory ?? DefaultRulesDirectory(),
         };
     }
 
@@ -143,6 +160,22 @@ public sealed class SentinelRuntimeOptions
             {
                 roots.Add(new ScanRoot(path, depth));
             }
+        }
+    }
+
+    /// <summary>Готовые съёмные диски (<see cref="DriveType.Removable"/>).</summary>
+    public static IReadOnlyList<ScanRoot> DefaultRemovableRoots()
+    {
+        try
+        {
+            return DriveInfo.GetDrives()
+                .Where(d => d is { DriveType: DriveType.Removable, IsReady: true })
+                .Select(d => new ScanRoot(d.RootDirectory.FullName))
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
         }
     }
 

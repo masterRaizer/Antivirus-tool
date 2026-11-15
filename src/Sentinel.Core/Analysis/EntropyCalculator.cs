@@ -76,6 +76,9 @@ public static class EntropyCalculator
         return result;
     }
 
+    /// <summary>Энтропия по готовой гистограмме байтов (потоковый расчёт без хранения данных).</summary>
+    public static double FromHistogram(ReadOnlySpan<long> counts, long total) => FromCounts(counts, total);
+
     private static double FromCounts(ReadOnlySpan<long> counts, long total)
     {
         if (total == 0)

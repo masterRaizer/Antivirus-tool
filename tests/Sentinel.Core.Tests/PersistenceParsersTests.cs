@@ -1,3 +1,4 @@
+using Sentinel.Core.Signatures;
 using Sentinel.Core.Audit.Persistence;
 using Sentinel.Core.Audit.Persistence.Registry;
 using Sentinel.Core.Audit.Persistence.Tasks;
@@ -187,4 +188,47 @@ public class InMemoryRegistryProviderTests
         Assert.Contains("Svc1", names);
         Assert.Contains("Svc2", names);
     }
+}
+
+public class HostsClassificationTests
+{
+    private static PersistenceAuditReport Audit(string content)
+    {
+        using var tmp = new TempDir();
+        var hosts = tmp.WriteText("hosts", content);
+        return new PersistenceAuditor(new PersistenceAuditorOptions { HostsFilePath = hosts }).Audit();
+    }
+
+    [Theory]
+    [InlineData("0.0.0.0 vortex.data.microsoft.com")]
+    [InlineData("0.0.0.0 v10.events.data.microsoft.com")]
+    [InlineData("127.0.0.1 watson.telemetry.microsoft.com")]
+    [InlineData("0.0.0.0 nw-umwatson.events.data.microsoft.com")]
+    [InlineData("0.0.0.0 settings-win.data.microsoft.com")]
+    [InlineData("0.0.0.0 compatexchange.cloudapp.net")]
+    [InlineData("0.0.0.0 browser.aria.microsoft.com")]
+    public void TelemetryBlock_IsInfoAndNeverAutoRemediated(string line)
+    {
+        var report = Audit(line + "\n");
+        var entry = Assert.Single(report.Entries);
+        Assert.Equal(Severity.Info, entry.MaxSeverity);
+        Assert.Equal("PERS-HOSTS-TELEMETRY", entry.Findings[0].Id);
+    }
+
+    [Fact]
+    public void UpdateOrAntivirusBlock_IsMedium()
+    {
+        var entry = Assert.Single(Audit("0.0.0.0 windowsupdate.com\n").Entries);
+        Assert.Equal(Severity.Medium, entry.MaxSeverity);
+    }
+
+    [Fact]
+    public void RedirectToExternalAddress_IsCritical()
+    {
+        var entry = Assert.Single(Audit("203.0.113.9 bank.test\n").Entries);
+        Assert.Equal(Severity.Critical, entry.MaxSeverity);
+    }
+
+    [Fact]
+    public void Localhost_IsIgnored() => Assert.Empty(Audit("127.0.0.1 localhost\n::1 localhost\n").Entries);
 }

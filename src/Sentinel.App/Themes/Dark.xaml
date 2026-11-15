@@ -2,13 +2,13 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!-- Палитра -->
-    <Color x:Key="BgColor">#0F1117</Color>
+    <Color x:Key="BgColor">#0D1117</Color>
     <Color x:Key="SurfaceColor">#161B22</Color>
-    <Color x:Key="SurfaceAltColor">#1C222D</Color>
+    <Color x:Key="SurfaceAltColor">#1C2128</Color>
     <Color x:Key="HoverColor">#222A37</Color>
     <Color x:Key="BorderColor">#262D3A</Color>
-    <Color x:Key="TextColor">#E6EDF3</Color>
-    <Color x:Key="MutedColor">#8B949E</Color>
+    <Color x:Key="TextColor">#F0F6FC</Color>
+    <Color x:Key="MutedColor">#9EA7B3</Color>
     <Color x:Key="AccentColor">#2F81F7</Color>
     <Color x:Key="AccentHoverColor">#4C94FF</Color>
     <Color x:Key="OkColor">#3FB950</Color>
@@ -39,12 +39,21 @@
     <SolidColorBrush x:Key="DangerSoftBrush" Color="{StaticResource DangerColor}" Opacity="0.14" />
     <SolidColorBrush x:Key="MutedSoftBrush" Color="{StaticResource MutedColor}" Opacity="0.14" />
 
+    <!-- Имена палитры из спецификации 1.1.0 (wpf-ui-polish) -->
+    <SolidColorBrush x:Key="WindowBg" Color="{StaticResource BgColor}" />
+    <SolidColorBrush x:Key="CardBg" Color="{StaticResource SurfaceColor}" />
+    <SolidColorBrush x:Key="SurfaceElevated" Color="{StaticResource SurfaceAltColor}" />
+    <SolidColorBrush x:Key="TextPrimary" Color="{StaticResource TextColor}" />
+    <SolidColorBrush x:Key="TextSecondary" Color="{StaticResource MutedColor}" />
+
     <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
     <FontFamily x:Key="DisplayFont">Segoe UI Variable Display, Segoe UI Semibold, Segoe UI</FontFamily>
     <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas</FontFamily>
     <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
 
     <!-- Текст -->
+    <!-- Цвет текста наследуется от контейнера. Все контейнеры, у которых WPF по умолчанию берёт системный чёрный
+         (ListBoxItem, DataGridRow/Cell, ToolTip, всплывающие ComboBox/ContextMenu, Expander), получают явный TextBrush ниже. -->
     <Style TargetType="TextBlock">
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
     </Style>
@@ -584,6 +593,7 @@
     </Style>
     <Style x:Key="GridRow" TargetType="DataGridRow">
         <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
@@ -625,6 +635,8 @@
         <Setter Property="CanUserReorderColumns" Value="False" />
         <Setter Property="RowHeaderWidth" Value="0" />
         <Setter Property="EnableRowVirtualization" Value="True" />
+        <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True" />
+        <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling" />
         <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel" />
         <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
         <Setter Property="Template">
@@ -664,6 +676,10 @@
     <!-- Список карточек: без выделения и рамок -->
     <Style x:Key="CardList" TargetType="ListBox">
         <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True" />
+        <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling" />
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
         <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel" />
@@ -671,6 +687,7 @@
             <Setter.Value>
                 <Style TargetType="ListBoxItem">
                     <Setter Property="Focusable" Value="False" />
+                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                     <Setter Property="Template">
                         <Setter.Value>
                             <ControlTemplate TargetType="ListBoxItem">
@@ -679,6 +696,126 @@
                         </Setter.Value>
                     </Setter>
                 </Style>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="PasswordBox">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Background" Value="{StaticResource BgBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
+        <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Padding" Value="9,6" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="PasswordBox">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Группы однотипных записей (Info: hosts, системные сертификаты) -->
+    <Style TargetType="Expander">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    </Style>
+    <Style TargetType="GroupItem">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+    </Style>
+
+    <!-- Выпадающие списки, контекстные меню и пункты меню: без светлых системных шаблонов -->
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Background" Value="{StaticResource SurfaceAltBrush}" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ComboBox">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Background" Value="{StaticResource SurfaceAltBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton Focusable="False" ClickMode="Press"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8">
+                                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"
+                                                   FontFamily="{StaticResource IconFont}" FontSize="10" Text="&#xE70D;" Foreground="{StaticResource MutedBrush}" />
+                                    </Border>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter Margin="12,0,30,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                                          Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" />
+                        <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                            <Border Background="{StaticResource SurfaceAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8"
+                                    MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="320">
+                                <ScrollViewer>
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ContextMenu">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Background" Value="{StaticResource SurfaceAltBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="4">
+                        <StackPanel IsItemsHost="True" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="12,7" CornerRadius="6">
+                        <ContentPresenter ContentSource="Header" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>

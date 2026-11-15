@@ -32,6 +32,12 @@ internal sealed partial class PeriodicAuditWorker(SentinelRuntime runtime, ILogg
     private static partial void LogStarted(ILogger logger);
 }
 
+/// <summary>Фоновое автообновление баз угроз каждые 6 часов (если не отключено в «Настройках и базах»).</summary>
+internal sealed class DatabaseUpdateWorker(SentinelRuntime runtime) : BackgroundService
+{
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) => runtime.RunDatabaseUpdatesAsync(stoppingToken);
+}
+
 /// <summary>Сбор телеметрии (CPU, память, диск) для графиков интерфейса.</summary>
 internal sealed class TelemetryWorker(SentinelRuntime runtime) : BackgroundService
 {

@@ -32,6 +32,9 @@ public enum QuarantineState
 
     /// <summary>Файл возвращён на исходное место; запись сохранена для истории.</summary>
     Restored,
+
+    /// <summary>Контейнер удалён пользователем навсегда; запись сохранена для истории.</summary>
+    Deleted,
 }
 
 /// <summary>Запись <c>quarantine_manifest.json</c> — всё необходимое для полного восстановления файла.</summary>

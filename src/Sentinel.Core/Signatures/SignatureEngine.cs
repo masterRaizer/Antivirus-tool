@@ -18,11 +18,19 @@ public sealed class SignatureEngine
     /// <param name="data">Просканированные байты (может быть префиксом файла).</param>
     /// <param name="fileSize">Реальный размер файла (для условия filesize).</param>
     /// <param name="sha256">SHA-256 всего файла в нижнем регистре или null.</param>
-    public IReadOnlyList<SignatureMatch> Scan(ReadOnlyMemory<byte> data, long fileSize, string? sha256)
+    public IReadOnlyList<SignatureMatch> Scan(ReadOnlyMemory<byte> data, long fileSize, string? sha256) => Scan(data, fileSize, sha256, null);
+
+    /// <param name="target">Файл (путь и признак PE): правила с <c>appliesTo</c>/<c>excludeFileNames</c> применяются только к подходящим файлам.</param>
+    public IReadOnlyList<SignatureMatch> Scan(ReadOnlyMemory<byte> data, long fileSize, string? sha256, ScanTarget? target)
     {
         var matches = new List<SignatureMatch>();
         foreach (var rule in _rules.Rules)
         {
+            if (!rule.Applies(target))
+            {
+                continue;
+            }
+
             if (sha256 is not null && rule.Sha256.Contains(sha256))
             {
                 matches.Add(new SignatureMatch(rule.Id, rule.Name, rule.Severity, rule.Category, rule.Description, [], true, rule.SourceFile));

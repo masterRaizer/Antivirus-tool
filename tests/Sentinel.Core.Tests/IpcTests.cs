@@ -10,6 +10,28 @@ namespace Sentinel.Core.Tests;
 /// <summary>Бэкенд-двойник: фиксирует вызовы и позволяет поднимать события вручную.</summary>
 internal sealed class FakeBackend : ISentinelBackend
 {
+    public SettingsUpdate? SavedSettings { get; private set; }
+
+    public Task<OperationResult> DeleteQuarantineAsync(string id, CancellationToken cancellationToken = default) =>
+        Task.FromResult(OperationResult.Ok($"deleted {id}"));
+
+    public Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new SettingsSnapshot
+    {
+        HasVirusTotalApiKey = true,
+        AllowedPaths = [@"C:\Tools"],
+        AllowedHashes = [new string('a', 64)],
+        Database = new Sentinel.Core.ThreatIntel.DatabaseStatus { HashCount = 11743, LastStatus = "ok" },
+    });
+
+    public Task<OperationResult> SaveSettingsAsync(SettingsUpdate update, CancellationToken cancellationToken = default)
+    {
+        SavedSettings = update;
+        return Task.FromResult(OperationResult.Ok("saved"));
+    }
+
+    public Task<Sentinel.Core.ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new Sentinel.Core.ThreatIntel.DatabaseStatus { LastStatus = "Обновление баз выполняется…" });
+
     public List<string> Calls { get; } = [];
 
     public List<ThreatEvent> Threats { get; } = [];
@@ -263,6 +285,26 @@ public sealed class IpcPipeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SettingsAndDatabaseRequests_RoundTripOverThePipe()
+    {
+        await using var client = await ConnectAsync();
+
+        var settings = await client.GetSettingsAsync();
+        var saved = await client.SaveSettingsAsync(new SettingsUpdate { VirusTotalApiKey = "", AllowedHashes = [new string('b', 64)], AutoUpdateDatabases = false });
+        var update = await client.UpdateDatabasesAsync();
+        var deleted = await client.DeleteQuarantineAsync("q9");
+
+        Assert.True(settings.HasVirusTotalApiKey);
+        Assert.Equal(11743, settings.Database.HashCount);
+        Assert.Equal(@"C:\Tools", Assert.Single(settings.AllowedPaths));
+        Assert.True(saved.Success);
+        Assert.Equal("", _backend.SavedSettings!.VirusTotalApiKey);
+        Assert.False(_backend.SavedSettings.AutoUpdateDatabases);
+        Assert.StartsWith("Обновление", update.LastStatus, StringComparison.Ordinal);
+        Assert.Equal("deleted q9", deleted.Message);
+    }
+
+    [Fact]
     public async Task Requests_ReachBackend_AndResultsComeBackTyped()
     {
         await using var client = await ConnectAsync();
@@ -406,5 +448,32 @@ public sealed class IpcPipeTests : IAsyncLifetime
     {
         var client = await SentinelIpcClient.TryConnectAsync("sentinel-absent-" + Guid.NewGuid().ToString("N"), TimeSpan.FromMilliseconds(300));
         Assert.Null(client);
+    }
+}
+
+public class PipeSecurityTests
+{
+    [Fact]
+    public void ServiceAccessRules_MatchSpecification()
+    {
+        var rules = Sentinel.Core.Ipc.SentinelIpcServer.ServiceAccessRules;
+        Assert.Contains(new Sentinel.Core.Ipc.ServicePipeRule(Sentinel.Core.Ipc.ServicePipeAccount.LocalSystem, Sentinel.Core.Ipc.ServicePipeRights.FullControl, true), rules);
+        Assert.Contains(new Sentinel.Core.Ipc.ServicePipeRule(Sentinel.Core.Ipc.ServicePipeAccount.Administrators, Sentinel.Core.Ipc.ServicePipeRights.FullControl, true), rules);
+        Assert.Contains(new Sentinel.Core.Ipc.ServicePipeRule(Sentinel.Core.Ipc.ServicePipeAccount.AuthenticatedUsers, Sentinel.Core.Ipc.ServicePipeRights.ReadWrite, true), rules);
+        Assert.Contains(new Sentinel.Core.Ipc.ServicePipeRule(Sentinel.Core.Ipc.ServicePipeAccount.Network, Sentinel.Core.Ipc.ServicePipeRights.FullControl, false), rules);
+        Assert.DoesNotContain(rules, r => r.Account == Sentinel.Core.Ipc.ServicePipeAccount.AuthenticatedUsers && r.Rights == Sentinel.Core.Ipc.ServicePipeRights.FullControl);
+    }
+
+    [WindowsFact]
+    public void CreateServiceSecurity_BuildsAclOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var security = Sentinel.Core.Ipc.SentinelIpcServer.CreateServiceSecurity();
+        var rules = security.GetAccessRules(true, false, typeof(System.Security.Principal.SecurityIdentifier));
+        Assert.Equal(4, rules.Count);
     }
 }

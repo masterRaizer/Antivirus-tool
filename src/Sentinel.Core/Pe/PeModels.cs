@@ -79,6 +79,9 @@ public sealed record PeInfo
     public required IReadOnlyList<string> Anomalies { get; init; }
 
     public bool IsDriver => Subsystem == PeSubsystem.Native;
+
+    /// <summary>Управляемая (.NET) сборка: заполнен IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR (индекс 14).</summary>
+    public bool IsManaged => DataDirectories.Count > 14 && DataDirectories[14].IsPresent;
     public PeSection? EntryPointSection => Sections.FirstOrDefault(s => s.ContainsRva(EntryPointRva));
 
     /// <summary>Наличие каталога IMAGE_DIRECTORY_ENTRY_SECURITY (Authenticode).</summary>

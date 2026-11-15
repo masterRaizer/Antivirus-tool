@@ -125,7 +125,7 @@ public sealed class WindowsWmiSubscriptionProvider : IWmiSubscriptionProvider
     public WmiSubscriptionSnapshot GetSubscriptions()
     {
         var consumers = WmiSubscriptionJsonParser.ParseConsumers(
-            Query("Get-CimInstance -Namespace root/subscription -ClassName __EventConsumer -ErrorAction SilentlyContinue | Select-Object Name,__CLASS,ExecutablePath,CommandLineTemplate,ScriptText | ConvertTo-Json -Depth 3 -Compress"));
+            Query("Get-CimInstance -Namespace root/subscription -ClassName __EventConsumer -ErrorAction SilentlyContinue | Select-Object Name,@{n='__CLASS';e={$_.CimClass.CimClassName}},ExecutablePath,CommandLineTemplate,ScriptText | ConvertTo-Json -Depth 3 -Compress"));
         var filters = WmiSubscriptionJsonParser.ParseFilters(
             Query("Get-CimInstance -Namespace root/subscription -ClassName __EventFilter -ErrorAction SilentlyContinue | Select-Object Name,Query,QueryLanguage | ConvertTo-Json -Depth 3 -Compress"));
         return new WmiSubscriptionSnapshot(filters, consumers);

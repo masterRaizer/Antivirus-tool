@@ -252,7 +252,7 @@ public sealed partial class SentinelRuntime : ISentinelBackend, IAsyncDisposable
         return records
             .OrderByDescending(r => r.QuarantinedAtUtc)
             .Select(r => new QuarantineItem(r.Id, r.OriginalPath, r.Sha256, r.Size, r.QuarantinedAtUtc, r.Reason,
-                r.State == QuarantineState.Restored, r.RestoredAtUtc))
+                r.State == QuarantineState.Restored, r.RestoredAtUtc) { Deleted = r.State == QuarantineState.Deleted })
             .ToArray();
     }
 

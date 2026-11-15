@@ -24,6 +24,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sentinel.Core\Sentinel.Core.csproj" />
+    <!-- Только порядок сборки: интеграционный тест запускает настоящий рабочий процесс sentinel.dll в режиме scan-worker. -->
+    <ProjectReference Include="..\..\src\Sentinel.Cli\Sentinel.Cli.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

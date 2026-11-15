@@ -277,3 +277,33 @@ public class RuleLoaderTests
         Assert.Contains(set.Rules, r => r.Category == "stealer");
     }
 }
+
+public class RuleApplicabilityTests
+{
+    private static readonly byte[] PoolDomainBytes = System.Text.Encoding.ASCII.GetBytes("domain:pool.minexmr.com\n");
+
+    private static IReadOnlyList<SignatureMatch> Scan(string path, bool isPe = false) =>
+        new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory)).Scan(PoolDomainBytes, PoolDomainBytes.Length, null, new ScanTarget(path, isPe));
+
+    [Theory]
+    [InlineData(@"C:\Users\Bob\Downloads\Xray\geosite.dat")]
+    [InlineData(@"C:\Users\Bob\AppData\Roaming\Ward\assets\geoip.dat")]
+    [InlineData(@"C:\data\GeoSite.DAT")]
+    [InlineData(@"C:\data\routing.dat")]
+    public void PoolDomainRule_DoesNotFire_OnNonExecutableGeoDatabases(string path) =>
+        Assert.DoesNotContain(Scan(path), m => m.RuleId == "SNT-MINER-0002");
+
+    [Theory]
+    [InlineData(@"C:\miner\config.json")]
+    [InlineData(@"C:\miner\start.bat")]
+    [InlineData(@"C:\miner\xmrig.exe")]
+    [InlineData(@"C:\miner\renamed.dat", true)]
+    public void PoolDomainRule_StillFires_OnConfigsScriptsAndExecutables(string path, bool isPe = false) =>
+        Assert.Contains(Scan(path, isPe), m => m.RuleId == "SNT-MINER-0002");
+
+    [Fact]
+    public void RuleWithoutRestrictions_AppliesEverywhere() =>
+        Assert.Contains(new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory))
+            .Scan(System.Text.Encoding.ASCII.GetBytes("stratum+tcp:// randomx"), 22, null, new ScanTarget(@"C:\x\blob.dat", false)),
+            m => m.RuleId == "SNT-MINER-0001");
+}

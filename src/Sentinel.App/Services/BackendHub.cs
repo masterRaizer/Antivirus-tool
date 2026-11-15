@@ -13,7 +13,10 @@ namespace Sentinel.App.Services;
 /// </summary>
 public sealed class BackendHub : ISentinelBackend, IAsyncDisposable
 {
-    private static readonly TimeSpan ReconnectInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ReconnectInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>Имя службы Windows (совпадает с <c>ServiceOptions.ServiceName</c> и установщиком).</summary>
+    public const string ServiceName = "SentinelService";
 
     private readonly SemaphoreSlim _switchLock = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
@@ -144,6 +147,56 @@ public sealed class BackendHub : ISentinelBackend, IAsyncDisposable
     public Task<ReportExport> ExportReportAsync(string id, ReportFormat format, CancellationToken cancellationToken = default) =>
         Current.ExportReportAsync(id, format, cancellationToken);
 
+    public Task<OperationResult> DeleteQuarantineAsync(string id, CancellationToken cancellationToken = default) =>
+        Current.DeleteQuarantineAsync(id, cancellationToken);
+
+    public Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken = default) => Current.GetSettingsAsync(cancellationToken);
+
+    public Task<OperationResult> SaveSettingsAsync(SettingsUpdate update, CancellationToken cancellationToken = default) =>
+        Current.SaveSettingsAsync(update, cancellationToken);
+
+    public Task<Sentinel.Core.ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default) =>
+        Current.UpdateDatabasesAsync(cancellationToken);
+
+    /// <summary>
+    /// Запускает службу <c>SentinelService</c> командой <c>sc.exe start</c> с запросом повышения прав (UAC).
+    /// Подключение к запущенной службе выполнит цикл автопереподключения (каждые 2 секунды).
+    /// </summary>
+    public static Task<OperationResult> StartServiceAsync() => Task.Run(() =>
+    {
+        try
+        {
+            var sc = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "sc.exe");
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(sc, $"start {ServiceName}")
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+            });
+            if (process is null)
+            {
+                return OperationResult.Fail("Не удалось запустить sc.exe.");
+            }
+
+            process.WaitForExit(30_000);
+            return process.ExitCode switch
+            {
+                0 => OperationResult.Ok("Служба запускается — подключение произойдёт автоматически."),
+                1056 => OperationResult.Ok("Служба уже запущена — выполняется подключение."),
+                1060 => OperationResult.Fail("Служба SentinelService не установлена. Установите Sentinel из MSI-пакета."),
+                _ => OperationResult.Fail($"sc.exe start завершился с кодом {process.ExitCode}."),
+            };
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            return OperationResult.Fail("Запуск отменён: для запуска службы нужны права администратора.");
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return OperationResult.Fail($"Не удалось запустить службу: {ex.Message}");
+        }
+    });
+
     // ---- Переключение режимов ---------------------------------------------------
 
     private async Task<bool> TryAttachServiceAsync()
@@ -174,7 +227,8 @@ public sealed class BackendHub : ISentinelBackend, IAsyncDisposable
         _localTasks = Task.WhenAll(
             Task.Run(() => runtime.RunTelemetryAsync(token)),
             Task.Run(() => runtime.RunFileMonitorAsync(token)),
-            Task.Run(() => runtime.RunPeriodicAuditAsync(token)));
+            Task.Run(() => runtime.RunPeriodicAuditAsync(token)),
+            Task.Run(() => runtime.RunDatabaseUpdatesAsync(token)));
         Attach(runtime);
         IsServiceMode = false;
     }

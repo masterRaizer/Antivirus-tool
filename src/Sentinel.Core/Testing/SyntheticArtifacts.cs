@@ -25,6 +25,12 @@ public static class SyntheticArtifacts
         public int OverlaySize { get; init; }
         public uint? EntryPointOverride { get; init; }
         public int Seed { get; init; } = 1337;
+
+        /// <summary>Заполнить каталог COM-дескриптора (IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR): образ выглядит как .NET-сборка.</summary>
+        public bool Managed { get; init; }
+
+        /// <summary>Имена функций, которые образ «импортирует» из kernel32.dll (синтетическая таблица импорта в секции .data).</summary>
+        public IReadOnlyList<string> ImportedFunctions { get; init; } = [];
     }
 
     public static byte[] BuildPe(PeOptions? options = null)
@@ -37,10 +43,18 @@ public static class SyntheticArtifacts
         var headersRaw = Align(peOffset + 24 + optionalSize + (sectionCount * 40), FileAlignment);
 
         var textRaw = Align(o.TextSize, FileAlignment);
-        var dataContent = o.DataContent.Length > 0 ? o.DataContent : Encoding.ASCII.GetBytes("synthetic data section");
-        var dataRaw = o.AddDataSection ? Align(dataContent.Length, FileAlignment) : 0;
         var textVa = SectionAlignment;
         var dataVa = textVa + Align(o.TextSize, SectionAlignment);
+        var dataContent = o.DataContent.Length > 0 ? o.DataContent : Encoding.ASCII.GetBytes("synthetic data section");
+        var importSize = 0;
+        if (o.AddDataSection && o.ImportedFunctions.Count > 0)
+        {
+            var blob = BuildImportBlob(o.ImportedFunctions, o.Is64Bit, (uint)dataVa);
+            importSize = blob.Length;
+            dataContent = [.. blob, .. dataContent];
+        }
+
+        var dataRaw = o.AddDataSection ? Align(dataContent.Length, FileAlignment) : 0;
         var sizeOfImage = (o.AddDataSection ? dataVa + Align(dataContent.Length, SectionAlignment) : dataVa);
 
         var file = new byte[headersRaw + textRaw + dataRaw + o.OverlaySize];
@@ -92,6 +106,19 @@ public static class SyntheticArtifacts
         BinaryPrimitives.WriteUInt16LittleEndian(opt[70..], 0x8160);                     // NX|DYNAMIC_BASE|HIGH_ENTROPY_VA|TS_AWARE
         var dirCountOffset = o.Is64Bit ? 108 : 92;
         BinaryPrimitives.WriteUInt32LittleEndian(opt[dirCountOffset..], 16);
+        if (importSize > 0)
+        {
+            var import = opt[(dirCountOffset + 4 + 8)..];
+            BinaryPrimitives.WriteUInt32LittleEndian(import, (uint)dataVa);
+            BinaryPrimitives.WriteUInt32LittleEndian(import[4..], 40);
+        }
+
+        if (o.Managed)
+        {
+            var clr = opt[(dirCountOffset + 4 + (8 * 14))..];
+            BinaryPrimitives.WriteUInt32LittleEndian(clr, (uint)textVa);
+            BinaryPrimitives.WriteUInt32LittleEndian(clr[4..], 0x48);
+        }
 
         // Section table
         var sections = opt[optionalSize..];
@@ -130,6 +157,47 @@ public static class SyntheticArtifacts
         }
 
         return file;
+    }
+
+    /// <summary>Таблица импорта с одной библиотекой (kernel32.dll): дескриптор, thunk-массив и имена функций.</summary>
+    private static byte[] BuildImportBlob(IReadOnlyList<string> functions, bool is64, uint baseRva)
+    {
+        var thunkSize = is64 ? 8 : 4;
+        var descriptorsSize = 40;
+        var thunkOffset = descriptorsSize;
+        var thunksLength = (functions.Count + 1) * thunkSize;
+        var dllNameOffset = thunkOffset + thunksLength;
+        var dllName = Encoding.ASCII.GetBytes("kernel32.dll\0");
+        var namesOffset = dllNameOffset + dllName.Length;
+        var nameOffsets = new List<int>();
+        var cursor = namesOffset;
+        foreach (var f in functions)
+        {
+            nameOffsets.Add(cursor);
+            cursor += 2 + f.Length + 1;
+        }
+
+        var bytes = new byte[cursor];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, baseRva + (uint)thunkOffset);          // OriginalFirstThunk
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(12), baseRva + (uint)dllNameOffset); // Name
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(16), baseRva + (uint)thunkOffset);   // FirstThunk
+        for (var i = 0; i < functions.Count; i++)
+        {
+            var rva = baseRva + (uint)nameOffsets[i];
+            if (is64)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(thunkOffset + (i * 8)), rva);
+            }
+            else
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(thunkOffset + (i * 4)), rva);
+            }
+
+            Encoding.ASCII.GetBytes(functions[i]).CopyTo(bytes.AsSpan(nameOffsets[i] + 2));
+        }
+
+        dllName.CopyTo(bytes.AsSpan(dllNameOffset));
+        return bytes;
     }
 
     /// <summary>Безопасный текстовый «конфиг майнера» для проверки сигнатур (без исполняемого кода).</summary>

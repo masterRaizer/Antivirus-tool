@@ -13,6 +13,9 @@ public enum ScanMode
 
     /// <summary>Выбранная пользователем папка или файл.</summary>
     Custom,
+
+    /// <summary>Все подключённые съёмные накопители (флешки, внешние диски) — глубокая проверка всех файлов.</summary>
+    Removable,
 }
 
 public enum ScanState
@@ -63,6 +66,23 @@ public sealed record ScanProgress
 
     public string? Message { get; init; }
 
+    /// <summary>Размер пула проверки и сколько рабочих сейчас заняты.</summary>
+    public int Workers { get; init; }
+
+    public int ActiveWorkers { get; init; }
+
+    /// <summary><c>процессы</c> — изолированные рабочие процессы, <c>потоки</c> — внутрипроцессный пул.</summary>
+    public string PoolMode { get; init; } = string.Empty;
+
+    /// <summary>Пропущено по кэшу чистых файлов (не менялись с прошлой проверки).</summary>
+    public long CachedSkipped { get; init; }
+
+    /// <summary>Файлы, которые не удалось проверить (ScanError).</summary>
+    public long Errors { get; init; }
+
+    /// <summary>Обход каталогов завершён: <see cref="Total"/> окончательный; до этого процент оценочный.</summary>
+    public bool EnumerationComplete { get; init; }
+
     public bool IsActive => State is ScanState.Counting or ScanState.Running or ScanState.Paused;
 }
 
@@ -94,7 +114,56 @@ public sealed record ServiceStatus
 public sealed record ProcessInfo(int Pid, string Name, string? Path, double CpuPercent, Severity? Severity, string? Remarks);
 
 public sealed record QuarantineItem(
-    string Id, string OriginalPath, string Sha256, long Size, DateTime QuarantinedAtUtc, string Reason, bool Restored, DateTime? RestoredAtUtc);
+    string Id, string OriginalPath, string Sha256, long Size, DateTime QuarantinedAtUtc, string Reason, bool Restored, DateTime? RestoredAtUtc)
+{
+    /// <summary>Удалён из карантина навсегда.</summary>
+    public bool Deleted { get; init; }
+
+    /// <summary>Файл всё ещё в карантине (его можно восстановить или удалить навсегда).</summary>
+    public bool IsActive => !Restored && !Deleted;
+
+    public string StateText => Deleted ? "Удалён навсегда" : Restored ? "Восстановлен" : string.Empty;
+}
+
+/// <summary>Настройки и базы для раздела «Настройки и базы». Значения ключей не передаются — только признак, что ключ задан.</summary>
+public sealed record SettingsSnapshot
+{
+    public bool HasKasperskyOpenTipApiKey { get; init; }
+
+    public bool HasVirusTotalApiKey { get; init; }
+
+    public bool HasAbuseChAuthKey { get; init; }
+
+    public bool AutoUpdateDatabases { get; init; } = true;
+
+    public IReadOnlyList<string> AllowedPaths { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedProcesses { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedHashes { get; init; } = [];
+
+    public ThreatIntel.DatabaseStatus Database { get; init; } = new();
+
+    public string DataDirectory { get; init; } = string.Empty;
+}
+
+/// <summary>Изменение настроек. Ключ: <c>null</c> — не менять, пустая строка — удалить, иное — новое значение.</summary>
+public sealed record SettingsUpdate
+{
+    public string? KasperskyOpenTipApiKey { get; init; }
+
+    public string? VirusTotalApiKey { get; init; }
+
+    public string? AbuseChAuthKey { get; init; }
+
+    public bool AutoUpdateDatabases { get; init; } = true;
+
+    public IReadOnlyList<string> AllowedPaths { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedProcesses { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedHashes { get; init; } = [];
+}
 
 public sealed record RollbackItem(
     string Id, DateTime TimestampUtc, string Kind, string Target, string? Name, string? PreviousValue, string? NewValue, string Reason, bool Undone);
@@ -126,6 +195,14 @@ public sealed record StartupItem
     public Severity Severity { get; init; }
     public string? Remarks { get; init; }
     public bool CanClean { get; init; }
+
+    /// <summary>
+    /// Группа для интерфейса: однотипные информационные записи (например, блокировка телеметрии в hosts) сворачиваются в одну группу,
+    /// чтобы не заслонять то, что требует внимания.
+    /// </summary>
+    public string Group => !Flagged ? "3. Штатные записи"
+        : Severity == Severity.Info ? $"2. Информация · {Category}"
+        : "1. Требуют внимания";
 }
 
 public sealed record StartupSnapshot(IReadOnlyList<StartupItem> Items, DateTime TakenAtUtc, string? Note = null);
@@ -187,4 +264,12 @@ public interface ISentinelBackend
     Task<IReadOnlyList<ReportSummary>> GetReportsAsync(CancellationToken cancellationToken = default);
 
     Task<ReportExport> ExportReportAsync(string id, ReportFormat format, CancellationToken cancellationToken = default);
+
+    Task<OperationResult> DeleteQuarantineAsync(string id, CancellationToken cancellationToken = default);
+
+    Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken = default);
+
+    Task<OperationResult> SaveSettingsAsync(SettingsUpdate update, CancellationToken cancellationToken = default);
+
+    Task<ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default);
 }

@@ -246,3 +246,25 @@ public sealed class EnumVisibilityConverter : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => Binding.DoNothing;
 }
+
+/// <summary>Имя группы «N. Заголовок» → «Заголовок» (номер задаёт только порядок групп).</summary>
+public sealed class GroupTitleConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var text = value?.ToString() ?? string.Empty;
+        var dot = text.IndexOf(". ", StringComparison.Ordinal);
+        return dot is > 0 and < 3 ? text[(dot + 2)..] : text;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => Binding.DoNothing;
+}
+
+/// <summary>Развёрнута по умолчанию только группа «Требуют внимания»; информационные и штатные записи свёрнуты.</summary>
+public sealed class GroupExpandedConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value?.ToString()?.StartsWith("1.", StringComparison.Ordinal) == true;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => Binding.DoNothing;
+}

@@ -1,6 +1,8 @@
 using Sentinel.Core.Audit.Persistence;
 using Sentinel.Core.Audit.Persistence.Registry;
 using Sentinel.Core.Audit.Process;
+using Sentinel.Core.Scanning;
+using Sentinel.Core.Trust;
 using Sentinel.Core.Signatures;
 
 namespace Sentinel.Core.Audit.Config;
@@ -44,13 +46,16 @@ public sealed class ConfigIntegrityAuditor
     private readonly IRegistryProvider? _registry;
     private readonly ICertificateStoreProvider? _certificates;
     private readonly IDefenderExclusionSource? _defender;
+    private readonly FileAnalyzer? _analyzer;
 
     public ConfigIntegrityAuditor(
         ConfigIntegrityAuditorOptions? options = null,
         IRegistryProvider? registry = null,
         ICertificateStoreProvider? certificates = null,
-        IDefenderExclusionSource? defenderExclusions = null)
+        IDefenderExclusionSource? defenderExclusions = null,
+        FileAnalyzer? analyzer = null)
     {
+        _analyzer = analyzer;
         _options = options ?? new ConfigIntegrityAuditorOptions();
         _registry = registry;
         _certificates = certificates;
@@ -196,6 +201,8 @@ public sealed class ConfigIntegrityAuditor
     private void AuditFirewall(List<ConfigFinding> findings)
     {
         var key = new RegistryKeyPath(RegistryHive.LocalMachine, FirewallRulesKey);
+        // Одно приложение обычно имеет отдельные правила для TCP и UDP: карточка создаётся один раз на (имя правила, путь программы).
+        var seen = new HashSet<(string, string)>();
         foreach (var value in _registry!.GetValues(key))
         {
             var rule = FirewallRuleParser.Parse(value.Name, value.Value);
@@ -211,16 +218,85 @@ public sealed class ConfigIntegrityAuditor
                 continue;
             }
 
-            var severity = rule.IsInbound ? Severity.High : Severity.Medium;
+            var ruleName = rule.DisplayName ?? rule.Name;
+            if (!seen.Add((ruleName.ToLowerInvariant(), PathClassifier.Normalize(rule.AppPath))))
+            {
+                continue;
+            }
+
+            var verdict = ClassifyFirewallApp(rule.AppPath);
+            if (verdict.Severity is null)
+            {
+                continue; // подписанная программа доверенного издателя, разрешённая пользователем либо уже удалённая
+            }
+
+            var severity = verdict.Severity.Value;
+            var inbound = rule.IsInbound ? "входящий" : "исходящий";
             findings.Add(new ConfigFinding(ConfigArea.FirewallRule, AuditFinding.Create(
                 "CFG-FW-ALLOW", severity,
-                rule.IsInbound ? "Разрешающее входящее правило для подозрительного файла" : "Разрешающее исходящее правило для подозрительного файла",
-                $"Правило брандмауэра '{rule.DisplayName ?? rule.Name}' разрешает {(rule.IsInbound ? "входящий" : "исходящий")} трафик для '{rule.AppPath}' из каталога с правом записи пользователя.",
-                Evidence.Of("rule", rule.DisplayName ?? rule.Name),
+                severity == Severity.Info
+                    ? "Разрешающее правило брандмауэра для пользовательской программы"
+                    : (rule.IsInbound ? "Разрешающее входящее правило для подозрительного файла" : "Разрешающее исходящее правило для подозрительного файла"),
+                $"Правило брандмауэра '{ruleName}' разрешает {inbound} трафик для '{rule.AppPath}' из каталога с правом записи пользователя. {verdict.Note}".Trim(),
+                Evidence.Of("rule", ruleName),
                 Evidence.Of("app", rule.AppPath),
                 Evidence.Of("dir", rule.Direction),
                 Evidence.Of("protocol", rule.Protocol))));
         }
+    }
+
+    /// <summary>
+    /// <c>null</c> — правило не выводится (подпись доверенного издателя, список разрешённого, файла нет).
+    /// Неподписанная пользовательская программа — <c>Info</c>; Medium/High — из Temp/Public или при высоком балле угрозы.
+    /// </summary>
+    private (Severity? Severity, string Note) ClassifyFirewallApp(string appPath)
+    {
+        string full;
+        try
+        {
+            full = Environment.ExpandEnvironmentVariables(appPath);
+        }
+        catch (ArgumentException)
+        {
+            full = appPath;
+        }
+
+        if (_options.IsUserAllowed?.Invoke(full) == true)
+        {
+            return (null, string.Empty);
+        }
+
+        FileScanResult? scan = null;
+        if (_analyzer is not null && File.Exists(full))
+        {
+            try
+            {
+                scan = _analyzer.Analyze(full);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                scan = null;
+            }
+
+            if (scan is not null && (scan.Verdict == Verdict.Trusted || TrustedPublishers.IsTrusted(scan.Signature)))
+            {
+                return (null, string.Empty);
+            }
+        }
+
+        var inTempOrPublic = PathClassifier.IsTempOrPublic(full);
+        var score = scan?.Score?.Value ?? 0;
+        if (score >= 45 || scan?.Verdict is Verdict.Malicious or Verdict.Suspicious)
+        {
+            return (Severity.High, $"Файл подозрителен (балл угрозы {score}/100).");
+        }
+
+        if (inTempOrPublic)
+        {
+            return (_options.FirewallInboundTempSeverity, "Программа запускается из временного или общедоступного каталога.");
+        }
+
+        return (Severity.Info, "Неподписанная пользовательская программа — только запись в журнал.");
     }
 
     // ---- Системный прокси ------------------------------------------------------
@@ -266,35 +342,85 @@ public sealed class ConfigIntegrityAuditor
 
     private void AuditRootCertificates(List<ConfigFinding> findings)
     {
-        foreach (var cert in _certificates!.GetRootCertificates())
+        // Дедупликация по отпечатку: один сертификат может присутствовать и в LocalMachine, и в CurrentUser.
+        var unique = _certificates!.GetRootCertificates()
+            .GroupBy(c => c.Thumbprint, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToArray();
+        var recentBorder = _options.Now.AddDays(-_options.RecentCertificateDays);
+        var standardExpired = new List<CertificateInfo>();
+        var standardWeak = new List<CertificateInfo>();
+
+        foreach (var cert in unique)
         {
+            // Штатный корень: входит в программу доверенных корней Microsoft (AuthRoot) либо это исторический корень Microsoft.
+            var standard = cert.IsStandard || cert.IsKnownMicrosoftRoot;
+            var recent = cert.NotBefore >= recentBorder;
+
             if (cert.IsExpired(_options.Now))
             {
-                findings.Add(Cert("CFG-CERT-EXPIRED", Severity.Low,
-                    "Просроченный корневой сертификат",
-                    $"В доверенном хранилище остаётся просроченный корень (до {cert.NotAfter:yyyy-MM-dd}): {cert.Subject}.", cert));
+                if (standard || !recent)
+                {
+                    // Просроченные корни 1997–2024 остаются в системе ради совместимости старых подписей — это не угроза.
+                    standardExpired.Add(cert);
+                }
+                else
+                {
+                    findings.Add(Cert("CFG-CERT-EXPIRED", Severity.Medium,
+                        "Просроченный недавно установленный корневой сертификат",
+                        $"В доверенном хранилище остаётся просроченный нестандартный корень (до {cert.NotAfter:yyyy-MM-dd}): {cert.Subject}.", cert));
+                }
             }
 
             if (!cert.SelfSigned)
             {
-                findings.Add(Cert("CFG-CERT-NONROOT", Severity.Medium,
+                var vendor = TrustedPublishers.IsTrusted(cert.Subject);
+                findings.Add(Cert("CFG-CERT-NONROOT", vendor || standard ? Severity.Info : Severity.Medium,
                     "Несамоподписанный сертификат в хранилище корней",
                     $"Сертификат в хранилище доверенных корней не является самоподписанным (издатель: {cert.Issuer}) — нетипично для корневого CA.", cert));
             }
-            else if (!cert.HasOrganization)
+            else if (!cert.HasOrganization && !standard)
             {
-                findings.Add(Cert("CFG-CERT-NOORG", Severity.Medium,
+                // Самоподписанный корень без организации вне списка Microsoft: признак прокси перехвата (MITM), особенно если он свежий.
+                findings.Add(Cert("CFG-CERT-NOORG", recent ? Severity.Medium : Severity.Low,
                     "Подозрительный корневой сертификат без организации",
-                    $"Самоподписанный корень '{cert.Subject}' не содержит поля организации (O=) — характерно для сертификатов перехвата (MITM).", cert));
+                    $"Самоподписанный корень '{cert.Subject}' не содержит поля организации (O=) и не входит в список доверенных корней Microsoft — характерно для сертификатов перехвата (MITM).", cert));
             }
 
             if (cert.IsWeakRsa(_options.MinRsaKeyBits))
             {
-                findings.Add(Cert("CFG-CERT-WEAKKEY", Severity.Medium,
-                    "Слабый ключ корневого сертификата",
-                    $"Корневой сертификат '{cert.Subject}' использует RSA-ключ длиной {cert.KeyBits} бит (< {_options.MinRsaKeyBits}).", cert));
+                if (standard || !recent)
+                {
+                    standardWeak.Add(cert);
+                }
+                else
+                {
+                    findings.Add(Cert("CFG-CERT-WEAKKEY", Severity.Medium,
+                        "Слабый ключ недавно установленного корневого сертификата",
+                        $"Корневой сертификат '{cert.Subject}' использует RSA-ключ длиной {cert.KeyBits} бит (< {_options.MinRsaKeyBits}).", cert));
+                }
             }
         }
+
+        AddAggregate(findings, "CFG-CERT-EXPIRED", "Просроченные штатные корневые сертификаты",
+            "оставлены Microsoft для совместимости старых подписей", standardExpired);
+        AddAggregate(findings, "CFG-CERT-WEAKKEY", "Устаревшие штатные корневые сертификаты с коротким ключом",
+            "оставлены Microsoft для совместимости старых подписей", standardWeak);
+    }
+
+    /// <summary>Штатные устаревшие корни не плодят сотни карточек: одна сводная запись уровня Info с примерами в доказательствах.</summary>
+    private static void AddAggregate(List<ConfigFinding> findings, string id, string title, string reason, List<CertificateInfo> certs)
+    {
+        if (certs.Count == 0)
+        {
+            return;
+        }
+
+        var evidence = new List<Evidence> { Evidence.Of("count", certs.Count) };
+        evidence.AddRange(certs.Take(5).Select((c, i) => Evidence.Of($"example{i + 1}", $"{c.Subject} [{c.Thumbprint}]")));
+        findings.Add(new ConfigFinding(ConfigArea.RootCertificate, AuditFinding.Create(id, Severity.Info, title,
+            $"{certs.Count} сертификатов в хранилищах доверенных корней ({reason}). Это не угроза и ничем не заменяется автоматически.",
+            [.. evidence])));
     }
 
     private static ConfigFinding Cert(string id, Severity severity, string title, string description, CertificateInfo cert) =>
