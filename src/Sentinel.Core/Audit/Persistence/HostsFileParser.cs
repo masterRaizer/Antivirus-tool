@@ -72,3 +72,31 @@ public static class HostsFileParser
         return entries;
     }
 }
+
+/// <summary>
+/// Блокировка телеметрии Microsoft в hosts — осознанная настройка приватности, а не признак заражения:
+/// такие записи получают уровень <c>Info</c> и никогда не удаляются автоматически.
+/// </summary>
+public static class HostsTelemetryList
+{
+    private static readonly string[] Suffixes =
+    [
+        ".events.data.microsoft.com", ".telemetry.microsoft.com", ".aria.microsoft.com", ".vortex.data.microsoft.com",
+    ];
+
+    private static readonly string[] Exact =
+    [
+        "vortex.data.microsoft.com", "oca.telemetry.microsoft.com", "sqm.telemetry.microsoft.com",
+        "settings-win.data.microsoft.com", "compatexchange.cloudapp.net", "telemetry.microsoft.com",
+        "events.data.microsoft.com", "aria.microsoft.com",
+    ];
+
+    public static bool IsTelemetryHost(string host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        var h = host.Trim().TrimEnd('.').ToLowerInvariant();
+        return Exact.Contains(h, StringComparer.Ordinal)
+            || Suffixes.Any(s => h.EndsWith(s, StringComparison.Ordinal))
+            || h.StartsWith("nw-umwatson.", StringComparison.Ordinal);
+    }
+}

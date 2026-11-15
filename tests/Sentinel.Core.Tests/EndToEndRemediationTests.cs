@@ -76,7 +76,7 @@ public class EndToEndRemediationTests
         public byte[] MinerBytes { get; } = Eicar.CreateTestFileBytes();
         public byte[] DropperBytes { get; } = SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, TextSize = 0x4000 });
 
-        public const string HostsOriginal = "127.0.0.1 localhost\r\n0.0.0.0 wdcp.microsoft.com\r\n";
+        public const string HostsOriginal = "127.0.0.1 localhost\r\n203.0.113.9 wdcp.microsoft.com\r\n";
 
         public RegistryKeyPath Run { get; } = new(RegistryHive.CurrentUser, RunKey);
         public RegistryKeyPath ExclPaths { get; } = new(RegistryHive.LocalMachine, ExclusionsRoot + "Paths");

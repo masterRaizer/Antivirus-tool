@@ -133,7 +133,11 @@ public sealed class ResponseCoordinator
     public async Task HandlePersistenceAsync(PersistenceAuditReport report, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(report);
-        var targets = report.Flagged.Where(e => e.MaxSeverity >= _policy.RollbackThreshold).ToArray();
+        // Записи hosts откатываются автоматически только при Critical (перенаправление на внешний адрес);
+        // блокировки защитных доменов (Medium) остаются на решении пользователя, телеметрия (Info) не трогается.
+        var targets = report.Flagged
+            .Where(e => e.MaxSeverity >= (e.Kind == PersistenceKind.HostsFile ? Severity.Critical : _policy.RollbackThreshold))
+            .ToArray();
 
         // Сначала параметры (чтобы запись не запустила файл повторно), затем сами файлы.
         if (_engine is not null)

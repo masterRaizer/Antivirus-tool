@@ -23,7 +23,7 @@ public sealed class PersistenceAuditorOptions
     /// </summary>
     public IReadOnlyList<string> SecuritySensitiveHosts { get; init; } =
     [
-        "windowsupdate.com", "update.microsoft.com", "microsoft.com", "windowsdefender",
+        "windowsupdate.com", "update.microsoft.com", "windowsdefender", "download.microsoft.com",
         "wdcp.microsoft.com", "wdcpalt.microsoft.com", "smartscreen.microsoft.com",
         "clamav", "avast", "avg", "kaspersky", "mcafee", "symantec", "norton",
         "bitdefender", "eset", "sophos", "malwarebytes", "virustotal.com", "drweb",

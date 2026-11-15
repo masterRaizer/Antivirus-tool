@@ -451,19 +451,28 @@ public sealed class PersistenceAuditor
             var sensitive = _options.SecuritySensitiveHosts.Any(h =>
                 entry.Host.Contains(h, StringComparison.OrdinalIgnoreCase));
 
-            if (sensitive)
+            if (entry.IsLoopback && HostsTelemetryList.IsTelemetryHost(entry.Host))
             {
-                findings.Add(AuditFinding.Create("PERS-HOSTS-SECURITY", Severity.High,
-                    "Перенаправление защитного домена в hosts",
-                    $"Домен '{entry.Host}' (обновления/защита) перенаправлен на {entry.Address} — возможная блокировка обновлений или антивируса.",
+                // Блокировка телеметрии — выбор пользователя: только информация, никаких автоматических действий.
+                findings.Add(AuditFinding.Create("PERS-HOSTS-TELEMETRY", Severity.Info,
+                    "Блокировка телеметрии Microsoft в hosts",
+                    $"Домен телеметрии '{entry.Host}' заблокирован ({entry.Address}). Это настройка приватности, запись не изменяется.",
+                    Evidence.Of("host", entry.Host), Evidence.Of("address", entry.Address),
+                    Evidence.Of("line", entry.LineNumber)));
+            }
+            else if (sensitive && entry.IsLoopback)
+            {
+                findings.Add(AuditFinding.Create("PERS-HOSTS-SECURITY", Severity.Medium,
+                    "Блокировка домена обновлений или защиты в hosts",
+                    $"Домен '{entry.Host}' (обновления/защита) заблокирован через {entry.Address} — возможная блокировка обновлений или антивируса. Решение за пользователем.",
                     Evidence.Of("host", entry.Host), Evidence.Of("address", entry.Address),
                     Evidence.Of("line", entry.LineNumber)));
             }
             else if (!entry.IsLoopback)
             {
-                findings.Add(AuditFinding.Create("PERS-HOSTS-REDIRECT", Severity.Medium,
-                    "Перенаправление домена на внешний адрес",
-                    $"Домен '{entry.Host}' перенаправлен на внешний адрес {entry.Address} — возможный перехват трафика.",
+                findings.Add(AuditFinding.Create(sensitive ? "PERS-HOSTS-SECURITY" : "PERS-HOSTS-REDIRECT", Severity.Critical,
+                    sensitive ? "Перенаправление защитного домена на внешний адрес" : "Перенаправление домена на внешний адрес",
+                    $"Домен '{entry.Host}' перенаправлен на внешний адрес {entry.Address} — перехват трафика.",
                     Evidence.Of("host", entry.Host), Evidence.Of("address", entry.Address),
                     Evidence.Of("line", entry.LineNumber)));
             }
