@@ -71,6 +71,10 @@ public static class IpcProtocol
     public const string CleanStartup = "startup.clean";
     public const string GetReports = "reports.get";
     public const string ExportReport = "reports.export";
+    public const string DeleteQuarantine = "quarantine.delete";
+    public const string GetSettings = "settings.get";
+    public const string SaveSettings = "settings.save";
+    public const string UpdateDatabases = "databases.update";
 
     // События.
     public const string ScanProgressEvent = "event.scan";

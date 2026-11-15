@@ -114,7 +114,51 @@ public sealed record ServiceStatus
 public sealed record ProcessInfo(int Pid, string Name, string? Path, double CpuPercent, Severity? Severity, string? Remarks);
 
 public sealed record QuarantineItem(
-    string Id, string OriginalPath, string Sha256, long Size, DateTime QuarantinedAtUtc, string Reason, bool Restored, DateTime? RestoredAtUtc);
+    string Id, string OriginalPath, string Sha256, long Size, DateTime QuarantinedAtUtc, string Reason, bool Restored, DateTime? RestoredAtUtc)
+{
+    /// <summary>Удалён из карантина навсегда.</summary>
+    public bool Deleted { get; init; }
+}
+
+/// <summary>Настройки и базы для раздела «Настройки и базы». Значения ключей не передаются — только признак, что ключ задан.</summary>
+public sealed record SettingsSnapshot
+{
+    public bool HasKasperskyOpenTipApiKey { get; init; }
+
+    public bool HasVirusTotalApiKey { get; init; }
+
+    public bool HasAbuseChAuthKey { get; init; }
+
+    public bool AutoUpdateDatabases { get; init; } = true;
+
+    public IReadOnlyList<string> AllowedPaths { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedProcesses { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedHashes { get; init; } = [];
+
+    public ThreatIntel.DatabaseStatus Database { get; init; } = new();
+
+    public string DataDirectory { get; init; } = string.Empty;
+}
+
+/// <summary>Изменение настроек. Ключ: <c>null</c> — не менять, пустая строка — удалить, иное — новое значение.</summary>
+public sealed record SettingsUpdate
+{
+    public string? KasperskyOpenTipApiKey { get; init; }
+
+    public string? VirusTotalApiKey { get; init; }
+
+    public string? AbuseChAuthKey { get; init; }
+
+    public bool AutoUpdateDatabases { get; init; } = true;
+
+    public IReadOnlyList<string> AllowedPaths { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedProcesses { get; init; } = [];
+
+    public IReadOnlyList<string> AllowedHashes { get; init; } = [];
+}
 
 public sealed record RollbackItem(
     string Id, DateTime TimestampUtc, string Kind, string Target, string? Name, string? PreviousValue, string? NewValue, string Reason, bool Undone);
@@ -207,4 +251,12 @@ public interface ISentinelBackend
     Task<IReadOnlyList<ReportSummary>> GetReportsAsync(CancellationToken cancellationToken = default);
 
     Task<ReportExport> ExportReportAsync(string id, ReportFormat format, CancellationToken cancellationToken = default);
+
+    Task<OperationResult> DeleteQuarantineAsync(string id, CancellationToken cancellationToken = default);
+
+    Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken = default);
+
+    Task<OperationResult> SaveSettingsAsync(SettingsUpdate update, CancellationToken cancellationToken = default);
+
+    Task<ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default);
 }

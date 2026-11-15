@@ -31,6 +31,9 @@ public sealed class FileAnalyzerOptions
     /// <summary>Проверка пользовательского списка <c>allowed_exclusions.json</c> (−100 к баллу).</summary>
     public Func<string, bool>? IsUserAllowed { get; init; }
 
+    /// <summary>Проверка SHA-256 по пользовательскому списку разрешённых хешей.</summary>
+    public Func<string, bool>? IsHashAllowed { get; init; }
+
     /// <summary>Порог балла, с которого неподписанный файл отправляется на облачную проверку хеша.</summary>
     public int CloudLookupScore { get; init; } = 45;
 }
@@ -208,7 +211,7 @@ public sealed class FileAnalyzer
                 Entropy = entropy,
                 SignatureValid = signatureValid,
                 MicrosoftTrusted = microsoftTrusted,
-                UserAllowed = _options.IsUserAllowed?.Invoke(path) ?? false,
+                UserAllowed = (_options.IsUserAllowed?.Invoke(path) ?? false) || (_options.IsHashAllowed?.Invoke(sha256) ?? false),
                 DefinitiveMatch = definitive,
                 Imports = imports,
                 Markers = FindMarkers(content, imports),

@@ -66,6 +66,18 @@ public sealed class SentinelServices : IDisposable
         }
     }
 
+    public bool IsHashAllowed(string sha256)
+    {
+        try
+        {
+            return Allowed.Load().IsHashAllowed(sha256);
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     public static SentinelServices Create(string dataDirectory, string rulesDirectory, string? allowedExclusionsFile = null, long? maxScanBytes = null)
     {
         var data = Path.GetFullPath(dataDirectory);
@@ -82,6 +94,7 @@ public sealed class SentinelServices : IDisposable
         {
             MaxScanBytes = maxScanBytes ?? new FileAnalyzerOptions().MaxScanBytes,
             IsUserAllowed = path => services!.IsUserAllowed(path),
+            IsHashAllowed = hash => services!.IsHashAllowed(hash),
         };
         var analyzer = new FileAnalyzer(new SignatureEngine(rules), verifier, whitelist, options, intel, cloud);
         services = new SentinelServices(data, rules, verifier, whitelist, intel, config, allowed, cloud, analyzer);

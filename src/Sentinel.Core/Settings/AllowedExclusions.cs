@@ -20,7 +20,14 @@ public sealed record AllowedExclusions
     /// <summary>Разрешённые процессы: имя образа (<c>tool.exe</c>) или полный путь.</summary>
     public IReadOnlyList<string> Processes { get; init; } = [];
 
-    public bool IsEmpty => Paths.Count == 0 && Processes.Count == 0;
+    /// <summary>Разрешённые файлы по SHA-256 (64 hex-символа, нижний регистр).</summary>
+    public IReadOnlyList<string> Hashes { get; init; } = [];
+
+    public bool IsEmpty => Paths.Count == 0 && Processes.Count == 0 && Hashes.Count == 0;
+
+    /// <summary>Разрешён ли файл по его SHA-256.</summary>
+    public bool IsHashAllowed(string? sha256) =>
+        !string.IsNullOrWhiteSpace(sha256) && Hashes.Contains(sha256.Trim(), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Разрешён ли файл (сам путь или каталог, в котором он лежит).</summary>
     public bool IsPathAllowed(string? path) =>
@@ -53,6 +60,24 @@ public sealed record AllowedExclusions
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         return Paths.Contains(path, StringComparer.OrdinalIgnoreCase) ? this : this with { Paths = [.. Paths, path] };
     }
+
+    public AllowedExclusions WithHash(string sha256)
+    {
+        if (!ThreatIntel.ThreatFeedParsers.TryNormalizeSha256(sha256, out var hash))
+        {
+            throw new ArgumentException("Ожидается SHA-256: 64 шестнадцатеричных символа.", nameof(sha256));
+        }
+
+        return Hashes.Contains(hash, StringComparer.OrdinalIgnoreCase) ? this : this with { Hashes = [.. Hashes, hash] };
+    }
+
+    /// <summary>Убирает значение из любого списка (путь, процесс или хеш).</summary>
+    public AllowedExclusions Without(string value) => this with
+    {
+        Paths = Paths.Where(p => !string.Equals(p, value, StringComparison.OrdinalIgnoreCase)).ToArray(),
+        Processes = Processes.Where(p => !string.Equals(p, value, StringComparison.OrdinalIgnoreCase)).ToArray(),
+        Hashes = Hashes.Where(p => !string.Equals(p, value, StringComparison.OrdinalIgnoreCase)).ToArray(),
+    };
 
     public AllowedExclusions WithProcess(string process)
     {
@@ -121,6 +146,7 @@ public sealed class AllowedExclusionStore
             {
                 Paths = Clean(doc.Paths),
                 Processes = Clean(doc.Processes),
+                Hashes = Clean(doc.Hashes).Select(h => h.ToLowerInvariant()).ToArray(),
             };
             _cachedStampUtc = stamp;
             return _cached;
@@ -130,6 +156,9 @@ public sealed class AllowedExclusionStore
     public AllowedExclusions AddPath(string path) => Update(a => a.WithPath(path));
 
     public AllowedExclusions AddProcess(string process) => Update(a => a.WithProcess(process));
+
+    /// <summary>Заменяет список целиком (редактор в разделе «Настройки и базы»).</summary>
+    public AllowedExclusions Replace(AllowedExclusions value) => Update(_ => value);
 
     public AllowedExclusions Update(Func<AllowedExclusions, AllowedExclusions> change)
     {
@@ -153,7 +182,7 @@ public sealed class AllowedExclusionStore
         var temp = Path + ".tmp";
         using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
         {
-            JsonSerializer.Serialize(stream, new Document { Paths = [.. value.Paths], Processes = [.. value.Processes] }, Json);
+            JsonSerializer.Serialize(stream, new Document { Paths = [.. value.Paths], Processes = [.. value.Processes], Hashes = [.. value.Hashes] }, Json);
             stream.Flush(flushToDisk: true);
         }
 
@@ -174,5 +203,7 @@ public sealed class AllowedExclusionStore
         public List<string>? Paths { get; set; }
 
         public List<string>? Processes { get; set; }
+
+        public List<string>? Hashes { get; set; }
     }
 }

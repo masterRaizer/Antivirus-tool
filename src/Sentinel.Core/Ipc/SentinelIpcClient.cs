@@ -138,6 +138,19 @@ public sealed class SentinelIpcClient : ISentinelBackend, IAsyncDisposable
     public Task<ReportExport> ExportReportAsync(string id, ReportFormat format, CancellationToken cancellationToken = default) =>
         RequestAsync<ReportExport>(IpcProtocol.ExportReport, new ExportReportArgs(id, format), cancellationToken);
 
+    public Task<OperationResult> DeleteQuarantineAsync(string id, CancellationToken cancellationToken = default) =>
+        RequestAsync<OperationResult>(IpcProtocol.DeleteQuarantine, new IdArgs(id), cancellationToken);
+
+    public Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken = default) =>
+        RequestAsync<SettingsSnapshot>(IpcProtocol.GetSettings, null, cancellationToken);
+
+    public Task<OperationResult> SaveSettingsAsync(SettingsUpdate update, CancellationToken cancellationToken = default) =>
+        RequestAsync<OperationResult>(IpcProtocol.SaveSettings, update, cancellationToken);
+
+    /// <summary>Запускает обновление баз в службе; ответ приходит сразу, итог — в статусе баз (<see cref="GetSettingsAsync"/>).</summary>
+    public Task<ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default) =>
+        RequestAsync<ThreatIntel.DatabaseStatus>(IpcProtocol.UpdateDatabases, null, cancellationToken);
+
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync().ConfigureAwait(false);

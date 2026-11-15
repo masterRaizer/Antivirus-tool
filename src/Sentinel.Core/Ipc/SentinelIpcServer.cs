@@ -15,8 +15,8 @@ public sealed class IpcServerOptions
 
     /// <summary>
     /// Служба работает от имени SYSTEM, а интерфейс — от имени пользователя: канал открывается
-    /// интерактивным пользователям (чтение/запись), создавать экземпляры канала могут только SYSTEM
-    /// и администраторы. Без флага канал доступен лишь текущей учётной записи.
+    /// пользователям, прошедшим проверку подлинности (чтение/запись), полный доступ — только у SYSTEM
+    /// и администраторов. Без флага канал доступен лишь текущей учётной записи.
     /// </summary>
     public bool AllowInteractiveUsers { get; init; }
 
@@ -128,20 +128,36 @@ public sealed class SentinelIpcServer : IAsyncDisposable
             PipeTransmissionMode.Byte, options | PipeOptions.CurrentUserOnly);
     }
 
+    /// <summary>
+    /// Права канала службы: <c>LocalSystem</c> и <c>Administrators</c> — полный доступ, <c>Authenticated Users</c> — чтение и запись
+    /// (подключиться может интерфейс любого вошедшего пользователя, но не создать экземпляр канала), сетевой доступ запрещён.
+    /// </summary>
+    public static IReadOnlyList<ServicePipeRule> ServiceAccessRules { get; } =
+    [
+        new(ServicePipeAccount.LocalSystem, ServicePipeRights.FullControl, Allow: true),
+        new(ServicePipeAccount.Administrators, ServicePipeRights.FullControl, Allow: true),
+        new(ServicePipeAccount.AuthenticatedUsers, ServicePipeRights.ReadWrite, Allow: true),
+        new(ServicePipeAccount.Network, ServicePipeRights.FullControl, Allow: false),
+    ];
+
     [SupportedOSPlatform("windows")]
-    private static PipeSecurity CreateServiceSecurity()
+    public static PipeSecurity CreateServiceSecurity()
     {
         var security = new PipeSecurity();
-        security.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
-        security.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
-        security.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(WellKnownSidType.InteractiveSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        foreach (var rule in ServiceAccessRules)
+        {
+            var sid = rule.Account switch
+            {
+                ServicePipeAccount.LocalSystem => WellKnownSidType.LocalSystemSid,
+                ServicePipeAccount.Administrators => WellKnownSidType.BuiltinAdministratorsSid,
+                ServicePipeAccount.AuthenticatedUsers => WellKnownSidType.AuthenticatedUserSid,
+                _ => WellKnownSidType.NetworkSid,
+            };
+            var rights = rule.Rights == ServicePipeRights.FullControl ? PipeAccessRights.FullControl : PipeAccessRights.ReadWrite;
+            security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(sid, null), rights,
+                rule.Allow ? AccessControlType.Allow : AccessControlType.Deny));
+        }
 
-        // Сетевые подключения к каналу запрещены: протокол предназначен только для локального интерфейса.
-        security.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
         return security;
     }
 
@@ -368,6 +384,15 @@ public static class IpcRequestRouter
                 return IpcProtocol.ToElement(await backend.ExportReportAsync(RequireId(args.Id), args.Format, token).ConfigureAwait(false));
             }
 
+            case IpcProtocol.DeleteQuarantine:
+                return IpcProtocol.ToElement(await backend.DeleteQuarantineAsync(RequireId(Args<IdArgs>().Id), token).ConfigureAwait(false));
+            case IpcProtocol.GetSettings:
+                return IpcProtocol.ToElement(await backend.GetSettingsAsync(token).ConfigureAwait(false));
+            case IpcProtocol.SaveSettings:
+                return IpcProtocol.ToElement(await backend.SaveSettingsAsync(Args<SettingsUpdate>(), token).ConfigureAwait(false));
+            case IpcProtocol.UpdateDatabases:
+                return IpcProtocol.ToElement(await backend.UpdateDatabasesAsync(token).ConfigureAwait(false));
+
             default:
                 throw new IpcProtocolException($"Неизвестный тип запроса '{type}'.");
         }
@@ -378,3 +403,20 @@ public static class IpcRequestRouter
             string.IsNullOrWhiteSpace(id) ? throw new IpcProtocolException($"Запрос '{type}' без идентификатора.") : id;
     }
 }
+
+public enum ServicePipeAccount
+{
+    LocalSystem,
+    Administrators,
+    AuthenticatedUsers,
+    Network,
+}
+
+public enum ServicePipeRights
+{
+    ReadWrite,
+    FullControl,
+}
+
+/// <summary>Правило доступа к каналу службы (платформонезависимое описание; ACL строится только в Windows).</summary>
+public sealed record ServicePipeRule(ServicePipeAccount Account, ServicePipeRights Rights, bool Allow);
