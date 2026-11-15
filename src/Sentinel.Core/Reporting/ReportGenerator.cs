@@ -33,6 +33,14 @@ public static class ReportGenerator
         return JsonSerializer.Serialize(report, JsonOptions);
     }
 
+    /// <summary>Читает отчёт, сохранённый <see cref="ToJson"/> (история проверок, экспорт).</summary>
+    public static SentinelReport FromJson(string json)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(json);
+        return JsonSerializer.Deserialize<SentinelReport>(json, JsonOptions)
+            ?? throw new JsonException("Пустой документ отчёта.");
+    }
+
     public static void WriteJson(SentinelReport report, string path) => Write(path, ToJson(report));
 
     public static void WriteHtml(SentinelReport report, string path) => Write(path, ToHtml(report));

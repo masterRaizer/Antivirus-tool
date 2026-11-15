@@ -5,3 +5,5 @@ dotnet_diagnostic.CA1707.severity = none
 dotnet_diagnostic.CA1861.severity = none
 # Тестовые классы xUnit должны быть public
 dotnet_diagnostic.CA1515.severity = none
+# Ресурсы тестовых классов освобождает IAsyncLifetime.DisposeAsync (xUnit)
+dotnet_diagnostic.CA1001.severity = none
