@@ -21,26 +21,34 @@ public static class ScanWorkerHost
         isParentAlive ??= IsProcessAlive;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+        var stop = linked.Token;
         var watchdog = new Thread(() =>
         {
-            while (!linked.IsCancellationRequested)
+            try
             {
-                if (!isParentAlive(parentPid))
+                while (!stop.IsCancellationRequested)
                 {
-                    if (onParentGone is not null)
+                    if (!isParentAlive(parentPid))
                     {
-                        onParentGone();
-                        linked.Cancel();
-                    }
-                    else
-                    {
-                        Environment.Exit(3);
+                        if (onParentGone is not null)
+                        {
+                            onParentGone();
+                            linked.Cancel();
+                        }
+                        else
+                        {
+                            Environment.Exit(3);
+                        }
+
+                        return;
                     }
 
-                    return;
+                    stop.WaitHandle.WaitOne(ParentCheckInterval);
                 }
-
-                linked.Token.WaitHandle.WaitOne(ParentCheckInterval);
+            }
+            catch (ObjectDisposedException)
+            {
+                // рабочий уже завершается
             }
         })
         {
@@ -93,6 +101,9 @@ public static class ScanWorkerHost
         finally
         {
             await linked.CancelAsync().ConfigureAwait(false);
+
+            // Источник отмены освобождается только после остановки сторожевого потока.
+            watchdog.Join(TimeSpan.FromSeconds(2));
         }
     }
 

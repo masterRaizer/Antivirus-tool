@@ -55,12 +55,56 @@ public sealed class DashboardViewModel : SectionViewModel
     private string _diskText = "0 %";
     private string _ramDetail = string.Empty;
 
-    public DashboardViewModel(BackendHub hub, Action<string, bool> notify, Func<Task> quickScan)
+    private Sentinel.Core.ThreatIntel.DatabaseStatus _database = new();
+
+    public DashboardViewModel(BackendHub hub, Action<string, bool> notify, Func<Task> quickScan, Func<Task> fullScan, Action openSettings)
         : base(hub, notify)
     {
         QuickScanCommand = Command(quickScan);
+        FullScanCommand = Command(fullScan);
         RefreshProcessesCommand = Command(RefreshProcessesAsync);
+        UpdateDatabasesCommand = Command(async () =>
+        {
+            var status = await Hub.UpdateDatabasesAsync();
+            Database = status;
+            Notify(status.LastStatus);
+        });
+        OpenSettingsCommand = new RelayCommand(openSettings);
     }
+
+    public ICommand FullScanCommand { get; }
+
+    public ICommand UpdateDatabasesCommand { get; }
+
+    public ICommand OpenSettingsCommand { get; }
+
+    public Sentinel.Core.ThreatIntel.DatabaseStatus Database
+    {
+        get => _database;
+        private set
+        {
+            if (Set(ref _database, value))
+            {
+                Raise(nameof(DatabaseTitle));
+                Raise(nameof(DatabaseDetail));
+            }
+        }
+    }
+
+    public string DatabaseTitle => Database.HashCount > 0
+        ? string.Format(System.Globalization.CultureInfo.CurrentCulture, "{0:N0} хешей угроз", Database.HashCount)
+        : "База угроз не загружена";
+
+    public string DatabaseDetail
+    {
+        get
+        {
+            var stamp = Database.DatabaseTimestampUtc is { } t ? t.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture) : "—";
+            return $"Версия: {stamp}. {Database.LastStatus}";
+        }
+    }
+
+    public async Task RefreshDatabaseAsync() => Database = (await Hub.GetSettingsAsync()).Database;
 
     public ObservableCollection<double> Cpu { get; } = [];
 
@@ -146,6 +190,7 @@ public sealed class DashboardViewModel : SectionViewModel
         }
 
         await RefreshProcessesAsync();
+        await RefreshDatabaseAsync();
     }
 
     public void ApplyStatus(ServiceStatus status)
@@ -266,6 +311,7 @@ public sealed class ScanViewModel : SectionViewModel
                          {
                              nameof(IsActive), nameof(IsIdle), nameof(StateText), nameof(PercentText), nameof(ScannedText), nameof(SpeedText),
                              nameof(ElapsedText), nameof(CurrentItemText), nameof(PauseResumeText), nameof(HasResult), nameof(ResultIsWarning),
+                             nameof(WorkersText), nameof(CacheText),
                          })
                 {
                     Raise(name);
@@ -293,9 +339,20 @@ public sealed class ScanViewModel : SectionViewModel
 
     public string PercentText => Progress.State == ScanState.Counting ? "…" : $"{Progress.Percent:0} %";
 
-    public string ScannedText => Progress.Total > 0 ? $"{Progress.Scanned:N0} из {Progress.Total:N0}" : $"{Progress.Scanned:N0}";
+    public string ScannedText => Progress.Total > 0
+        ? $"{Progress.Scanned:N0} из {(Progress.EnumerationComplete || !Progress.IsActive ? string.Empty : "≈")}{Progress.Total:N0}"
+        : $"{Progress.Scanned:N0}";
 
     public string SpeedText => $"{Progress.ItemsPerSecond:N0} объектов/сек";
+
+    /// <summary>Пул проверки: режим (процессы или потоки), занятые рабочие и размер пула.</summary>
+    public string WorkersText => Progress.Workers == 0
+        ? "—"
+        : $"{Progress.PoolMode}: {Progress.ActiveWorkers} из {Progress.Workers}";
+
+    public string CacheText => Progress.Errors > 0
+        ? $"{Progress.CachedSkipped:N0} по кэшу · ошибок {Progress.Errors:N0}"
+        : $"{Progress.CachedSkipped:N0} по кэшу";
 
     public string ElapsedText => DurationConverter.Format(Progress.ElapsedSeconds);
 
@@ -336,6 +393,9 @@ public enum ThreatFilter
     All,
     Pending,
     Neutralized,
+
+    /// <summary>Журнал: зафиксированное без действий, проигнорированное, разрешённое, заблокированное белым списком, сбои.</summary>
+    Journal,
 }
 
 public sealed class ThreatsViewModel : SectionViewModel
@@ -350,10 +410,12 @@ public sealed class ThreatsViewModel : SectionViewModel
         {
             ThreatFilter.Pending => t.Status == ThreatStatus.PendingDecision,
             ThreatFilter.Neutralized => t.Status is ThreatStatus.Quarantined or ThreatStatus.Terminated or ThreatStatus.Cleaned,
+            ThreatFilter.Journal => t.Status is ThreatStatus.Detected or ThreatStatus.Skipped or ThreatStatus.Allowed or ThreatStatus.Blocked or ThreatStatus.Failed,
             _ => true,
         };
         QuarantineCommand = Command<ThreatEvent>(t => ResolveAsync(t, ThreatDecision.Quarantine));
         AllowCommand = Command<ThreatEvent>(t => ResolveAsync(t, ThreatDecision.Allow));
+        IgnoreCommand = Command<ThreatEvent>(t => ResolveAsync(t, ThreatDecision.Ignore));
     }
 
     public ObservableCollection<ThreatEvent> Items { get; } = [];
@@ -363,6 +425,8 @@ public sealed class ThreatsViewModel : SectionViewModel
     public ICommand QuarantineCommand { get; }
 
     public ICommand AllowCommand { get; }
+
+    public ICommand IgnoreCommand { get; }
 
     public ThreatFilter Filter
     {
@@ -459,7 +523,22 @@ public sealed class QuarantineViewModel : SectionViewModel
             Notify(await Hub.UndoRollbackAsync(item.Id));
             await RefreshAsync();
         });
+        DeleteCommand = Command<QuarantineItem>(async item =>
+        {
+            var answer = System.Windows.MessageBox.Show(
+                $"Удалить навсегда?\n\n{item.OriginalPath}\n\nВосстановить файл после этого будет невозможно.",
+                "Sentinel — удаление из карантина", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning, System.Windows.MessageBoxResult.No);
+            if (answer != System.Windows.MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            Notify(await Hub.DeleteQuarantineAsync(item.Id));
+            await RefreshAsync();
+        });
     }
+
+    public ICommand DeleteCommand { get; }
 
     public ObservableCollection<QuarantineItem> Files { get; } = [];
 
@@ -471,7 +550,7 @@ public sealed class QuarantineViewModel : SectionViewModel
 
     public ICommand UndoCommand { get; }
 
-    public string FilesHeader => $"Файлы в карантине ({Files.Count(f => !f.Restored)})";
+    public string FilesHeader => $"Файлы в карантине ({Files.Count(f => f.IsActive)})";
 
     public string RollbackHeader => $"Откат конфигурации ({Rollback.Count(r => !r.Undone)})";
 
@@ -516,6 +595,10 @@ public sealed class StartupViewModel : SectionViewModel
         : base(hub, notify)
     {
         View = CollectionViewSource.GetDefaultView(Items);
+        // Однотипные информационные записи (например, блокировка телеметрии в hosts) собраны в свёрнутые группы.
+        View.GroupDescriptions.Add(new PropertyGroupDescription(nameof(StartupItem.Group)));
+        View.SortDescriptions.Add(new SortDescription(nameof(StartupItem.Group), ListSortDirection.Ascending));
+        View.SortDescriptions.Add(new SortDescription(nameof(StartupItem.Severity), ListSortDirection.Descending));
         View.Filter = o => o is StartupItem item
             && (!OnlyFlagged || item.Flagged || item.NotSigned)
             && (Search.Length == 0 || Matches(item, Search));
@@ -525,7 +608,28 @@ public sealed class StartupViewModel : SectionViewModel
             Notify(await Hub.CleanStartupItemAsync(item.Key));
             await LoadAsync(refresh: false);
         });
+        AllowCommand = Command<StartupItem>(async item =>
+        {
+            if (string.IsNullOrWhiteSpace(item.Target))
+            {
+                return;
+            }
+
+            // Тот же путь, что и в «Настройках и базах»: список разрешённого хранится в службе.
+            var settings = await Hub.GetSettingsAsync();
+            var result = await Hub.SaveSettingsAsync(new SettingsUpdate
+            {
+                AutoUpdateDatabases = settings.AutoUpdateDatabases,
+                AllowedPaths = [.. settings.AllowedPaths, item.Target],
+                AllowedProcesses = settings.AllowedProcesses,
+                AllowedHashes = settings.AllowedHashes,
+            });
+            Notify(result.Success ? $"В исключения добавлено: {item.Target}" : result.Message, !result.Success);
+            await LoadAsync(refresh: true);
+        });
     }
+
+    public ICommand AllowCommand { get; }
 
     public ObservableCollection<StartupItem> Items { get; } = [];
 

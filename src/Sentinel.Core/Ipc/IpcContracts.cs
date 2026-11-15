@@ -118,6 +118,11 @@ public sealed record QuarantineItem(
 {
     /// <summary>Удалён из карантина навсегда.</summary>
     public bool Deleted { get; init; }
+
+    /// <summary>Файл всё ещё в карантине (его можно восстановить или удалить навсегда).</summary>
+    public bool IsActive => !Restored && !Deleted;
+
+    public string StateText => Deleted ? "Удалён навсегда" : Restored ? "Восстановлен" : string.Empty;
 }
 
 /// <summary>Настройки и базы для раздела «Настройки и базы». Значения ключей не передаются — только признак, что ключ задан.</summary>
@@ -190,6 +195,14 @@ public sealed record StartupItem
     public Severity Severity { get; init; }
     public string? Remarks { get; init; }
     public bool CanClean { get; init; }
+
+    /// <summary>
+    /// Группа для интерфейса: однотипные информационные записи (например, блокировка телеметрии в hosts) сворачиваются в одну группу,
+    /// чтобы не заслонять то, что требует внимания.
+    /// </summary>
+    public string Group => !Flagged ? "3. Штатные записи"
+        : Severity == Severity.Info ? $"2. Информация · {Category}"
+        : "1. Требуют внимания";
 }
 
 public sealed record StartupSnapshot(IReadOnlyList<StartupItem> Items, DateTime TakenAtUtc, string? Note = null);

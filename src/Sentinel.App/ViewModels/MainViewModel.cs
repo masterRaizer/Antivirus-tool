@@ -18,6 +18,7 @@ public enum Section
     Quarantine,
     Startup,
     Reports,
+    Settings,
 }
 
 /// <summary>Корневая модель окна: навигация, режим работы, строка состояния и маршрутизация событий движка.</summary>
@@ -37,16 +38,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         _hub = hub;
         _ui = Application.Current.Dispatcher;
-        Dashboard = new DashboardViewModel(hub, Notify, QuickScanAsync);
+        Dashboard = new DashboardViewModel(hub, Notify, QuickScanAsync, FullScanAsync, () => Section = Section.Settings);
         Scan = new ScanViewModel(hub, Notify, id => _ = OpenReportAsync(id));
         Threats = new ThreatsViewModel(hub, Notify);
         Quarantine = new QuarantineViewModel(hub, Notify);
         Startup = new StartupViewModel(hub, Notify);
         Reports = new ReportsViewModel(hub, Notify);
+        Settings = new SettingsViewModel(hub, Notify);
+        StartServiceCommand = new AsyncCommand(StartServiceAsync, () => !IsServiceMode, ex => Notify(ex.Message, true));
         Decisions = new DecisionViewModel(Threats);
 
         hub.ModeChanged += () => Post(() => _ = ReloadAsync());
-        hub.StatusChanged += s => Post(() => Dashboard.ApplyStatus(s));
+        hub.StatusChanged += s => Post(() =>
+        {
+            Dashboard.ApplyStatus(s);
+            _ = RefreshDatabaseStatusAsync();
+        });
         hub.TelemetryUpdated += s => Post(() => Dashboard.AddSample(s));
         hub.ScanProgressChanged += p => Post(() => OnScanProgress(p));
         hub.ThreatRaised += t => Post(() => OnThreatRaised(t));
@@ -82,6 +89,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public ReportsViewModel Reports { get; }
 
+    public SettingsViewModel Settings { get; }
+
+    /// <summary>«Запустить службу»: <c>sc.exe start SentinelService</c> с запросом прав администратора.</summary>
+    public System.Windows.Input.ICommand StartServiceCommand { get; }
+
     public DecisionViewModel Decisions { get; }
 
     public Section Section
@@ -107,6 +119,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 Raise(nameof(ModeTitle));
                 Raise(nameof(ModeDetail));
+                System.Windows.Input.CommandManager.InvalidateRequerySuggested();
             }
         }
     }
@@ -165,6 +178,43 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    public async Task FullScanAsync()
+    {
+        Section = Section.Scan;
+        if (!Scan.IsActive)
+        {
+            await Scan.StartAsync(ScanMode.Full);
+        }
+    }
+
+    private async Task StartServiceAsync()
+    {
+        var result = await BackendHub.StartServiceAsync();
+        Notify(result);
+    }
+
+    /// <summary>Статус баз на дашборде и в настройках обновляется по событию службы (например, после «Обновить базы»).</summary>
+    private async Task RefreshDatabaseStatusAsync()
+    {
+        if (!IsReady)
+        {
+            return;
+        }
+
+        try
+        {
+            await Dashboard.RefreshDatabaseAsync();
+            if (Section == Section.Settings)
+            {
+                await Settings.RefreshDatabaseAsync();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or IpcRemoteException)
+        {
+            Notify(ex.Message, true);
+        }
+    }
+
     public async Task SetRealtimeAsync(bool enabled)
     {
         try
@@ -217,6 +267,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Section.Quarantine => Quarantine,
             Section.Startup => Startup,
             Section.Reports => Reports,
+            Section.Settings => Settings,
             _ => Dashboard,
         };
         try

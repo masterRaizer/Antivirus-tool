@@ -12,12 +12,14 @@
             <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,14" Text="{Binding Summary}" />
         </StackPanel>
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,14">
-            <RadioButton Style="{StaticResource Chip}" GroupName="ThreatFilter" Content="Все"
-                         IsChecked="{Binding Filter, Converter={StaticResource EnumMatch}, ConverterParameter=All}" />
-            <RadioButton Style="{StaticResource Chip}" GroupName="ThreatFilter" Content="Ждут решения"
+            <RadioButton Style="{StaticResource Chip}" GroupName="ThreatFilter" Content="Требуют решения"
                          IsChecked="{Binding Filter, Converter={StaticResource EnumMatch}, ConverterParameter=Pending}" />
             <RadioButton Style="{StaticResource Chip}" GroupName="ThreatFilter" Content="Нейтрализованные"
                          IsChecked="{Binding Filter, Converter={StaticResource EnumMatch}, ConverterParameter=Neutralized}" />
+            <RadioButton Style="{StaticResource Chip}" GroupName="ThreatFilter" Content="Журнал и инфо"
+                         IsChecked="{Binding Filter, Converter={StaticResource EnumMatch}, ConverterParameter=Journal}" />
+            <RadioButton Style="{StaticResource Chip}" GroupName="ThreatFilter" Content="Все"
+                         IsChecked="{Binding Filter, Converter={StaticResource EnumMatch}, ConverterParameter=All}" />
         </StackPanel>
 
         <ListBox Grid.Row="2" Style="{StaticResource CardList}" ItemsSource="{Binding View}">
@@ -98,6 +100,9 @@
                                     <Button Margin="10,0,0,0" Content="В исключения"
                                             ToolTip="Доверять объекту: добавить в allowed_exclusions.json и больше не сообщать о нём"
                                             Command="{Binding DataContext.AllowCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}" />
+                                    <Button Style="{StaticResource GhostButton}" Margin="10,0,0,0" Content="Игнорировать"
+                                            ToolTip="Оставить без действий: событие уходит в журнал, объект не изменяется и не вносится в исключения"
+                                            Command="{Binding DataContext.IgnoreCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}" />
                                 </StackPanel>
                             </StackPanel>
                         </Grid>

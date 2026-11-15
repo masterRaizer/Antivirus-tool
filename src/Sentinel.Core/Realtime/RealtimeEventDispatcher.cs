@@ -269,7 +269,11 @@ public sealed class RealtimeEventDispatcher
         ThreatEvent updated;
         try
         {
-            if (decision == ThreatDecision.Allow)
+            if (decision == ThreatDecision.Ignore)
+            {
+                updated = entry.Event with { Status = ThreatStatus.Skipped, ActionMessage = "Пользователь решил игнорировать: изменений не вносилось." };
+            }
+            else if (decision == ThreatDecision.Allow)
             {
                 var (ok, message) = entry.Allow();
                 updated = entry.Event with { Status = ok ? ThreatStatus.Allowed : entry.Event.Status, ActionMessage = message };

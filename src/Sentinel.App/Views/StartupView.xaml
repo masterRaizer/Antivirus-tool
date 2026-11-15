@@ -30,7 +30,32 @@
             <TextBlock Text="{Binding Note}" TextWrapping="Wrap" />
         </Border>
 
-        <DataGrid Grid.Row="3" ItemsSource="{Binding View}">
+        <DataGrid Grid.Row="3" ItemsSource="{Binding View}" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
+            <DataGrid.GroupStyle>
+                <GroupStyle>
+                    <GroupStyle.ContainerStyle>
+                        <Style TargetType="GroupItem">
+                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="GroupItem">
+                                        <Expander IsExpanded="{Binding Name, Converter={StaticResource GroupExpanded}, Mode=OneTime}"
+                                                  Foreground="{StaticResource TextBrush}" Margin="0,2,0,2">
+                                            <Expander.Header>
+                                                <TextBlock Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" Margin="6,6,0,6">
+                                                    <Run Text="{Binding Name, Converter={StaticResource GroupTitle}, Mode=OneWay}" />
+                                                    <Run Text="{Binding ItemCount, Mode=OneWay, StringFormat=({0})}" Foreground="{StaticResource MutedBrush}" />
+                                                </TextBlock>
+                                            </Expander.Header>
+                                            <ItemsPresenter />
+                                        </Expander>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </GroupStyle.ContainerStyle>
+                </GroupStyle>
+            </DataGrid.GroupStyle>
             <DataGrid.RowStyle>
                 <Style TargetType="DataGridRow" BasedOn="{StaticResource GridRow}">
                     <Setter Property="Background" Value="{Binding Converter={StaticResource StartupRowBrush}}" />
@@ -83,13 +108,19 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Действие" Width="120">
+                <DataGridTemplateColumn Header="Действие" Width="250">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <Button Style="{StaticResource SmallButton}" Content="Очистить" HorizontalAlignment="Left"
-                                    ToolTip="Вернуть запись к эталону или удалить её; изменение можно отменить в разделе «Карантин и откат»"
-                                    Visibility="{Binding CanClean, Converter={StaticResource BoolToVis}}"
-                                    Command="{Binding DataContext.CleanCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Style="{StaticResource SmallButton}" Content="Удалить с откатом"
+                                        ToolTip="Вернуть запись к эталону, отключить службу или удалить элемент; резервная копия — в разделе «Карантин и откат»"
+                                        Visibility="{Binding CanClean, Converter={StaticResource BoolToVis}}"
+                                        Command="{Binding DataContext.CleanCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
+                                <Button Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="В исключения"
+                                        ToolTip="Доверять целевому файлу: добавить его путь в allowed_exclusions.json"
+                                        Visibility="{Binding Target, Converter={StaticResource BoolToVis}}"
+                                        Command="{Binding DataContext.AllowCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
+                            </StackPanel>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

@@ -38,6 +38,9 @@ public enum ThreatDecision
 
     /// <summary>Добавить в разрешённые исключения (<c>allowed_exclusions.json</c>).</summary>
     Allow,
+
+    /// <summary>Оставить без действий: находка уходит в журнал, объект не изменяется и не вносится в исключения.</summary>
+    Ignore,
 }
 
 /// <summary>
