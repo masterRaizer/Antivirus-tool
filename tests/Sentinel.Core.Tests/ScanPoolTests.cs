@@ -305,3 +305,40 @@ public class ScanPoolTests
         Assert.Equal(portable.WorkerCount, installed.WorkerCount);
     }
 }
+
+public class RealWorkerProcessTests
+{
+    /// <summary>sentinel.dll той же конфигурации сборки, что и тесты (Debug/Release).</summary>
+    private static string? CliDll()
+    {
+        var root = Path.GetDirectoryName(RepoPaths.RulesDirectory)!;
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
+        var path = Path.Combine(root, "src", "Sentinel.Cli", "bin", configuration, "net8.0", "sentinel.dll");
+        return File.Exists(path) ? path : null;
+    }
+
+    [Fact]
+    public async Task RealSentinelCliWorkers_ScanFilesOverNamedPipe_AndExitAfterwards()
+    {
+        var dll = CliDll();
+        Assert.NotNull(dll);
+        using var tmp = new TempDir();
+        var eicar = tmp.Write("eicar.com", Sentinel.Core.Detection.Eicar.CreateTestFileBytes());
+        var clean = tmp.WriteText("readme.txt", "hello");
+        var data = Path.Combine(tmp.Path, "data");
+        var launcher = new ProcessWorkerLauncher("dotnet", RepoPaths.RulesDirectory, data, leadingArguments: [dll!]);
+        await using var pool = new MultiProcessScanCoordinator(launcher, 2, connectTimeout: TimeSpan.FromSeconds(60));
+
+        var results = new List<PoolResult>();
+        await pool.RunAsync([eicar, clean], r =>
+        {
+            results.Add(r);
+            return ValueTask.CompletedTask;
+        }, null, CancellationToken.None);
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(0, pool.FallbackScans); // файлы проверены настоящими рабочими процессами, а не запасным анализатором
+        Assert.Equal(Verdict.Malicious, results.Single(r => r.Path == eicar).Result!.Verdict);
+        Assert.Equal(Verdict.Clean, results.Single(r => r.Path == clean).Result!.Verdict);
+    }
+}

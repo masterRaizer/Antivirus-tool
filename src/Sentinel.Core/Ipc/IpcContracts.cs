@@ -13,6 +13,9 @@ public enum ScanMode
 
     /// <summary>Выбранная пользователем папка или файл.</summary>
     Custom,
+
+    /// <summary>Все подключённые съёмные накопители (флешки, внешние диски) — глубокая проверка всех файлов.</summary>
+    Removable,
 }
 
 public enum ScanState
@@ -62,6 +65,23 @@ public sealed record ScanProgress
     public string? ReportId { get; init; }
 
     public string? Message { get; init; }
+
+    /// <summary>Размер пула проверки и сколько рабочих сейчас заняты.</summary>
+    public int Workers { get; init; }
+
+    public int ActiveWorkers { get; init; }
+
+    /// <summary><c>процессы</c> — изолированные рабочие процессы, <c>потоки</c> — внутрипроцессный пул.</summary>
+    public string PoolMode { get; init; } = string.Empty;
+
+    /// <summary>Пропущено по кэшу чистых файлов (не менялись с прошлой проверки).</summary>
+    public long CachedSkipped { get; init; }
+
+    /// <summary>Файлы, которые не удалось проверить (ScanError).</summary>
+    public long Errors { get; init; }
+
+    /// <summary>Обход каталогов завершён: <see cref="Total"/> окончательный; до этого процент оценочный.</summary>
+    public bool EnumerationComplete { get; init; }
 
     public bool IsActive => State is ScanState.Counting or ScanState.Running or ScanState.Paused;
 }

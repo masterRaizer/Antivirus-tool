@@ -42,6 +42,18 @@ public sealed class SentinelRuntimeOptions
     public FileMonitorOptions Monitor { get; init; } = new();
     public IReadOnlyList<ScanRoot> QuickScanRoots { get; init; } = [];
     public IReadOnlyList<ScanRoot> FullScanRoots { get; init; } = [];
+
+    /// <summary>Каталог правил (передаётся рабочим процессам пула).</summary>
+    public string? RulesDirectory { get; init; }
+
+    /// <summary>Кэш чистых файлов <c>scan_cache.bin</c> для быстрой и полной проверки.</summary>
+    public bool UseVerdictCache { get; init; } = true;
+
+    /// <summary>Фабрика пула проверки (по умолчанию — <see cref="Scanning.Pool.ScanPoolFactory"/>, выбор режима по наличию Sentinel.Cli.exe).</summary>
+    public Func<Scanning.ScanVerdictCache?, Scanning.Pool.IScanPool>? ScanPoolFactory { get; init; }
+
+    /// <summary>Корни проверки «Подключённые USB»: готовые съёмные диски.</summary>
+    public Func<IReadOnlyList<ScanRoot>> RemovableRoots { get; init; } = DefaultRemovableRoots;
     public int RulesLoaded { get; init; }
     public bool RealtimeEnabledByDefault { get; init; } = true;
     public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
@@ -105,6 +117,7 @@ public sealed class SentinelRuntimeOptions
             FullScanRoots = DefaultFullRoots(),
             RulesLoaded = rules.Rules.Count,
             Services = services,
+            RulesDirectory = rulesDirectory ?? DefaultRulesDirectory(),
         };
     }
 
@@ -147,6 +160,22 @@ public sealed class SentinelRuntimeOptions
             {
                 roots.Add(new ScanRoot(path, depth));
             }
+        }
+    }
+
+    /// <summary>Готовые съёмные диски (<see cref="DriveType.Removable"/>).</summary>
+    public static IReadOnlyList<ScanRoot> DefaultRemovableRoots()
+    {
+        try
+        {
+            return DriveInfo.GetDrives()
+                .Where(d => d is { DriveType: DriveType.Removable, IsReady: true })
+                .Select(d => new ScanRoot(d.RootDirectory.FullName))
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
         }
     }
 
