@@ -57,4 +57,7 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 - `src/Sentinel.Core/Auditors/Persistence/`: `NativePersistenceParser`, `CommandLineSplitter`, `UnquotedServicePathDetector`, `TaskXmlStreamReader` (FileStream 64 КБ + защищённый XmlReader/XDocument, без ReadAllText), `ScheduledTaskReconciler` (Ghost/Orphan/Hidden), `TaskDirectoryWalker` (пропуск ReparsePoint), `WindowsNativePersistenceSource` (SCM P/Invoke + реестр) и `WindowsScheduledTaskSource` (`[SupportedOSPlatform("windows")]`).
 - Детекты: Unquoted Service Path, ServiceDll в профиле, FailureCommand, IFEO Debugger/SilentProcessExit, SafeBoot (белый список SentinelService/SentinelDrv), AppInit_DLLs, Winlogon, ComHandler, Ghost/Orphan/Hidden задачи.
 - Проверка: build 0/0, 580 тестов (575 passed, 5 Windows-only skipped). Не проверено на Windows: SCM-состояние служб, чтение реестра/TaskCache, обход System32\Tasks.
-### Следующий модуль: 7/2 RansomwareBehaviorShield + CanaryFileGuard
+### 7/2 RansomwareBehaviorShield + CanaryFileGuard (готово)
+- `src/Sentinel.Core/Behavioral/`: `CanaryFileGuard` (приманки с валидными заголовками + SHA-256, реестр путей, Inspect/RemoveUntouched, вес +85) и `RansomwareBehaviorShield` (окно 5 с, дебаунс 300 мс, исключение node_modules/.git/bin/obj/кэшей, потоковая энтропия, пороги всплеск+расширение+энтропия, тревога ≥75).
+- Проверка: build 0/0, 588 тестов (583 passed, 5 Windows-only skipped). Чистый всплеск текстовых файлов и работа в .git/node_modules тревогу не вызывают.
+### Следующий модуль: 7/3 BehavioralCorrelationEngine + FalsePositiveGuard
