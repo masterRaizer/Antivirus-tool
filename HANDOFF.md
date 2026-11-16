@@ -51,3 +51,33 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 ## 1.1.1 — Безопасный режим и WinRE
 - Сделано: определение Безопасного режима (`GetSystemMetrics(SM_CLEANBOOT)`, `SAFEBOOT_OPTION`) и WinRE (`X:\Windows\System32\winpeshl.ini`, `HKLM\...\Control\MiniNT`); программный рендеринг WPF и сразу автономный режим «Режим восстановления (Автономно)» без ожидания канала; каталог данных по первой доступной для записи папке (`%ProgramData%\Sentinel` → `SentinelData` рядом с exe → `%LocalAppData%\Sentinel` → `%TEMP%\SentinelData`); шаги аудита изолированы (пропуск с причиной в журнале и отчёте); ручной ввод пути в «Выборочной папке»; ключи `SafeBoot\Minimal|Network\SentinelService` в MSI.
 - Не проверено: запуск в настоящем Безопасном режиме и в WinRE (программный рендеринг, отсутствие PowerShell/WMI), старт службы в Безопасном режиме по ключам SafeBoot.
+
+## Этап 7 (v1.2.0) — User-Mode EDR
+### 7/1 NativePersistenceParser (готово)
+- `src/Sentinel.Core/Auditors/Persistence/`: `NativePersistenceParser`, `CommandLineSplitter`, `UnquotedServicePathDetector`, `TaskXmlStreamReader` (FileStream 64 КБ + защищённый XmlReader/XDocument, без ReadAllText), `ScheduledTaskReconciler` (Ghost/Orphan/Hidden), `TaskDirectoryWalker` (пропуск ReparsePoint), `WindowsNativePersistenceSource` (SCM P/Invoke + реестр) и `WindowsScheduledTaskSource` (`[SupportedOSPlatform("windows")]`).
+- Детекты: Unquoted Service Path, ServiceDll в профиле, FailureCommand, IFEO Debugger/SilentProcessExit, SafeBoot (белый список SentinelService/SentinelDrv), AppInit_DLLs, Winlogon, ComHandler, Ghost/Orphan/Hidden задачи.
+- Проверка: build 0/0, 580 тестов (575 passed, 5 Windows-only skipped). Не проверено на Windows: SCM-состояние служб, чтение реестра/TaskCache, обход System32\Tasks.
+### 7/2 RansomwareBehaviorShield + CanaryFileGuard (готово)
+- `src/Sentinel.Core/Behavioral/`: `CanaryFileGuard` (приманки с валидными заголовками + SHA-256, реестр путей, Inspect/RemoveUntouched, вес +85) и `RansomwareBehaviorShield` (окно 5 с, дебаунс 300 мс, исключение node_modules/.git/bin/obj/кэшей, потоковая энтропия, пороги всплеск+расширение+энтропия, тревога ≥75).
+- Проверка: build 0/0, 588 тестов (583 passed, 5 Windows-only skipped). Чистый всплеск текстовых файлов и работа в .git/node_modules тревогу не вызывают.
+### 7/3 BehavioralCorrelationEngine + FalsePositiveGuard (готово)
+- `FalsePositiveGuard`: самозащита с защитой от маскировки (поддельный C:\Temp\lsass.exe не иммунен), белый список (путь/хеш), кэш чистых файлов, подпись −35 и запрет авто-карантина подписанного/в теневом режиме; пороги LogOnly/AskUser/Act.
+- `BehavioralCorrelationEngine`: кольцевой буфер (2048, окно 60 с), цепочки BH-01 (дроппер+ярлык/автозапуск, +50), BH-02 (обфускация/fileless, +55), BH-03 (автозапуск на неподписанный профильный бинарник, +65).
+- Проверка: build 0/0, 609 тестов (604 passed, 5 Windows-only skipped).
+### 7/4 RemovableMediaShield — USB-щит (готово)
+- `src/Sentinel.Core/Protection/`: `ShellLinkBinaryParser` ([MS-SHLLINK], Unicode/ANSI, IconLocation), `AutorunInfParser` (потоковый, секция [autorun]), `RemovableMediaShield` (обход глубиной 2 с пропуском ReparsePoint; детекторы autorun.inf, USB-червь скрытой папки, двойное расширение, вредоносный .lnk с подменой значка, инъектируемый анализатор бинарников), `PollingRemovableDriveWatcher` (опрос DriveInfo без WMI, DiffNew).
+- Проверка: build 0/0, 629 тестов (624 passed, 5 Windows-only skipped). Атрибут Hidden на Linux не ставится — детект червя покрыт чистым помощником DetectWorm и WindowsFact оставлен на будущее.
+### 7/5 Интеграция в Service/CLI/WPF (готово)
+- `SentinelConfig`: флаги `EnableRansomwareShield`/`EnableCanaryFiles`/`EnableUsbShield`/`BehavioralShadowMode` (обратная совместимость со старым конфигом).
+- `SentinelRuntime.Behavioral.cs`: приманки, наблюдение файловой активности (встроено в InspectFileAsync, приманки пропускаются сканером), `ScanRemovableAsync`, `GetBehavioralStatus(Async)`; USB-щит использует FileAnalyzer рантайма как анализатор бинарников.
+- IPC: `behavioral.status`, `behavioral.scanusb` + флаги в SettingsSnapshot/Update; `BackendHub` проброс.
+- CLI: `scan-usb [путь]`, `behavioral-status`. WPF: раздел «Поведенческий щит и USB» (переключатели, проверка USB, статус приманок, лента цепочек), виртуализация списков.
+- Проверка: build 0/0, 632 теста (627 passed, 5 Windows-only skipped).
+### 7/6 Архитектурный документ, версия 1.2.0, релиз (готово)
+- `docs/ARCHITECTURE_V2_KERNEL_SPEC.md`: проект связки Ring 0/Ring 3 (minifilter, коллбэки, FilterCommunicationPort, таймауты/Fail-Open, матрица самозащиты, план IKernelBridge/NullKernelBridge). Без .vcxproj/C++ — решение остаётся кросс-сборочным.
+- Версия продукта 1.2.0 (wixproj, Directory.Build.props, release.yml).
+- Проверка: Release build 0/0, 632 теста (627 passed, 5 Windows-only skipped).
+
+## Этап 7 итог: v1.2.0 — User-Mode EDR без драйвера ядра
+Не входят в v1.2.0 (требуют Ring 0 или остановлены ранее): перехват запуска процессов, сканирование сырой памяти процессов. Весь поведенческий анализ — User-Mode.
+Не проверено на Windows: SCM/реестр/TaskCache нативных источников, поведенческий щит на живом FileSystemWatcher, USB-щит на реальной флешке (атрибуты Hidden/ReparsePoint), WPF-раздел «Поведенческий щит и USB».

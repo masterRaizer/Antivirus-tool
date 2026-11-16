@@ -19,6 +19,7 @@ public enum Section
     Quarantine,
     Startup,
     Reports,
+    Behavioral,
     Settings,
 }
 
@@ -45,6 +46,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Quarantine = new QuarantineViewModel(hub, Notify);
         Startup = new StartupViewModel(hub, Notify);
         Reports = new ReportsViewModel(hub, Notify);
+        Behavioral = new BehavioralViewModel(hub, Notify);
         Settings = new SettingsViewModel(hub, Notify);
         StartServiceCommand = new AsyncCommand(StartServiceAsync, () => !IsServiceMode && !_hub.IsRecoveryMode, ex => Notify(ex.Message, true));
         Decisions = new DecisionViewModel(Threats);
@@ -89,6 +91,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public StartupViewModel Startup { get; }
 
     public ReportsViewModel Reports { get; }
+
+    public BehavioralViewModel Behavioral { get; }
 
     public SettingsViewModel Settings { get; }
 
@@ -278,6 +282,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Section.Quarantine => Quarantine,
             Section.Startup => Startup,
             Section.Reports => Reports,
+            Section.Behavioral => Behavioral,
             Section.Settings => Settings,
             _ => Dashboard,
         };

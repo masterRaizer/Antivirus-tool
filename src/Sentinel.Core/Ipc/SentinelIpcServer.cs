@@ -392,6 +392,10 @@ public static class IpcRequestRouter
                 return IpcProtocol.ToElement(await backend.SaveSettingsAsync(Args<SettingsUpdate>(), token).ConfigureAwait(false));
             case IpcProtocol.UpdateDatabases:
                 return IpcProtocol.ToElement(await backend.UpdateDatabasesAsync(token).ConfigureAwait(false));
+            case IpcProtocol.GetBehavioralStatus:
+                return IpcProtocol.ToElement(await backend.GetBehavioralStatusAsync(token).ConfigureAwait(false));
+            case IpcProtocol.ScanRemovable:
+                return IpcProtocol.ToElement(await backend.ScanRemovableAsync(Args<ScanRemovableArgs>().PathOrDrive, token).ConfigureAwait(false));
 
             default:
                 throw new IpcProtocolException($"Неизвестный тип запроса '{type}'.");

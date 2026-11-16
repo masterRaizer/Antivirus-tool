@@ -68,6 +68,13 @@ public sealed partial class SentinelRuntime
             return null;
         }
 
+        // Поведенческий анти-шифровальщик и приманки: изменение файла в профиле наблюдается до обычного анализа.
+        ObserveFileActivity(Behavioral.FileEventKind.Modified, path);
+        if (IsCanaryFile(path))
+        {
+            return null; // приманки не проверяются штатным сканером
+        }
+
         var result = _o.Analyzer.Analyze(path);
         if (result.Verdict == Verdict.Error && File.Exists(path))
         {
