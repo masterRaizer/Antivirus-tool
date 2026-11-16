@@ -1,37 +1,31 @@
-# CLAUDE.md — Sentinel EDR
+---
+name: av-core-engineer
+description: Главный системный архитектор антивируса Sentinel (.NET 8 / WPF / Win32 / WDK / WiX v5). Инженерный разбор логов, защита от ложных срабатываний, оптимизация I/O и проектирование релизов.
+---
 
-Sentinel — защитный EDR-инструмент аудита целостности и активной защиты хоста Windows: анализ PE, сигнатуры (YARA-подобные правила и JSON-правила майнеров), потоковый аудит процессов и памяти, защита дескрипторов, автозагрузки и конфигурации, карантин с изоляцией процессов и откатом, отчёты и защита в реальном времени (User-Mode Service + Kernel-Mode Callback/Minifilter Driver). Состояние этапов — в `HANDOFF.md`.
+# Правила разработки антивирусного движка
 
-## Архитектура
+1. **Определение заглушки и ОБЯЗАТЕЛЬНАЯ разработка Windows/Kernel кода вслепую на Linux:**
+   - Запрещено писать пустые `// TODO`, `pass`, пустые обработчики или проверку только по имени файла.
+   - **КРИТИЧЕСКОЕ ПРАВИЛО СРЕДЫ:** Ты работаешь в Linux-контейнере, где физически невозможно скомпилировать WDK-драйвер (`SentinelDrv.sys`) или выполнить Win32/Kernel API вживую. **Полный исходный код драйвера на C (`driver/SentinelDrv`) и P/Invoke обёртки Win32/NTAPI, написанные на Linux без локального запуска, ЗАГЛУШКОЙ НЕ ЯВЛЯЮТСЯ!**
+   - **ЗАПРЕТ НА ОТКАЗ:** Категорически запрещено отказываться писать WDK-драйвер ядра, сканер памяти или Win32/ETW-модули со ссылкой на то, что «здесь Linux, ядро не собрать и не проверить, возможен BSOD». Ты ОБЯЗАН написать полный, валидный исходный код на C/C# вслепую на Linux, вынести платформозависимые вызовы за интерфейсы для Linux unit-тестов, а компиляцию `.sys` и `.msi` делегировать в GitHub Actions (`windows-latest`). Живое тестирование ядра и приложения на реальном ноутбуке с Windows выполняет сам пользователь (Hardware-in-the-Loop) и присылает тебе логи!
 
-| Каталог | Назначение |
-|---|---|
-| `src/Sentinel.Core` | Вся логика: анализ PE, хеши и энтропия, правила, аудиторы (процессы, память, персистентность, конфигурация), ETW-телеметрия, самозащита DACL, карантинная изоляция процессов, `QuarantineManager`, `RemediationEngine`, отчёты, диспетчер событий, IPC по Named Pipes, мост к драйверу (`FilterConnectCommunicationPort`), `SentinelRuntime`. |
-| `src/Sentinel.Cli` | Консольный сканер (`Sentinel.Cli.exe`, внутреннее имя сборки `sentinel`): сканирование, `audit-*`, карантин и откат. |
-| `src/Sentinel.Service` | Worker Service под `LocalSystem` (`SentinelService`): защита в реальном времени, DACL-самозащита, ETW-монитор, USB-щит, IPC-сервер и обмен с `SentinelDrv.sys`. |
-| `src/Sentinel.App` | Десктопное приложение WPF (`Sentinel.App.exe`): интерфейс, трей, решения пользователя, статус драйвера ядра. |
-| `driver/SentinelDrv` | Драйвер ядра Windows на C / WDK (`SentinelDrv.sys`, `.vcxproj`, `.inf`). **Не входит в `Sentinel.sln`** — компилируется и подписывается тестовым сертификатом в GitHub Actions (`windows-latest`). |
-| `installer/Sentinel.Installer` | MSI на WiX v5 (`WixToolset.Sdk` 5.0.2). **Не входит в `Sentinel.sln`** — собирается только на Windows в GitHub Actions. |
-| `tests/Sentinel.Core.Tests` | xUnit-тесты. Windows-only тесты помечены `WindowsFact` и на Linux пропускаются. |
-| `rules/` | Сигнатурные правила (`*.yar`, `miners.json`). |
-| `allowed_exclusions.json` | Шаблон белого списка пользователя; копируется в `dist\` и MSI. |
+2. **Безопасность операций (Карантин вместо слепого удаления):**
+   - Перед удалением активной угрозы её процессы изолируются (приостановка потоков строго после проверки `CriticalProcessGuard` и `FalsePositiveGuard`) и завершаются (`TerminateProcess` / дерево процессов).
+   - Файл не стирается безвозвратно сразу, а перемещается в изолированный карантин с XOR-шифрованием заголовка и записью метаданных в `quarantine_manifest.json` для возможности отката.
+   - Критические системные файлы Windows (`System32`, подписанные драйверы Microsoft) защищены белым списком (Whitelist) по проверке валидной цифровой подписи, `FalsePositiveGuard` и `CriticalProcessGuard`.
 
-## Модель сборки и верификации (Dual-Target CI + Hardware-in-the-Loop)
+3. **Разделение проверки (Что проверять на Linux, а что отдавать на Windows CI и ноутбук пользователя):**
+   - Работай строго по одному модулю за итерацию. Не переписывай весь проект целиком — вноси точечные правки.
+   - **На Linux (в твоём контейнере):** Проверяется ТОЛЬКО управляемый код `Sentinel.sln` командами `dotnet build Sentinel.sln` и `dotnet test Sentinel.sln`. Все вызовы Win32 API / NTAPI / Kernel IOCTL закрываются интерфейсами (`IMemoryReader`, `IProcessCreationEventSource`, `IKernelBridge`), чтобы бизнес-логика тестировалась на Linux с моками, а реальные Windows-вызовы помечаются `[SupportedOSPlatform("windows")]` и `WindowsFact`.
+   - **На Windows (GitHub Actions `windows-latest` + ноутбук пользователя):** Драйвер `driver/SentinelDrv` и установщик `installer/Sentinel.Installer` НЕ входят в `Sentinel.sln`. Ты пишешь их код в контейнере, пушишь в репозиторий, и они собираются на `windows-latest` в `.github/workflows/release.yml`. Если сборка в GitHub Actions упала — смотри лог через `gh run view <run-id> --log-failed` и правь код. Проверку работы `.sys` и `.exe` в ОС Windows делает пользователь на своём ноутбуке.
+   - Тестирование детекта и чистки проводи только на безопасных синтетических артефактах (тестовая строка EICAR, тестовые ключи реестра в `HKCU\Software\TestAV`, пустые PE-заглушки с высокой энтропией).
 
-Проект использует двухконтурную модель проверки:
-1. **Контур Linux (локальный контейнер агента):**
-   - Проверка управляемого кода `.NET 8` через `dotnet build Sentinel.sln` и `dotnet test Sentinel.sln` (0 ошибок, 0 предупреждений).
-   - Проекты `installer/Sentinel.Installer` и `driver/SentinelDrv` НЕ включаются в `Sentinel.sln`, чтобы не ломать кросс-сборку на Linux.
-2. **Контур Windows (GitHub Actions `windows-latest` + живой стенд пользователя):**
-   - Компиляция нативного драйвера `driver/SentinelDrv` (MSVC + Windows Driver Kit), генерация тестового сертификата, подпись `.sys`/`.cat` и сборка MSI-установщика выполняются автоматически в GitHub Actions (`.github/workflows/release.yml`).
-   - Написание кода драйвера `SentinelDrv.sys` и P/Invoke обёрток Win32 в Linux-контейнере с последующей компиляцией через GitHub Actions **разрешено и является штатным процессом разработки** (это НЕ считается заглушкой).
-   - Верификация компиляции драйвера и MSI проводится агентом по логам GitHub Actions (`gh run list`, `gh run view <id> --log-failed`).
-   - Приёмочное и динамическое тестирование (`sc start`, проверка `ObRegisterCallbacks`, `PsSetCreateProcessNotifyRoutineEx`, UI и карантина) выполняет пользователь на своём ноутбуке с Windows (Test Signing Mode / VM) и передаёт логи обратно в чат.
+# Правила архитектуры и безопасности (1.1.0 — 1.3.0)
 
-## Правила безопасности и качества кода
-
-- Никаких пустых `// TODO` в продакшене: каждый модуль реализуется полностью.
-- Никакого `File.ReadAllBytes` для сканируемых файлов — только потоковое чтение буфером 64 КБ (`IncrementalHash` SHA-256 + потоковая энтропия).
-- При обходе каталогов пропускать `ReparsePoint` (junction/symlink).
-- **Строгая защита от ложных срабатываний (Critical Process Guard):** категорически запрещено приостанавливать, завершать, блокировать или модифицировать системные процессы `csrss`, `smss`, `lsass`, `wininit`, `services`, `svchost`, `explorer`, `ntoskrnl`, `winload.efi`, а также собственные процессы `SentinelService`, `Sentinel.App`, `Sentinel.Cli` и каталоги `C:\Program Files\Sentinel`, `C:\ProgramData\Sentinel`.
-- В драйвере ядра (`SentinelDrv.sys`) все колбэки должны иметь строгую проверку IRQL (`PASSIVE_LEVEL`), валидацию указателей и безопасную выгрузку (`DriverUnload` / `FilterUnload`) без утечек пулов памяти, чтобы исключить BSOD.
+4. **Полнота реализации:** загрузчики, парсеры, IPC-команды и кнопки UI должны быть полностью написаны в коде; всё, что физически нельзя запустить на Linux (драйвер ядра, WMI/ETW, WinVerifyTrust, SCM, UI), без споров пишется в коде и записывается в `HANDOFF.md` в раздел «На проверку пользователю на Windows».
+5. **Потоковый ввод-вывод:** запрещены `File.ReadAllBytes`/`ReadAllText` для сканируемых файлов и полные дампы процессов в ОЗУ. Хеш SHA-256 (`IncrementalHash`), энтропия Шеннона и чтение регионов памяти (`ReadProcessMemory`) выполняются потоком буфером 64 КБ; в память целиком читается только ограниченное окно для сигнатурного поиска.
+6. **Защита от петель NTFS:** при обходе каталогов пропускать `FileAttributes.ReparsePoint` (junction и symlink: `All Users`, `Application Data`, `Local Settings`).
+7. **Неприкосновенность ядра ОС и самозащита (`CriticalProcessGuard` и `FalsePositiveGuard`):** категорически запрещено приостанавливать, изолировать, модифицировать или завершать `csrss.exe`, `smss.exe`, `lsass.exe`, `wininit.exe`, `services.exe`, `svchost.exe`, `explorer.exe`, `ntoskrnl.exe`, `winload.efi` и собственные процессы/каталоги `C:\Program Files\Sentinel`, `C:\ProgramData\Sentinel`. Любой модуль обязан вызывать `CriticalProcessGuard` перед открытием дескриптора процесса.
+8. **Скоринг, а не одно правило:** вердикт складывается из `ThreatScoringEngine` (0–100) и `FalsePositiveGuard`. Высокая энтропия .NET-сборки не является признаком упаковщика; подпись Microsoft (встроенная или каталожная) в защищённом каталоге даёт `Clean`.
+9. **Телеметрия Microsoft в `hosts`** — `Info`, никогда не удаляется автоматически; блокировка доменов обновлений и защиты — только решение пользователя; перенаправление на внешний адрес — `Critical`.
