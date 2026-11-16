@@ -64,4 +64,7 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 - `FalsePositiveGuard`: самозащита с защитой от маскировки (поддельный C:\Temp\lsass.exe не иммунен), белый список (путь/хеш), кэш чистых файлов, подпись −35 и запрет авто-карантина подписанного/в теневом режиме; пороги LogOnly/AskUser/Act.
 - `BehavioralCorrelationEngine`: кольцевой буфер (2048, окно 60 с), цепочки BH-01 (дроппер+ярлык/автозапуск, +50), BH-02 (обфускация/fileless, +55), BH-03 (автозапуск на неподписанный профильный бинарник, +65).
 - Проверка: build 0/0, 609 тестов (604 passed, 5 Windows-only skipped).
-### Следующий модуль: 7/4 RemovableMediaShield (USB-щит)
+### 7/4 RemovableMediaShield — USB-щит (готово)
+- `src/Sentinel.Core/Protection/`: `ShellLinkBinaryParser` ([MS-SHLLINK], Unicode/ANSI, IconLocation), `AutorunInfParser` (потоковый, секция [autorun]), `RemovableMediaShield` (обход глубиной 2 с пропуском ReparsePoint; детекторы autorun.inf, USB-червь скрытой папки, двойное расширение, вредоносный .lnk с подменой значка, инъектируемый анализатор бинарников), `PollingRemovableDriveWatcher` (опрос DriveInfo без WMI, DiffNew).
+- Проверка: build 0/0, 629 тестов (624 passed, 5 Windows-only skipped). Атрибут Hidden на Linux не ставится — детект червя покрыт чистым помощником DetectWorm и WindowsFact оставлен на будущее.
+### Следующий модуль: 7/5 интеграция в Service/CLI/WPF
