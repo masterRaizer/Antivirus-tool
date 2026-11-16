@@ -12,7 +12,7 @@ JSON-правила майнеров), аудит процессов, автоз
 | `src/Sentinel.Cli` | Консольный сканер (`Sentinel.Cli.exe`, внутреннее имя сборки `sentinel`): сканирование, `audit-*`, карантин и откат. |
 | `src/Sentinel.Service` | Worker Service под `LocalSystem` (`SentinelService`): защита в реальном времени, IPC-сервер. |
 | `src/Sentinel.App` | Десктопное приложение WPF (`Sentinel.App.exe`): интерфейс, трей, решения пользователя. |
-| `installer/Sentinel.Installer` | MSI на WiX v5 (`WixToolset.Sdk` 5.0.2). **Не входит в `Sentinel.sln`** — собирается только на Windows в GitHub Actions. |
+| `installer/Sentinel.Installer` | MSI на WiX v5 (`WixToolset.Sdk` 5.0.2). **Не входит в `Sentinel.sln`** — собирается только на Windows в GitHub Actions.Нативные компоненты Windows (driver/SentinelDrv) точно так же не входят в Sentinel.sln и проверяются сборкой на раннере windows-latest в .github/workflows/release.yml через gh run list и gh run view <run-id> --log-failed.|
 | `tests/Sentinel.Core.Tests` | xUnit-тесты. Windows-only тесты помечены `WindowsFact` и на Linux пропускаются. |
 | `rules/` | Сигнатурные правила (`*.yar`, `miners.json`). |
 | `allowed_exclusions.json` | Шаблон белого списка пользователя; копируется в `dist\` и MSI. |
