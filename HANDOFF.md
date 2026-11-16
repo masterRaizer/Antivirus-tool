@@ -23,7 +23,7 @@
 
 1. ~~**Модуль 8/1 (`ProcessStartMonitor`)**~~ — **готов** (см. «Этап 8: сделано» ниже).
 2. ~~**Модуль 8/2 (`MemoryIntegrityScanner`)**~~ — **готов** (см. «Этап 8: сделано» ниже).
-3. **Модуль 8/3 (Изоляция потоков перед карантином)**: в `RemediationEngine` перед завершением дерева процессов и перемещением файла в `QuarantineManager` добавить предварительную приостановку потоков процесса (через интерфейс `IProcessContainment`), получившего финальный вердикт `Malicious`, строго после проверки `CriticalProcessGuard` и `FalsePositiveGuard`.
+3. ~~**Модуль 8/3 (изоляция потоков перед карантином)**~~ — **готов** (см. «Этап 8: сделано» ниже).
 4. **Модуль 8/4 (`IKernelBridge` + `driver/SentinelDrv`)**: реализация `IKernelBridge` (с `NullKernelBridge` / graceful fallback в User-Mode, если драйвер не загружен) по спецификации `docs/ARCHITECTURE_V2_KERNEL_SPEC.md`, создание `driver/SentinelDrv` (вне `Sentinel.sln`) и добавление шага его компиляции и тестовой подписи на `windows-latest` в `.github/workflows/release.yml`.
 5. После каждого модуля обновлять этот файл.
 
@@ -69,6 +69,25 @@
 - Совместимость с SDK 9.0.102: устранены 2 предупреждения CA1859 (`RemediationEngine.RollbackHosts`, `scan-usb` в CLI); проверено сборкой под SDK 9.
 - **Не проверено:** работа сканера внутри `SentinelService` (служба на стенде была `Stopped`/`Disabled`) — запустить службу и повторить.
 
+### 8/3 Изоляция потоков перед завершением и карантином (Linux: build 0/0 Debug, Release и под SDK 9.0.102; 727 тестов — 721 passed, 6 skipped `WindowsFact`)
+- `src/Sentinel.Core/Remediation/ProcessContainment.cs`: `IProcessContainment` (`SuspendProcess`/`ResumeProcess`/`SuspendProcessTree`; добавлен
+  необязательный параметр `executablePath` — без пути системное имя защищается всегда), `ContainmentResult`, `ContainmentBarrier`
+  (PID ≤ 4, собственный PID, `CriticalProcessGuard`), `NullProcessContainment`, RAII `ProcessSuspensionScope` (возобновляет всё, что
+  приостановлено и не завершено, — в том числе при исключении).
+- `WindowsProcessContainment` (`[SupportedOSPlatform("windows")]`): барьер до любых дескрипторов; `TH32CS_SNAPTHREAD` → `OpenThread(0x0002)` →
+  `SuspendThread`, `CloseHandle` в `finally`; до 5 проходов, пока проход не найдёт новых потоков; ID приостановленных потоков в `HashSet<uint>`
+  (повторный вызов не накручивает счётчик, `ResumeProcess` возобновляет только свои); `ERROR_INVALID_PARAMETER` (87) — не ошибка,
+  `ERROR_ACCESS_DENIED` (5) — в `FailedThreadCount`; дерево — по `TH32CS_SNAPPROCESS`, каждый потомок через барьер.
+- `RemediationEngine.TerminateProcessTree(pid, GuardContext?, userConfirmed)`: (1) `CriticalProcessGuard` → самозащита/белый список →
+  (2) `FalsePositiveGuard` (`RemediationOptions.FalsePositiveGuard`, по умолчанию из `allowed_exclusions.json` каталога данных; спорный
+  вердикт блокирует только автоматическое действие) → (3) приостановка всего допустимого дерева → (4) завершение (корень первым, ожидание выхода)
+  → незавершённые возобновляются. Итог (`SuspendedThreadCount`, PID) — в сообщении действия, в событии и в причине записи карантина
+  `quarantine_manifest.json` («потоки приостановлены до завершения: N»). Конструктор обратно совместим (`containment` — последний необязательный
+  параметр, по умолчанию `NullProcessContainment`); `RemediationEngine.CreateDefault` подключает `WindowsProcessContainment` — значит, служба,
+  рантайм и CLI (`--remediate`) получают изоляцию автоматически. Диспетчер передаёт балл/подпись и признак решения пользователя.
+- Интеграционный `[WindowsFact]` `WindowsProcessContainmentIntegrationTests` (PING.EXE: приостановка ≥ 1 потока, повтор без накрутки, возобновление,
+  барьер для PID 4 и собственного процесса) выполняется на `windows-latest` в шаге Test.
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **8/2:** окно 1: `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` (печатает PID);
   окно 2 (администратор): `sentinel.exe audit-memory <PID>` → `MEM-YARA-MATCH` (EICAR-Test-File) и `MEM-REFLECTIVE-PE` (PE (x64)), код выхода 1.
@@ -79,6 +98,10 @@
   в разделе «Поведенческий щит и USB» цепочку `Process: … (BH-02)` и событие с источником `process-start`. Маскировка: копия безвредного .exe,
   запущенная как `C:\Temp\svchost.exe`, — находка `PROC-IMPERSONATION`; неподписанная копия завершается и уходит в карантин, копия с действительной
   подписью Microsoft — только запрос решения (AskUser). Безопасный режим: в журнале — переход на опрос.
+- **8/3:** скопировать `C:\Windows\System32\PING.EXE` в `C:\Temp\svchost.exe`, запустить `C:\Temp\svchost.exe -n 300 127.0.0.1`,
+  затем от администратора `sentinel.exe audit-processes --remediate`: у `svchost.exe` из `C:\Temp` — находка `PROC-IMPERSONATION`, в итоге действия —
+  «Перед завершением приостановлено потоков: N в 1 процесс(ах)», процесс завершён. Контроль: настоящие `svchost.exe`/`lsass.exe` не затронуты
+  (Диспетчер задач). При запущенной службе тот же запуск должен быть пойман `ProcessStartMonitor` (событие `process-start`, статус «Завершён»).
 - `WinVerifyTrust`, реестровые и сервисные аудиторы, удаление исключений Defender.
 - `Sentinel.App` (WPF) и `Sentinel.Service` (установка MSI, DACL-самозащита, автоподключение Named Pipe, раздел «Поведенческий щит и USB»).
 - Безопасный режим и WinRE (1.1.1).

@@ -29,6 +29,7 @@ public sealed class RemediationEngine
     private readonly IDefenderPreferenceProvider? _defender;
     private readonly RollbackManifestStore _manifest;
     private readonly TimeProvider _time;
+    private readonly IProcessContainment _containment;
 
     public RemediationEngine(
         IWhitelistProvider whitelist,
@@ -38,7 +39,8 @@ public sealed class RemediationEngine
         IRegistryEditor? registry = null,
         IScheduledTaskEditor? tasks = null,
         IDefenderPreferenceProvider? defender = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IProcessContainment? containment = null)
     {
         ArgumentNullException.ThrowIfNull(whitelist);
         ArgumentNullException.ThrowIfNull(options);
@@ -51,7 +53,11 @@ public sealed class RemediationEngine
         _defender = defender;
         _manifest = new RollbackManifestStore(options.RollbackManifestPath);
         _time = timeProvider ?? TimeProvider.System;
+        _containment = containment ?? NullProcessContainment.Instance;
     }
+
+    /// <summary>Изоляция потоков перед завершением (на Windows — <see cref="WindowsProcessContainment"/>).</summary>
+    public IProcessContainment Containment => _containment;
 
     public bool DryRun => _options.DryRun;
 
@@ -75,17 +81,23 @@ public sealed class RemediationEngine
             new WindowsProcessTerminator(),
             RegistryProviderFactory.CreateEditor(),
             new WindowsScheduledTaskEditor(),
-            new WindowsDefenderPreferenceProvider());
+            new WindowsDefenderPreferenceProvider(),
+            containment: new WindowsProcessContainment());
     }
 
     // ---- Процессы --------------------------------------------------------------
 
     /// <summary>
-    /// Завершает процесс <paramref name="pid"/> и всех его потомков. Перед остановкой каждый процесс
-    /// проверяется: доверенные системные файлы (белый список), критические системные процессы
-    /// и сам Sentinel не завершаются. Корень останавливается первым, чтобы он не перезапускал потомков.
+    /// Нейтрализует процесс <paramref name="pid"/> и всех его потомков в строгом порядке:
+    /// (1) <see cref="Protection.CriticalProcessGuard"/> и самозащита/белый список доверенных системных файлов;
+    /// (2) <see cref="Behavioral.FalsePositiveGuard"/> (список разрешённого, кэш чистых, подпись, теневой режим) — если задан
+    /// в <see cref="RemediationOptions.FalsePositiveGuard"/>; (3) приостановка потоков всего допустимого дерева через
+    /// <see cref="IProcessContainment"/> — сторожевые потоки не успеют перезапустить корень; (4) завершение, корень первым,
+    /// с ожиданием выхода. Не завершённые процессы возобновляются (<see cref="ProcessSuspensionScope"/>), в том числе при исключении.
     /// </summary>
-    public ProcessTreeResult TerminateProcessTree(int pid)
+    /// <param name="guardContext">Балл, хеш и подпись для <see cref="Behavioral.FalsePositiveGuard"/>; путь берётся из снимка процесса.</param>
+    /// <param name="userConfirmed">Действие подтверждено пользователем: спорный вердикт («спросить») не блокирует, «защищено» — блокирует всегда.</param>
+    public ProcessTreeResult TerminateProcessTree(int pid, Behavioral.GuardContext? guardContext = null, bool userConfirmed = false)
     {
         if (_processes is null || _terminator is null)
         {
@@ -109,35 +121,69 @@ public sealed class RemediationEngine
             return new ProcessTreeResult(pid, RemediationStatus.Skipped, $"Процесс PID {pid} не найден (уже завершён).", []);
         }
 
-        var rootGuard = Guard(root);
+        // (1) CriticalProcessGuard, самозащита и белый список; (2) FalsePositiveGuard.
+        var rootGuard = CriticalGuard(root) ?? Guard(root) ?? FalsePositive(root, guardContext, userConfirmed);
         if (rootGuard is not null)
         {
             return new ProcessTreeResult(pid, RemediationStatus.Blocked, rootGuard,
                 [new ProcessTerminationResult(root, RemediationStatus.Blocked, rootGuard)]);
         }
 
+        var plan = CollectTree(root, snapshot)
+            .Select(p => (Process: p, Denied: p.Pid == root.Pid ? null : CriticalGuard(p) ?? Guard(p)))
+            .ToList();
+
         var results = new List<ProcessTerminationResult>();
-        foreach (var process in CollectTree(root, snapshot))
+        if (_options.DryRun)
         {
-            var guard = process.Pid == root.Pid ? null : Guard(process);
-            if (guard is not null)
-            {
-                results.Add(new ProcessTerminationResult(process, RemediationStatus.Blocked, guard));
-                continue;
-            }
-
-            if (_options.DryRun)
-            {
-                results.Add(new ProcessTerminationResult(process, RemediationStatus.WouldDo, "Будет завершён."));
-                continue;
-            }
-
-            var outcome = _terminator.Terminate(process.Pid);
-            results.Add(outcome.Success
-                ? new ProcessTerminationResult(process, RemediationStatus.Done, "Завершён.")
-                : new ProcessTerminationResult(process, RemediationStatus.Failed, outcome.Error ?? "Не удалось завершить."));
+            results.AddRange(plan.Select(x => x.Denied is null
+                ? new ProcessTerminationResult(x.Process, RemediationStatus.WouldDo, "Будет приостановлен и завершён.")
+                : new ProcessTerminationResult(x.Process, RemediationStatus.Blocked, x.Denied)));
+            return Summarize(pid, results, null);
         }
 
+        var scope = new ProcessSuspensionScope(_containment);
+        try
+        {
+            // (3) Сначала замораживается всё допустимое дерево, затем (4) завершение — корень первым.
+            foreach (var (process, denied) in plan)
+            {
+                if (denied is null)
+                {
+                    scope.Suspend(process.Pid, process.Name, process.ExecutablePath);
+                }
+            }
+
+            foreach (var (process, denied) in plan)
+            {
+                if (denied is not null)
+                {
+                    results.Add(new ProcessTerminationResult(process, RemediationStatus.Blocked, denied));
+                    continue;
+                }
+
+                var outcome = _terminator.Terminate(process.Pid);
+                if (outcome.Success)
+                {
+                    scope.MarkTerminated(process.Pid);
+                    results.Add(new ProcessTerminationResult(process, RemediationStatus.Done, "Завершён."));
+                }
+                else
+                {
+                    results.Add(new ProcessTerminationResult(process, RemediationStatus.Failed, outcome.Error ?? "Не удалось завершить."));
+                }
+            }
+        }
+        finally
+        {
+            scope.Dispose(); // не завершённые (или при исключении — все) процессы возобновляются
+        }
+
+        return Summarize(pid, results, scope);
+    }
+
+    private ProcessTreeResult Summarize(int pid, List<ProcessTerminationResult> results, ProcessSuspensionScope? scope)
+    {
         var rootResult = results[0];
         var failed = results.Count(r => r.Status == RemediationStatus.Failed);
         var blocked = results.Count(r => r.Status == RemediationStatus.Blocked);
@@ -147,7 +193,41 @@ public sealed class RemediationEngine
             : $"Завершено процессов: {results.Count(r => r.Status == RemediationStatus.Done)} из {results.Count}"
                 + (failed > 0 ? $"; ошибок: {failed}" : string.Empty)
                 + (blocked > 0 ? $"; защищено: {blocked}" : string.Empty);
-        return new ProcessTreeResult(pid, status, message, results);
+        if (scope is { SuspendedThreadCount: > 0 })
+        {
+            message += $". Перед завершением приостановлено потоков: {scope.SuspendedThreadCount} в {scope.SuspendedProcessIds.Count} процесс(ах)"
+                + (scope.ResumedProcessIds.Count > 0 ? $"; возобновлено незавершённых: {scope.ResumedProcessIds.Count}" : string.Empty);
+        }
+
+        return new ProcessTreeResult(pid, status, message, results)
+        {
+            SuspendedThreadCount = scope?.SuspendedThreadCount ?? 0,
+            SuspendedProcessIds = scope?.SuspendedProcessIds.ToArray() ?? [],
+            ResumedProcessIds = scope?.ResumedProcessIds.ToArray() ?? [],
+        };
+    }
+
+    private static string? CriticalGuard(ProcessSnapshot process) =>
+        Protection.CriticalProcessGuard.IsProtectedProcess(process.Pid, process.Name, process.ExecutablePath)
+            ? $"'{process.Name}' — защищён CriticalProcessGuard (системный процесс в системном каталоге или Sentinel)."
+            : null;
+
+    private string? FalsePositive(ProcessSnapshot root, Behavioral.GuardContext? context, bool userConfirmed)
+    {
+        if (_options.FalsePositiveGuard is not { } factory)
+        {
+            return null;
+        }
+
+        var effective = (context ?? new Behavioral.GuardContext { Score = 100 }) with { Path = root.ExecutablePath ?? context?.Path };
+        var verdict = factory().Evaluate(effective);
+        return verdict.Decision switch
+        {
+            Behavioral.GuardDecision.Protected => $"FalsePositiveGuard: {verdict.Reason}",
+            Behavioral.GuardDecision.Act => null,
+            _ when userConfirmed => null,
+            _ => $"FalsePositiveGuard: автоматическое завершение запрещено ({verdict.Reason})",
+        };
     }
 
     /// <summary>Причина, по которой процесс нельзя завершать, либо <c>null</c>.</summary>

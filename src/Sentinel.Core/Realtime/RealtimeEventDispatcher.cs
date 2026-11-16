@@ -99,7 +99,7 @@ public sealed class RealtimeEventDispatcher
         return RouteAsync(
             $"file:{result.Path}|{result.Sha256}",
             threat,
-            ct => QuarantineFileAsync(result.Path, reason, ct),
+            (_, ct) => QuarantineFileAsync(result.Path, reason, ct),
             () => AllowPath(result.Path),
             cancellationToken);
     }
@@ -132,19 +132,23 @@ public sealed class RealtimeEventDispatcher
         return RouteAsync(
             $"proc:{process.Pid}|{process.StartTimeUtc?.Ticks}|{process.ExecutablePath}",
             threat,
-            async ct =>
+            async (userConfirmed, ct) =>
             {
                 if (_engine is null)
                 {
                     return new Outcome(ThreatStatus.Skipped, "Завершение процессов недоступно на этой платформе.");
                 }
 
-                var tree = _engine.TerminateProcessTree(process.Pid);
+                // Порядок внутри движка: CriticalProcessGuard → FalsePositiveGuard → приостановка потоков → завершение дерева.
+                var tree = _engine.TerminateProcessTree(process.Pid, GuardContextFor(threat, entry.FileScan), userConfirmed);
                 var outcome = new Outcome(Map(tree.Status, ThreatStatus.Terminated), tree.Message);
                 if (tree.Status == RemediationStatus.Done && entry.FileScan is { } scan && IsFlagged(scan))
                 {
                     // Образ изолируется только после фактической остановки процесса — иначе файл заблокирован.
-                    var file = await QuarantineFileAsync(scan.Path, reason, ct).ConfigureAwait(false);
+                    var quarantineReason = tree.SuspendedThreadCount > 0
+                        ? $"{reason} [потоки приостановлены до завершения: {tree.SuspendedThreadCount}]"
+                        : reason;
+                    var file = await QuarantineFileAsync(scan.Path, quarantineReason, ct).ConfigureAwait(false);
                     outcome = outcome with { Message = $"{tree.Message} Образ: {file.Message}", QuarantineId = file.QuarantineId };
                 }
 
@@ -181,7 +185,7 @@ public sealed class RealtimeEventDispatcher
         return RouteAsync(
             ReportBuilder.PersistenceKey(entry) + "|" + entry.Command,
             threat,
-            async ct =>
+            async (_, ct) =>
             {
                 if (_engine is null)
                 {
@@ -229,7 +233,7 @@ public sealed class RealtimeEventDispatcher
         return RouteAsync(
             ReportBuilder.ExclusionKey(exclusion),
             threat,
-            _ =>
+            (_, _) =>
             {
                 if (_engine is null)
                 {
@@ -280,7 +284,7 @@ public sealed class RealtimeEventDispatcher
             }
             else
             {
-                updated = Apply(entry.Event, await NeutralizeSafeAsync(entry, cancellationToken).ConfigureAwait(false));
+                updated = Apply(entry.Event, await NeutralizeSafeAsync(entry, true, cancellationToken).ConfigureAwait(false));
             }
         }
         finally
@@ -305,7 +309,7 @@ public sealed class RealtimeEventDispatcher
     private async Task<ThreatEvent?> RouteAsync(
         string key,
         ThreatEvent threat,
-        Func<CancellationToken, Task<Outcome>> neutralize,
+        Func<bool, CancellationToken, Task<Outcome>> neutralize,
         Func<(bool Ok, string Message)> allow,
         CancellationToken cancellationToken)
     {
@@ -331,7 +335,7 @@ public sealed class RealtimeEventDispatcher
         {
             if (threat.Severity >= _options.AutoThreshold)
             {
-                result = Apply(entry.Event, await NeutralizeSafeAsync(entry, cancellationToken).ConfigureAwait(false));
+                result = Apply(entry.Event, await NeutralizeSafeAsync(entry, false, cancellationToken).ConfigureAwait(false));
             }
             else if (threat.Severity >= _options.AskThreshold)
             {
@@ -359,11 +363,11 @@ public sealed class RealtimeEventDispatcher
         return result;
     }
 
-    private static async Task<Outcome> NeutralizeSafeAsync(Entry entry, CancellationToken cancellationToken)
+    private static async Task<Outcome> NeutralizeSafeAsync(Entry entry, bool userConfirmed, CancellationToken cancellationToken)
     {
         try
         {
-            return await entry.Neutralize(cancellationToken).ConfigureAwait(false);
+            return await entry.Neutralize(userConfirmed, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -421,6 +425,22 @@ public sealed class RealtimeEventDispatcher
         }
     }
 
+    /// <summary>Контекст для FalsePositiveGuard движка: балл по критичности находки, хеш и доверенная подпись образа.</summary>
+    private static Behavioral.GuardContext GuardContextFor(ThreatEvent threat, FileScanResult? scan) => new()
+    {
+        Sha256 = scan?.Sha256,
+        Score = threat.Severity switch
+        {
+            Severity.Critical => 100,
+            Severity.High => 85,
+            Severity.Medium => 60,
+            Severity.Low => 30,
+            _ => 0,
+        },
+        HasValidTrustedSignature = scan?.Signature is { Status: Trust.SignatureStatus.Valid } signature
+            && Trust.TrustedPublishers.IsTrusted(signature.SignerSubject),
+    };
+
     private static bool IsFlagged(FileScanResult r) =>
         r.Verdict is Verdict.Malicious or Verdict.Suspicious && r.Detections.Count > 0;
 
@@ -441,7 +461,7 @@ public sealed class RealtimeEventDispatcher
     private sealed record Outcome(ThreatStatus Status, string Message, string? QuarantineId = null);
 
     private sealed class Entry(
-        string key, ThreatEvent threat, Func<CancellationToken, Task<Outcome>> neutralize, Func<(bool Ok, string Message)> allow)
+        string key, ThreatEvent threat, Func<bool, CancellationToken, Task<Outcome>> neutralize, Func<(bool Ok, string Message)> allow)
     {
         public string Key { get; } = key;
 
@@ -449,7 +469,7 @@ public sealed class RealtimeEventDispatcher
 
         public bool Busy { get; set; }
 
-        public Func<CancellationToken, Task<Outcome>> Neutralize { get; } = neutralize;
+        public Func<bool, CancellationToken, Task<Outcome>> Neutralize { get; } = neutralize;
 
         public Func<(bool Ok, string Message)> Allow { get; } = allow;
     }

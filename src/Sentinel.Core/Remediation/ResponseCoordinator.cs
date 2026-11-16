@@ -114,14 +114,20 @@ public sealed class ResponseCoordinator
                 continue;
             }
 
-            var tree = _engine.TerminateProcessTree(entry.Process.Pid);
+            // Действие запрошено пользователем (--remediate): спорный вердикт FalsePositiveGuard не блокирует, «защищено» — блокирует.
+            var tree = _engine.TerminateProcessTree(entry.Process.Pid, new Behavioral.GuardContext
+            {
+                Sha256 = entry.FileScan?.Sha256,
+                Score = entry.Findings.Max(f => f.Severity) >= Severity.Critical ? 100 : 85,
+            }, userConfirmed: true);
             _report.SetAction(key, tree.ToAction(), FindingActionStatus.Terminated);
 
             // Образ изолируется только когда процесс действительно остановлен (или в предпросмотре).
             if (tree.Status is RemediationStatus.Done or RemediationStatus.WouldDo && entry.FileScan is { } scan && ShouldQuarantine(scan)
                 && _handledFiles.Add(scan.Path))
             {
-                var reason = string.Join("; ", entry.Findings.Select(f => f.Id).Distinct());
+                var reason = string.Join("; ", entry.Findings.Select(f => f.Id).Distinct())
+                    + (tree.SuspendedThreadCount > 0 ? $" [потоки приостановлены до завершения: {tree.SuspendedThreadCount}]" : string.Empty);
                 var outcome = await _quarantine.QuarantineAsync(scan.Path, reason, _policy.DryRun, cancellationToken).ConfigureAwait(false);
                 _report.EnsureFileFinding("Образы процессов", scan);
                 _report.SetAction(ReportBuilder.FileKey(scan.Path), outcome);

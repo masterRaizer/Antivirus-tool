@@ -47,6 +47,15 @@ public sealed record ProcessTreeResult(int RootPid, RemediationStatus Status, st
 {
     public int TerminatedCount => Processes.Count(p => p.Status == RemediationStatus.Done);
 
+    /// <summary>Потоков приостановлено перед завершением (изоляция против сторожевых потоков).</summary>
+    public int SuspendedThreadCount { get; init; }
+
+    /// <summary>Процессы, потоки которых были приостановлены перед завершением.</summary>
+    public IReadOnlyList<int> SuspendedProcessIds { get; init; } = [];
+
+    /// <summary>Приостановленные, но не завершённые процессы, которые были возобновлены.</summary>
+    public IReadOnlyList<int> ResumedProcessIds { get; init; } = [];
+
     public RemediationAction ToAction() =>
         new(RemediationActionKind.TerminateProcess, $"PID {RootPid}", Status, Message);
 }
@@ -71,6 +80,12 @@ public sealed class RemediationOptions
     /// <summary>PID текущего процесса — Sentinel никогда не завершает сам себя.</summary>
     public int CurrentProcessId { get; init; } = Environment.ProcessId;
 
+    /// <summary>
+    /// Фабрика <see cref="Behavioral.FalsePositiveGuard"/> (создаётся на каждое действие, чтобы видеть актуальный
+    /// <c>allowed_exclusions.json</c>); <c>null</c> — проверка не выполняется.
+    /// </summary>
+    public Func<Behavioral.FalsePositiveGuard>? FalsePositiveGuard { get; init; }
+
     public static RemediationOptions CreateDefault(string dataDirectory, bool dryRun = false)
     {
         ArgumentException.ThrowIfNullOrEmpty(dataDirectory);
@@ -79,9 +94,22 @@ public sealed class RemediationOptions
         {
             RollbackManifestPath = Path.Combine(dataDirectory, RollbackManifestStore.DefaultFileName),
             DryRun = dryRun,
+            FalsePositiveGuard = () => new Behavioral.FalsePositiveGuard(LoadAllowed(dataDirectory), null, [dataDirectory]),
             DefaultUserinit = string.IsNullOrEmpty(windows)
                 ? @"C:\Windows\system32\userinit.exe,"
                 : Path.Combine(windows, "system32", "userinit.exe") + ",",
         };
+    }
+
+    private static Settings.AllowedExclusions LoadAllowed(string dataDirectory)
+    {
+        try
+        {
+            return Settings.AllowedExclusionStore.ForDataDirectory(dataDirectory).Load();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return Settings.AllowedExclusions.Empty; // повреждённый список не должен отключать нейтрализацию
+        }
     }
 }
