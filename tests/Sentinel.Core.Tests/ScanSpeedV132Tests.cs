@@ -47,3 +47,35 @@ public class ScanSpeedV132Tests
         Assert.Single(verifier.Calls);
     }
 }
+
+/// <summary>1.3.3: ImagePath удалённого временного драйвера Защитника не обрезается до «C:\ProgramData\Microsoft\Windows».</summary>
+public class DefenderMissingDriverV133Tests
+{
+    private const string KslImage = @"\??\C:\ProgramData\Microsoft\Windows Defender\Definition Updates\{0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0}\MpKslDrv.sys";
+
+    [Theory]
+    [InlineData(@"C:\ProgramData\Microsoft\Windows Defender\Definition Updates\{0F1E2D3C}\MpKslDrv.sys",
+        @"C:\ProgramData\Microsoft\Windows Defender\Definition Updates\{0F1E2D3C}\MpKslDrv.sys")]
+    [InlineData(@"C:\Program Files\Removed App\app.exe --tray", @"C:\Program Files\Removed App\app.exe")]
+    [InlineData(@"C:\Temp\x.exe -a", @"C:\Temp\x.exe")]
+    public void MissingFile_ResolvesToFirstExecutableWord(string command, string expected) =>
+        Assert.Equal(expected, CommandLineParser.ResolveExecutable(command, _ => false));
+
+    [Fact]
+    public void MissingDefenderKslDriver_IsNotUserWritableService()
+    {
+        var reg = new InMemoryRegistryProvider();
+        var key = new RegistryKeyPath(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\MpKslbffc8b48");
+        reg.Set(key, "ImagePath", KslImage).Set(key, "Start", "3", RegistryValueKind.Dword);
+
+        var options = new PersistenceAuditorOptions
+        {
+            FileExists = _ => false,
+            TrustedBinaryDirectories = [@"C:\ProgramData\Microsoft\Windows Defender\Definition Updates"],
+        };
+
+        var report = new PersistenceAuditor(options, reg).Audit();
+
+        Assert.DoesNotContain(report.Entries, e => e.Findings.Any(f => f.Id == "PERS-SERVICE-USERWRITABLE"));
+    }
+}

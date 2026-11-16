@@ -158,7 +158,32 @@ public static class CommandLineParser
             }
         }
 
-        return Existing(text) ?? ExtractExecutable(text);
+        return Existing(text) ?? FirstExecutablePrefix(text) ?? ExtractExecutable(text);
+    }
+
+    private static readonly string[] ExecutableExtensions = [".exe", ".sys", ".dll", ".com", ".scr", ".bat", ".cmd", ".ps1"];
+
+    /// <summary>
+    /// Файла нет (временный драйвер Защитника <c>MpKslDrv.sys</c> в удалённой папке <c>Definition Updates\{GUID}</c>, удалённая
+    /// программа): путь без кавычек берётся до первого слова с расширением исполняемого файла, а не до первого пробела —
+    /// иначе «C:\ProgramData\Microsoft\Windows Defender\…» превращался в «C:\ProgramData\Microsoft\Windows».
+    /// </summary>
+    private static string? FirstExecutablePrefix(string text)
+    {
+        for (var space = text.IndexOf(' '); ; space = text.IndexOf(' ', space + 1))
+        {
+            var candidate = (space < 0 ? text : text[..space]).TrimEnd();
+            if (candidate.IndexOfAny(['\\', '/']) >= 0
+                && ExecutableExtensions.Any(e => candidate.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
+            {
+                return candidate;
+            }
+
+            if (space < 0)
+            {
+                return null;
+            }
+        }
     }
 
     /// <summary>Аргументы без первого (исполняемого файла).</summary>

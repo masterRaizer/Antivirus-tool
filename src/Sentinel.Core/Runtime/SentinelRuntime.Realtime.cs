@@ -182,6 +182,27 @@ public sealed partial class SentinelRuntime
     /// </summary>
     private async Task<ThreatEvent?> DispatchAuditedProcessAsync(ProcessAuditEntry entry, string source, CancellationToken cancellationToken)
     {
+        var (guard, signed) = EvaluateProcessGuard(entry);
+        return guard.Decision switch
+        {
+            Behavioral.GuardDecision.Protected => null,
+            Behavioral.GuardDecision.LogOnly when signed => null, // слабые признаки у доверенного образа — не событие
+            Behavioral.GuardDecision.AskUser =>
+                await _dispatcher.DispatchProcessForDecisionAsync(entry, guard.Reason, source, cancellationToken).ConfigureAwait(false),
+            _ => await _dispatcher.DispatchProcessAsync(entry, source, cancellationToken).ConfigureAwait(false),
+        };
+    }
+
+    /// <summary>Находка не показывается ни событием, ни строкой отчёта: защищённый образ или доверенный образ со слабыми признаками.</summary>
+    private bool IsSuppressedProcess(ProcessAuditEntry entry)
+    {
+        var (guard, signed) = EvaluateProcessGuard(entry);
+        return guard.Decision is Behavioral.GuardDecision.Protected
+            || (guard.Decision is Behavioral.GuardDecision.LogOnly && signed);
+    }
+
+    private (Behavioral.GuardVerdict Guard, bool Signed) EvaluateProcessGuard(ProcessAuditEntry entry)
+    {
         var scan = entry.FileScan;
         var signed = scan?.Signature is { Status: Trust.SignatureStatus.Valid } signature && Trust.TrustedPublishers.IsTrusted(signature.SignerSubject);
         var score = Math.Max(entry.Findings.Max(f => f.Severity switch
@@ -202,14 +223,7 @@ public sealed partial class SentinelRuntime
             ShadowMode = BehaviorConfig().BehavioralShadowMode,
         });
 
-        return guard.Decision switch
-        {
-            Behavioral.GuardDecision.Protected => null,
-            Behavioral.GuardDecision.LogOnly when signed => null, // слабые признаки у доверенного образа — не событие
-            Behavioral.GuardDecision.AskUser =>
-                await _dispatcher.DispatchProcessForDecisionAsync(entry, guard.Reason, source, cancellationToken).ConfigureAwait(false),
-            _ => await _dispatcher.DispatchProcessAsync(entry, source, cancellationToken).ConfigureAwait(false),
-        };
+        return (guard, signed);
     }
 
     private void StorePersistence(Audit.Persistence.PersistenceAuditReport report)

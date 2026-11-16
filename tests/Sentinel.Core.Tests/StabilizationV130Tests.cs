@@ -755,7 +755,7 @@ public class UnquotedPathResolutionTests
     [InlineData(MpCmdRun, MpCmdRun)]
     [InlineData("\"" + MpCmdRun + "\" -IdleTask", MpCmdRun)]
     [InlineData(@"C:\Program Files\App\tool -x", @"C:\Program Files\App\tool.exe")]                 // без расширения — как CreateProcess
-    [InlineData(@"C:\Missing Dir\gone.exe -y", @"C:\Missing")]                                     // ничего не существует — прежний первый токен
+    [InlineData(@"C:\Missing Dir\gone.exe -y", @"C:\Missing Dir\gone.exe")]                       // ничего не существует — до слова с .exe (1.3.3)
     public void ResolveExecutable_FollowsCreateProcessRules(string command, string expected)
     {
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MpCmdRun, @"C:\Program Files\App\tool.exe" };

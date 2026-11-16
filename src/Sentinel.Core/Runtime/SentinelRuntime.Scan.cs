@@ -174,7 +174,7 @@ public sealed partial class SentinelRuntime
             ScanMode.Removable => "Проверка съёмных дисков",
             _ => $"Выборочная проверка: {request.Path}",
         };
-        var run = new ScanRun(new ReportBuilder(title, _o.TimeProvider.GetUtcNow().UtcDateTime));
+        var run = new ScanRun(new ReportBuilder(title, _o.TimeProvider.GetUtcNow().UtcDateTime)) { LastLogged = _o.TimeProvider.GetTimestamp() };
         var final = ScanState.Completed;
         string? message = null;
         try
@@ -234,6 +234,11 @@ public sealed partial class SentinelRuntime
             ReportId = reportId,
             Message = message ?? $"Проверено объектов: {run.Scanned}; находок: {run.Threats}.",
         }, force: true);
+        var active = Math.Max(run.Active.Elapsed.TotalSeconds, 0.001);
+        Info?.Invoke($"Проверка {(final == ScanState.Completed ? "завершена" : final == ScanState.Cancelled ? "остановлена" : "прервана")} ({title}): "
+            + $"объектов {run.Scanned:N0} за {run.Wall.Elapsed.TotalSeconds:N0} с ({run.Scanned / active:N1} об/с), "
+            + $"прочитано {run.BytesScanned / (1024 * 1024):N0} МБ, по кэшу {run.CachedSkipped:N0}, находок {run.Threats}, ошибок {run.Errors}"
+            + (reportId is null ? "." : $", отчёт {reportId}."));
         PublishStatus();
     }
 
@@ -274,16 +279,25 @@ public sealed partial class SentinelRuntime
             }).ConfigureAwait(false);
 
         var entries = results.ToList();
+        var reported = 0;
         foreach (var entry in entries.Where(e => e.HasFindings))
         {
             Checkpoint(run, token);
+            // Служебные команды доверенных образов (powershell/cmd с подписью Microsoft) со слабыми признаками — как и в
+            // реальном времени: только журнал, в отчёт проверки находкой не попадают.
+            if (IsSuppressedProcess(entry))
+            {
+                continue;
+            }
+
+            reported++;
             run.Report.AddProcessFinding(entry, "Процессы");
             Record(run, ReportBuilder.ProcessKey(entry.Process.Pid),
                 await DispatchAuditedProcessAsync(entry, "scan", token).ConfigureAwait(false));
         }
 
         Interlocked.Add(ref _processesChecked, snapshot.Count);
-        run.Report.AddArea("Процессы", snapshot.Count, entries.Count(e => e.HasFindings));
+        run.Report.AddArea("Процессы", snapshot.Count, reported);
     }
 
     private async Task ScanPersistenceAsync(ScanRun run, CancellationToken token)
