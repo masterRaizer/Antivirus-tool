@@ -246,7 +246,23 @@ public sealed class ProcessAuditor
         }
     }
 
+    /// <summary>
+    /// Один и тот же образ (svchost.exe ×80, chrome.exe ×30) за прогон анализируется один раз: без этого проверка процессов
+    /// перечитывала и хешировала одни и те же файлы сотни раз. Приоритетная (под исключением Defender) проверка не кэшируется.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<FileScanResult?>> _scanMemo = new(StringComparer.OrdinalIgnoreCase);
+
     private FileScanResult? AnalyzeFileSafely(string path, PriorityScanContext? priority)
+    {
+        if (priority is null)
+        {
+            return _scanMemo.GetOrAdd(path, p => new Lazy<FileScanResult?>(() => AnalyzeFileCore(p, null))).Value;
+        }
+
+        return AnalyzeFileCore(path, priority);
+    }
+
+    private FileScanResult? AnalyzeFileCore(string path, PriorityScanContext? priority)
     {
         try
         {

@@ -249,21 +249,37 @@ public sealed partial class SentinelRuntime
         var snapshot = _o.Processes.GetProcesses();
         run.Processes = snapshot;
         run.Total += snapshot.Count;
+        // Анализ образов идёт параллельно (одинаковые exe — один раз, см. ProcessAuditor), реакция на находки — по порядку.
         var auditor = new ProcessAuditor(new ProcessAuditorOptions(), _o.Analyzer);
-        var entries = new List<ProcessAuditEntry>(snapshot.Count);
-        foreach (var process in snapshot)
+        var results = new ProcessAuditEntry[snapshot.Count];
+        var gate = new object();
+        await Parallel.ForEachAsync(Enumerable.Range(0, snapshot.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = Scanning.Pool.ScanPoolBase.DefaultWorkerCount(), CancellationToken = token },
+            (i, ct) =>
+            {
+                lock (gate)
+                {
+                    Checkpoint(run, ct);
+                }
+
+                var process = snapshot[i];
+                results[i] = auditor.Audit([process]).Entries[0];
+                lock (gate)
+                {
+                    run.Scanned++;
+                }
+
+                Update(run, p => p with { CurrentItem = $"PID {process.Pid}: {process.ExecutablePath ?? process.Name}" });
+                return ValueTask.CompletedTask;
+            }).ConfigureAwait(false);
+
+        var entries = results.ToList();
+        foreach (var entry in entries.Where(e => e.HasFindings))
         {
             Checkpoint(run, token);
-            Update(run, p => p with { CurrentItem = $"PID {process.Pid}: {process.ExecutablePath ?? process.Name}" });
-            var entry = auditor.Audit([process]).Entries[0];
-            entries.Add(entry);
-            run.Scanned++;
-            if (entry.HasFindings)
-            {
-                run.Report.AddProcessFinding(entry, "Процессы");
-                Record(run, ReportBuilder.ProcessKey(process.Pid),
-                    await DispatchAuditedProcessAsync(entry, "scan", token).ConfigureAwait(false));
-            }
+            run.Report.AddProcessFinding(entry, "Процессы");
+            Record(run, ReportBuilder.ProcessKey(entry.Process.Pid),
+                await DispatchAuditedProcessAsync(entry, "scan", token).ConfigureAwait(false));
         }
 
         Interlocked.Add(ref _processesChecked, snapshot.Count);
@@ -454,6 +470,7 @@ public sealed partial class SentinelRuntime
                 Checkpoint(run, token);
                 files++;
                 run.Scanned++;
+                run.AddBytes(r.Result?.Size ?? 0, run.Active.Elapsed.TotalSeconds);
                 Interlocked.Increment(ref _filesChecked);
                 Update(run, p => p with { Stage = "Файлы", CurrentItem = r.Path }, force: first);
                 first = false;
@@ -595,6 +612,8 @@ public sealed partial class SentinelRuntime
     private void Update(ScanRun run, Func<ScanProgress, ScanProgress> change, bool force = false)
     {
         ScanProgress snapshot;
+        string? progressLine = null;
+        var publish = true;
         lock (_sync)
         {
             var active = run.Active.Elapsed.TotalSeconds;
@@ -613,6 +632,8 @@ public sealed partial class SentinelRuntime
                 Threats = run.Threats,
                 ElapsedSeconds = run.Wall.Elapsed.TotalSeconds,
                 ItemsPerSecond = active > 0.2 ? run.Scanned / active : 0,
+                BytesPerSecond = run.BytesPerSecond(active),
+                BytesScanned = run.BytesScanned,
                 Percent = next.State == ScanState.Completed ? 100 : PhasePercent(run, total, enumerationDone || counted),
                 TotalCounted = counted || enumerationDone,
                 RemainingSeconds = (counted || enumerationDone) && run.FilesPhase && active > 1 && run.Scanned > 0
@@ -626,21 +647,82 @@ public sealed partial class SentinelRuntime
                 EnumerationComplete = enumerationDone,
             };
             snapshot = _scan;
-            if (!force && _o.TimeProvider.GetElapsedTime(_lastPublish) < TimeSpan.FromMilliseconds(100))
+            if (snapshot.State is ScanState.Running && _o.TimeProvider.GetElapsedTime(run.LastLogged) >= TimeSpan.FromSeconds(30))
             {
-                return;
+                run.LastLogged = _o.TimeProvider.GetTimestamp();
+                progressLine = $"Проверка ({snapshot.Stage}): {snapshot.Scanned:N0} из {snapshot.Total:N0}, {snapshot.Percent:0}%, "
+                    + $"{snapshot.ItemsPerSecond:N1} об/с, {snapshot.BytesPerSecond / (1024 * 1024):N1} МБ/с, прочитано {snapshot.BytesScanned / (1024 * 1024):N0} МБ, "
+                    + $"пул {snapshot.PoolMode} {snapshot.ActiveWorkers}/{snapshot.Workers}, ошибок {snapshot.Errors}; сейчас: {snapshot.CurrentItem}";
             }
 
-            _lastPublish = _o.TimeProvider.GetTimestamp();
+            if (!force && _o.TimeProvider.GetElapsedTime(_lastPublish) < TimeSpan.FromMilliseconds(100))
+            {
+                publish = false;
+            }
+            else
+            {
+                _lastPublish = _o.TimeProvider.GetTimestamp();
+            }
         }
 
-        ScanProgressChanged?.Invoke(snapshot);
+        if (progressLine is not null)
+        {
+            Info?.Invoke(progressLine); // раз в 30 с — в журнал службы: что проверяется и с какой скоростью
+        }
+
+        if (publish)
+        {
+            ScanProgressChanged?.Invoke(snapshot);
+        }
     }
 
     /// <summary>Состояние одного прогона (изменяется только рабочим потоком проверки).</summary>
     private sealed class ScanRun(ReportBuilder report)
     {
+        private readonly Queue<(double At, long Bytes)> _window = new();
+        private long _bytes;
+
         public ReportBuilder Report { get; } = report;
+
+        /// <summary>Момент последней строки прогресса в журнале.</summary>
+        public long LastLogged { get; set; }
+
+        public long BytesScanned => Interlocked.Read(ref _bytes);
+
+        /// <summary>Учёт прочитанных байт для скорости скользящим окном ~10 с (вызывается потоком выдачи результатов).</summary>
+        public void AddBytes(long bytes, double activeSeconds)
+        {
+            var total = Interlocked.Add(ref _bytes, Math.Max(0, bytes));
+            lock (_window)
+            {
+                _window.Enqueue((activeSeconds, total));
+                while (_window.Count > 2 && activeSeconds - _window.Peek().At > 10)
+                {
+                    _window.Dequeue();
+                }
+            }
+        }
+
+        public double BytesPerSecond(double activeSeconds)
+        {
+            lock (_window)
+            {
+                if (_window.Count == 0)
+                {
+                    return 0;
+                }
+
+                var (at, bytes) = _window.Peek();
+                var span = activeSeconds - at;
+                if (span < 0.5)
+                {
+                    return activeSeconds > 0.5 ? BytesScanned / activeSeconds : 0;
+                }
+
+                // Если файлы перестали поступать (этап без файлов), окно «стареет» и скорость падает к нулю.
+                return activeSeconds - at > 30 ? 0 : (BytesScanned - bytes) / span;
+            }
+        }
 
         public Stopwatch Wall { get; } = Stopwatch.StartNew();
 

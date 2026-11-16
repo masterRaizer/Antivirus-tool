@@ -343,7 +343,9 @@ public sealed class ScanViewModel : SectionViewModel
         ? $"{Progress.Scanned:N0} из {(Progress.EnumerationComplete || Progress.TotalCounted || !Progress.IsActive ? string.Empty : "≈")}{Progress.Total:N0}"
         : $"{Progress.Scanned:N0}";
 
-    public string SpeedText => $"{Progress.ItemsPerSecond:N0} объектов/сек";
+    public string SpeedText => Progress.BytesPerSecond > 0
+        ? $"{Progress.ItemsPerSecond:N1} объектов/сек · {Progress.BytesPerSecond / (1024 * 1024):N1} МБ/с"
+        : $"{Progress.ItemsPerSecond:N1} объектов/сек";
 
     /// <summary>Пул проверки: режим (процессы или потоки), занятые рабочие и размер пула.</summary>
     public string WorkersText => Progress.Workers == 0

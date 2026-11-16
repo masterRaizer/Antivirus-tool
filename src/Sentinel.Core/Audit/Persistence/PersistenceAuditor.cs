@@ -30,6 +30,12 @@ public sealed class PersistenceAuditor
     private readonly IWmiSubscriptionProvider? _wmi;
     private readonly FileAnalyzer? _analyzer;
 
+    /// <summary>
+    /// Результат анализа цели за прогон: сотни служб указывают на svchost.exe, задачи — на rundll32/powershell, поэтому
+    /// каждый файл хешируется и проверяется один раз.
+    /// </summary>
+    private readonly Dictionary<string, FileScanResult> _scanMemo = new(StringComparer.OrdinalIgnoreCase);
+
     public PersistenceAuditor(
         PersistenceAuditorOptions? options = null,
         IRegistryProvider? registry = null,
@@ -659,7 +665,7 @@ public sealed class PersistenceAuditor
         {
             try
             {
-                scan = _analyzer.Analyze(full, null, new ScoreContext(PersistenceBound: true));
+                scan = AnalyzeCached(full);
                 signature = scan.Signature;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -669,6 +675,17 @@ public sealed class PersistenceAuditor
         }
 
         return TrustedPublishers.IsTrusted(signature);
+    }
+
+    private FileScanResult AnalyzeCached(string full)
+    {
+        if (!_scanMemo.TryGetValue(full, out var scan))
+        {
+            scan = _analyzer!.Analyze(full, null, new ScoreContext(PersistenceBound: true));
+            _scanMemo[full] = scan;
+        }
+
+        return scan;
     }
 
     private FileScanResult? AnalyzeTargetFile(string? command, List<AuditFinding> findings, string context) =>
@@ -702,7 +719,7 @@ public sealed class PersistenceAuditor
         FileScanResult scan;
         try
         {
-            scan = _analyzer.Analyze(full, null, new ScoreContext(PersistenceBound: true));
+            scan = AnalyzeCached(full);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {

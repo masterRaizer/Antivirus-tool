@@ -58,6 +58,12 @@ public sealed record ScanProgress
 
     public int Threats { get; init; }
     public double ItemsPerSecond { get; init; }
+
+    /// <summary>Скорость чтения файлов (байт/с) за последние ~10 с проверки; 0 — этап без файлов.</summary>
+    public double BytesPerSecond { get; init; }
+
+    /// <summary>Прочитано байт файлов с начала проверки.</summary>
+    public long BytesScanned { get; init; }
     public double Percent { get; init; }
     public double ElapsedSeconds { get; init; }
 
