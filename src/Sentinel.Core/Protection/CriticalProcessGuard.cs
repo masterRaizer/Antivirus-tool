@@ -17,6 +17,13 @@ public static class CriticalProcessGuard
         "explorer.exe", "winlogon.exe", "ntoskrnl.exe", "winload.efi", "system",
     };
 
+    /// <summary>
+    /// Имя образа совпадает с критическим системным процессом (без учёта каталога). Вместе с отрицательным
+    /// <see cref="IsProtectedProcess"/> означает маскировку: системное имя вне системного каталога.
+    /// </summary>
+    public static bool IsCriticalImageName(string? processNameOrPath) =>
+        FileNameOf(processNameOrPath) is { } name && CriticalImages.Contains(name);
+
     /// <summary>Нельзя ли применять деструктивное действие к процессу.</summary>
     public static bool IsProtectedProcess(int pid, string? processName, string? executablePath, ISignatureVerifier? verifier = null)
     {

@@ -32,6 +32,22 @@ internal sealed partial class PeriodicAuditWorker(SentinelRuntime runtime, ILogg
     private static partial void LogStarted(ILogger logger);
 }
 
+/// <summary>
+/// Мониторинг старта процессов в реальном времени (WMI <c>Win32_ProcessStartTrace</c>, резервно — опрос раз в секунду):
+/// командная строка и образ нового процесса проверяются сразу, а не на следующем тике периодического аудита.
+/// </summary>
+internal sealed partial class ProcessStartMonitorWorker(SentinelRuntime runtime, ILogger<ProcessStartMonitorWorker> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        LogStarted(logger);
+        await runtime.RunProcessStartMonitorAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Мониторинг старта процессов запущен.")]
+    private static partial void LogStarted(ILogger logger);
+}
+
 /// <summary>Фоновое автообновление баз угроз каждые 6 часов (если не отключено в «Настройках и базах»).</summary>
 internal sealed class DatabaseUpdateWorker(SentinelRuntime runtime) : BackgroundService
 {

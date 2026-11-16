@@ -68,7 +68,7 @@ public sealed class WindowsProcessProvider : IProcessProvider
         return result;
     }
 
-    private static Dictionary<int, (int ParentPid, string Name)> EnumerateBasics()
+    internal static Dictionary<int, (int ParentPid, string Name)> EnumerateBasics()
     {
         var map = new Dictionary<int, (int, string)>();
         var snapshot = NativeMethods.CreateToolhelp32Snapshot(NativeMethods.TH32CS_SNAPPROCESS, 0);
@@ -129,7 +129,7 @@ public sealed class WindowsProcessProvider : IProcessProvider
 
     private static long ToTicks(NativeMethods.FILETIME ft) => ((long)ft.dwHighDateTime << 32) | (uint)ft.dwLowDateTime;
 
-    private static DateTime? TryGetStartTime(int pid)
+    internal static DateTime? TryGetStartTime(int pid)
     {
         var handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
         if (handle == IntPtr.Zero)
@@ -153,7 +153,7 @@ public sealed class WindowsProcessProvider : IProcessProvider
         }
     }
 
-    private static string? TryGetImagePath(int pid)
+    internal static string? TryGetImagePath(int pid)
     {
         var handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
         if (handle == IntPtr.Zero)
@@ -181,7 +181,7 @@ public sealed class WindowsProcessProvider : IProcessProvider
     /// разрядности, что и аудитор (на x64 — для 64-битных целей). Для недоступных целей (отказ
     /// доступа, иная разрядность) честно возвращает <c>null</c>, а не выдуманные данные.
     /// </summary>
-    private static string? TryGetCommandLine(int pid)
+    internal static string? TryGetCommandLine(int pid)
     {
         if (!Environment.Is64BitProcess)
         {

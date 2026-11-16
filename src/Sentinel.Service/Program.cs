@@ -34,6 +34,7 @@ builder.Services.AddHostedService<RuntimeLogWorker>();
 builder.Services.AddHostedService<TelemetryWorker>();
 builder.Services.AddHostedService<FileMonitorWorker>();
 builder.Services.AddHostedService<PeriodicAuditWorker>();
+builder.Services.AddHostedService<ProcessStartMonitorWorker>();
 builder.Services.AddHostedService<IpcServerWorker>();
 builder.Services.AddHostedService<DatabaseUpdateWorker>();
 

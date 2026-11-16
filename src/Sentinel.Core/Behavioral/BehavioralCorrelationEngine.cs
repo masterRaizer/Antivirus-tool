@@ -11,6 +11,9 @@ public enum CorrelationChain
 
     /// <summary>BH-03: новая запись автозапуска на неподписанный бинарник в профиле/временной папке.</summary>
     PersistenceUnsignedProfile,
+
+    /// <summary>BH-04: неподписанный файл, только что сброшенный в профиль, сразу запущен как процесс.</summary>
+    DropAndExecute,
 }
 
 public sealed record CorrelationFinding(CorrelationChain Chain, int Score, string Summary, IReadOnlyList<string> Artifacts);
@@ -86,6 +89,17 @@ public sealed class BehavioralCorrelationEngine
         return Ingest(new Event(EventKind.AutorunEntry, Normalize(target), area, targetSigned, _time.GetUtcNow().Ticks));
     }
 
+    /// <summary>
+    /// Стартовал процесс (событие <c>ProcessStartMonitor</c>): командная строка проверяется на обфускацию и бесфайловый
+    /// запуск (BH-02), запуск неподписанной цели свежего автозапуска из профиля — BH-03, запуск только что сброшенного
+    /// неподписанного файла из профиля — BH-04.
+    /// </summary>
+    public CorrelationFinding? ReportProcessStart(string imagePath, string? commandLine, bool isSigned)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(imagePath);
+        return Ingest(new Event(EventKind.ProcessStart, Normalize(imagePath), commandLine, isSigned, _time.GetUtcNow().Ticks));
+    }
+
     private CorrelationFinding? Ingest(Event e)
     {
         lock (_sync)
@@ -137,9 +151,54 @@ public sealed class BehavioralCorrelationEngine
                 }
 
                 break;
+
+            case EventKind.ProcessStart:
+                return CorrelateProcessStart(e);
         }
 
         return null;
+    }
+
+    private CorrelationFinding? CorrelateProcessStart(Event e)
+    {
+        // Имя образа добавляется к строке: WMI и PEB иногда отдают аргументы без пути к интерпретатору.
+        var imageName = Path.GetFileName(e.Path.Replace('\\', '/'));
+        if (IsWeaponized($"{imageName} {e.Detail}", e.Path))
+        {
+            return new CorrelationFinding(CorrelationChain.WeaponizedArtifact, 55,
+                $"Запуск процесса с обфусцированной или бесфайловой командной строкой (BH-02): {imageName}.", [e.Path]);
+        }
+
+        if (e.Signed || !IsInProfile(e.Path) || !HasStagedExtension(e.Path))
+        {
+            return null;
+        }
+
+        var dropped = false;
+        for (var node = _events.Last?.Previous; node is not null; node = node.Previous)
+        {
+            var prior = node.Value;
+            if (!string.Equals(prior.Path, e.Path, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (prior.Kind == EventKind.AutorunEntry && !prior.Signed)
+            {
+                return new CorrelationFinding(CorrelationChain.PersistenceUnsignedProfile, 65,
+                    $"Сработал свежий автозапуск ({prior.Detail}) неподписанного файла из профиля: {e.Path} (BH-03).", [e.Path]);
+            }
+
+            if (prior.Kind == EventKind.FileWritten && e.Ticks - prior.Ticks <= _dropperLink.Ticks)
+            {
+                dropped = true;
+            }
+        }
+
+        return dropped
+            ? new CorrelationFinding(CorrelationChain.DropAndExecute, 60,
+                $"Неподписанный файл сброшен в профиль и сразу запущен (BH-04): {e.Path}.", [e.Path])
+            : null;
     }
 
     private string? FindRecentStagedDropper(long nowTicks)
@@ -197,6 +256,7 @@ public sealed class BehavioralCorrelationEngine
         FileWritten,
         ShortcutOrScript,
         AutorunEntry,
+        ProcessStart,
     }
 
     private readonly record struct Event(EventKind Kind, string Path, string? Detail, bool Signed, long Ticks);

@@ -36,6 +36,9 @@ public sealed class SentinelRuntimeOptions
     public RemediationEngine? Engine { get; init; }
 
     public IProcessProvider? Processes { get; init; }
+
+    /// <summary>Фабрика источника событий старта процессов (WMI/опрос); <c>null</c> — мониторинг старта недоступен.</summary>
+    public Func<Monitoring.IProcessCreationEventSource>? ProcessStartSource { get; init; }
     public Func<PersistenceAuditReport>? PersistenceAudit { get; init; }
     public Func<ConfigAuditReport>? ConfigAudit { get; init; }
     public required ITelemetryProvider Telemetry { get; init; }
@@ -85,12 +88,14 @@ public sealed class SentinelRuntimeOptions
 
         RemediationEngine? engine = null;
         IProcessProvider? processes = null;
+        Func<Monitoring.IProcessCreationEventSource>? processStarts = null;
         Func<PersistenceAuditReport>? persistence = null;
         Func<ConfigAuditReport>? config = null;
         if (OperatingSystem.IsWindows())
         {
             engine = RemediationEngine.CreateDefault(whitelist, RemediationOptions.CreateDefault(data));
             processes = ProcessProviderFactory.CreateDefault();
+            processStarts = Monitoring.ProcessCreationEventSourceFactory.CreateDefault;
             // Провайдеры создаются здесь, под проверкой платформы; аудиторы — заново на каждый прогон.
             var registry = RegistryProviderFactory.CreateDefault();
             var tasks = new WindowsTaskSchedulerProvider();
@@ -109,6 +114,7 @@ public sealed class SentinelRuntimeOptions
             Quarantine = quarantine,
             Engine = engine,
             Processes = processes,
+            ProcessStartSource = processStarts,
             PersistenceAudit = persistence,
             ConfigAudit = config,
             Telemetry = TelemetryProviderFactory.CreateDefault(),
