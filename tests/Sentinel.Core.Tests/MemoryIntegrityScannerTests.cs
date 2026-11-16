@@ -22,6 +22,11 @@ internal sealed class FakeMemoryReader : IMemoryReader
 
     public int MaxBufferRequested { get; private set; }
 
+    /// <summary>Отображённые файлы образов по базовому адресу региона (путь в форме ядра).</summary>
+    public Dictionary<nint, string> MappedFiles { get; } = [];
+
+    public string? GetMappedFileName(int processId, nint address) => MappedFiles.GetValueOrDefault(address);
+
     /// <summary>Сколько байт отдавать за вызов при частичном чтении (<c>ERROR_PARTIAL_COPY</c>); 0 — полностью.</summary>
     public int PartialReadLimit { get; set; }
 
@@ -273,6 +278,58 @@ public class MemoryIntegrityScannerTests
         Assert.Equal(Severity.Low, anomaly.Severity);
         Assert.Equal(10, result.Score.Value);
         Assert.Null(ThreatScoringEngine.LevelFor(result.Score.Value));
+    }
+
+    [Theory]
+    [InlineData(@"\Device\HarddiskVolume3\Windows\Microsoft.NET\Framework64\v4.0.30319\clr.dll")]
+    [InlineData(@"\Device\HarddiskVolume3\Windows\Microsoft.NET\Framework\v4.0.30319\clr.dll")]
+    [InlineData(@"\Device\HarddiskVolume3\Program Files\dotnet\shared\Microsoft.NETCore.App\8.0.11\coreclr.dll")]
+    public void ClrWriteBarrierRwx_InSystemRuntime_IsNotAFinding(string module)
+    {
+        var reader = new FakeMemoryReader().Add(Pid, unchecked((nint)0x7FFB_0018_E000L), MemoryPayloads.JitCode(4096), MEM_IMAGE, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY);
+        reader.MappedFiles[unchecked((nint)0x7FFB_0018_E000L)] = module;
+
+        var result = Scanner(reader).Scan(Pid, "powershell.exe", @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+
+        Assert.Empty(result.Anomalies);
+        Assert.Equal(1, result.SuppressedRuntimePatches);
+        Assert.Equal(0, result.Score.Value);
+        Assert.False(result.IsThreat);
+    }
+
+    [Theory]
+    [InlineData(@"\Device\HarddiskVolume3\Users\u\AppData\Local\Temp\app\coreclr.dll")] // самодостаточное приложение — не системный рантайм
+    [InlineData(@"\Device\HarddiskVolume3\Windows\Microsoft.NET\Framework64\v4.0.30319\mscorlib.ni.dll")]
+    [InlineData(@"\Device\HarddiskVolume3\Program Files\Vendor\plugin.dll")]
+    public void RwxImagePatch_OutsideSystemClr_IsReportedAsLowSignalOnly(string module)
+    {
+        var reader = new FakeMemoryReader().Add(Pid, unchecked((nint)0x1_8000_0000L), MemoryPayloads.JitCode(4096), MEM_IMAGE, PAGE_EXECUTE_READWRITE);
+        reader.MappedFiles[unchecked((nint)0x1_8000_0000L)] = module;
+
+        var result = Scanner(reader).Scan(Pid, "app.exe", null);
+
+        var anomaly = Assert.Single(result.Anomalies);
+        Assert.Equal("MEM-RWX-IMAGE-PATCH", anomaly.Id);
+        Assert.Contains(Path.GetFileName(module.Replace('\\', '/')), anomaly.Detail, StringComparison.Ordinal);
+        Assert.True(result.HasAnomalies);
+        Assert.False(result.IsThreat); // Low, +10 — не угроза и не код выхода 1 в CLI
+    }
+
+    [Fact]
+    public void ClrRwx_IsReported_WhenRealPayloadIsAlsoPresent()
+    {
+        const string clr = @"\Device\HarddiskVolume3\Windows\Microsoft.NET\Framework64\v4.0.30319\clr.dll";
+        var reader = new FakeMemoryReader()
+            .Add(Pid, unchecked((nint)0x7FFB_0018_E000L), MemoryPayloads.JitCode(4096), MEM_IMAGE, PAGE_EXECUTE_READWRITE)
+            .Add(Pid, unchecked((nint)0x0291_D108_0000L), MemoryPayloads.With(MemoryPayloads.JitCode(64 * 1024), 0x200, Eicar.CreateTestFileBytes()), MEM_PRIVATE, PAGE_EXECUTE_READWRITE);
+        reader.MappedFiles[unchecked((nint)0x7FFB_0018_E000L)] = clr;
+
+        var result = Scanner(reader).Scan(Pid, "powershell.exe", null);
+
+        Assert.Contains(result.Anomalies, a => a.Id == "MEM-YARA-MATCH");
+        Assert.Contains(result.Anomalies, a => a.Id == "MEM-RWX-IMAGE-PATCH");
+        Assert.Equal(0, result.SuppressedRuntimePatches);
+        Assert.True(result.IsThreat);
     }
 
     [Theory]

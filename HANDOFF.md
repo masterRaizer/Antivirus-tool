@@ -57,10 +57,22 @@
 - CLI: `sentinel audit-memory [PID] [--json]` — ручной аудит памяти (только чтение).
 - `scripts/test-memory-scanner.ps1` — синтетический стенд для ноутбука (EICAR и заголовок MZ/PE без кода в RWX-памяти собственного PowerShell).
 
+### 8/2 — живая проверка (Windows 11 10.0.26100 x64, администратор, коммит `14cf194`) и исправления
+- Пройдено: синтетический процесс — `MEM-REFLECTIVE-PE` (PE x64) и `MEM-YARA-MATCH` (EICAR) точно по адресам RWX-региона, код выхода 1;
+  `System` (4), `lsass.exe`, `csrss.exe` пропущены `CriticalProcessGuard` до `OpenProcess`; полный аудит 212 процессов за 4,51 с —
+  0 ложных `MEM-REFLECTIVE-PE`/`MEM-YARA-MATCH` (в т.ч. 34 процесса Chrome и .NET 8).
+- Найдено и исправлено: 9 ложных `MEM-RWX-IMAGE-PATCH` на странице write barrier `clr.dll` (.NET Framework 4.8.1) → RWX-страницы
+  `clr.dll`/`coreclr.dll` из `\Windows\Microsoft.NET\` и `\Program Files\dotnet\` (путь — `K32GetMappedFileNameW`, новый метод
+  `IMemoryReader.GetMappedFileName`) не становятся находкой, если в процессе нет PE/сигнатуры в памяти (счётчик `SuppressedRuntimePatches`);
+  `audit-memory` возвращает 1 только при угрозе (`MemoryScanResult.IsThreat`: PE/сигнатура или Medium+), одиночный патч образа (Low) — 0.
+- Исправлен `scripts/test-memory-scanner.ps1`: `($size / 1KB)`, UTF-8 с BOM (Windows PowerShell 5.1), EICAR по смещению 0x200, имя `sentinel.exe`.
+- Совместимость с SDK 9.0.102: устранены 2 предупреждения CA1859 (`RemediationEngine.RollbackHosts`, `scan-usb` в CLI); проверено сборкой под SDK 9.
+- **Не проверено:** работа сканера внутри `SentinelService` (служба на стенде была `Stopped`/`Disabled`) — запустить службу и повторить.
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **8/2:** окно 1: `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` (печатает PID);
-  окно 2 (администратор): `Sentinel.Cli.exe audit-memory <PID>` → `MEM-YARA-MATCH` (EICAR-Test-File) и `MEM-REFLECTIVE-PE` (PE (x64)), код выхода 1.
-  `Sentinel.Cli.exe audit-memory 4` / PID `lsass` → «пропущен: CriticalProcessGuard». `Sentinel.Cli.exe audit-memory` (все процессы) при открытых
+  окно 2 (администратор): `sentinel.exe audit-memory <PID>` → `MEM-YARA-MATCH` (EICAR-Test-File) и `MEM-REFLECTIVE-PE` (PE (x64)), код выхода 1.
+  `sentinel.exe audit-memory 4` / PID `lsass` → «пропущен: CriticalProcessGuard». `sentinel.exe audit-memory` (все процессы) при открытых
   браузере и .NET-приложениях — без аномалий у них (контроль ложных срабатываний на JIT); заметить время выполнения.
   Служба использует тот же сканер при периодическом аудите новых процессов и в `ProcessStartMonitor`.
 - **8/1:** в журнале службы при старте — «Мониторинг старта процессов: подписка WMI (SELECT * FROM Win32_ProcessStartTrace)». Запуск `powershell -enc <base64>` даёт

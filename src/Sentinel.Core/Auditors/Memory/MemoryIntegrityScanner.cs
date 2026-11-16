@@ -77,6 +77,15 @@ public sealed record MemoryScanResult(
 
     public bool HasAnomalies => Anomalies.Count > 0;
 
+    /// <summary>
+    /// Угроза, а не слабый сигнал: PE-образ или сигнатура в памяти либо любая аномалия уровня Medium и выше.
+    /// Одиночный <c>MEM-RWX-IMAGE-PATCH</c> (Low, +10) угрозой не считается.
+    /// </summary>
+    public bool IsThreat => Anomalies.Any(a => a.Kind != MemoryAnomalyKind.ImagePatch || a.Severity >= Severity.Medium);
+
+    /// <summary>RWX-страницы штатного рантайма .NET (<c>clr.dll</c>/<c>coreclr.dll</c> из системного каталога), не ставшие находкой.</summary>
+    public int SuppressedRuntimePatches { get; init; }
+
     public static MemoryScanResult Skip(int pid, string reason) => new(pid, reason, 0, 0, 0, 0, false, [], ThreatScore.Zero);
 
     /// <summary>Находки аудита (по одной на вид аномалии): для <c>ProcessAuditor</c> и диспетчера.</summary>
@@ -119,6 +128,13 @@ public sealed record MemoryScanResult(
 public sealed class MemoryIntegrityScanner
 {
     private const int PageSize = 4096;
+
+    /// <summary>Модули рантайма .NET, штатно переводящие страницу write barrier в RWX при инициализации.</summary>
+    private static readonly string[] RuntimeModules = ["clr.dll", "coreclr.dll"];
+
+    /// <summary>Каталоги установки рантайма (в форме ядра путь начинается с \Device\HarddiskVolumeN, поэтому — подстрока).</summary>
+    private static readonly string[] RuntimeDirectories =
+        [@"\windows\microsoft.net\", @"\program files\dotnet\", @"\program files (x86)\dotnet\"];
 
     private readonly IMemoryReader _reader;
     private readonly SignatureEngine? _engine;
@@ -164,6 +180,7 @@ public sealed class MemoryIntegrityScanner
         }
 
         var anomalies = new List<MemoryAnomaly>();
+        var runtimePatches = new List<MemoryAnomaly>();
         var privateRwx = 0;
         var inspected = 0;
         long bytesRead = 0;
@@ -186,8 +203,11 @@ public sealed class MemoryIntegrityScanner
 
                 if (region.IsImage)
                 {
-                    anomalies.Add(new MemoryAnomaly(MemoryAnomalyKind.ImagePatch, region.BaseAddress, region.RegionSize, 0,
-                        region.Protect, region.Type, Severity.Low, "MEM_IMAGE + PAGE_EXECUTE_READWRITE"));
+                    var module = MappedFileName(processId, region.BaseAddress);
+                    var patch = new MemoryAnomaly(MemoryAnomalyKind.ImagePatch, region.BaseAddress, region.RegionSize, 0,
+                        region.Protect, region.Type, Severity.Low,
+                        $"MEM_IMAGE + PAGE_EXECUTE_READWRITE: {(module is null ? "модуль не определён" : FileNameOf(module))}");
+                    (IsTrustedRuntimeModule(module) ? runtimePatches : anomalies).Add(patch);
                 }
 
                 var remaining = _options.MaxBytesPerProcess - bytesRead;
@@ -204,6 +224,13 @@ public sealed class MemoryIntegrityScanner
         finally
         {
             ArrayPool<byte>.Shared.Return(window, clearArray: true); // содержимое чужой памяти не остаётся в пуле
+        }
+
+        // Write barrier CLR — штатный RWX. Он становится находкой только как дополнение к настоящей полезной нагрузке.
+        if (runtimePatches.Count > 0 && anomalies.Exists(a => a.Kind != MemoryAnomalyKind.ImagePatch))
+        {
+            anomalies.AddRange(runtimePatches);
+            runtimePatches.Clear();
         }
 
         var score = ThreatScoringEngine.Evaluate(new ScoringInput
@@ -228,8 +255,38 @@ public sealed class MemoryIntegrityScanner
             }
         }
 
-        return new MemoryScanResult(processId, null, regions.Count, inspected, privateRwx, bytesRead, exhausted, anomalies, score);
+        return new MemoryScanResult(processId, null, regions.Count, inspected, privateRwx, bytesRead, exhausted, anomalies, score)
+        {
+            SuppressedRuntimePatches = runtimePatches.Count,
+        };
     }
+
+    /// <summary>Модуль — штатный рантайм .NET (<c>clr.dll</c>/<c>coreclr.dll</c>) в системном каталоге установки.</summary>
+    public static bool IsTrustedRuntimeModule(string? mappedPath)
+    {
+        if (string.IsNullOrWhiteSpace(mappedPath))
+        {
+            return false;
+        }
+
+        var normalized = mappedPath.Replace('/', '\\').ToLowerInvariant();
+        return RuntimeModules.Contains(FileNameOf(normalized), StringComparer.OrdinalIgnoreCase)
+            && RuntimeDirectories.Any(d => normalized.Contains(d, StringComparison.Ordinal));
+    }
+
+    private string? MappedFileName(int pid, nint address)
+    {
+        try
+        {
+            return _reader.GetMappedFileName(pid, address);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string FileNameOf(string path) => path[(path.Replace('/', '\\').LastIndexOf('\\') + 1)..];
 
     /// <summary>Читает регион окнами по 64 КБ с перекрытием и ищет PE-заголовок и сигнатуры. Возвращает число прочитанных байт.</summary>
     private long ScanRegion(int pid, MemoryRegionInfo region, long budget, byte[] window, List<MemoryAnomaly> anomalies)

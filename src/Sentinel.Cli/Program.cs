@@ -225,7 +225,7 @@ internal static class Program
                 : (Severity?)null;
         });
 
-        IReadOnlyList<string> roots;
+        string[] roots;
         if (opts.Target is { Length: > 0 } target)
         {
             roots = [target];
@@ -241,7 +241,7 @@ internal static class Program
             roots = [];
         }
 
-        if (roots.Count == 0)
+        if (roots.Length == 0)
         {
             Console.WriteLine("Съёмные носители не обнаружены. Укажите путь: sentinel scan-usb <папка|диск>");
             return ExitOk;
@@ -714,6 +714,8 @@ internal static class Program
             .Select(p => (Process: p, Result: scanner.Scan(p.Pid, p.Name, p.ExecutablePath)))
             .ToArray();
         var flagged = results.Where(r => r.Result.HasAnomalies).ToArray();
+        // Код выхода 1 — только угрозы: PE/сигнатура в памяти или Medium+. Одиночный RWX-патч образа (Low) — сведения.
+        var threats = flagged.Count(r => r.Result.IsThreat);
 
         if (opts.Json)
         {
@@ -722,6 +724,7 @@ internal static class Program
                 processes = results.Length,
                 skipped = results.Count(r => r.Result.Skipped),
                 flagged = flagged.Length,
+                threats,
                 entries = results.Where(r => pid is not null || r.Result.HasAnomalies).Select(r => new
                 {
                     r.Process.Pid,
@@ -733,6 +736,8 @@ internal static class Program
                     r.Result.PrivateWriteExecuteRegions,
                     r.Result.BytesRead,
                     r.Result.BudgetExhausted,
+                    r.Result.SuppressedRuntimePatches,
+                    r.Result.IsThreat,
                     score = r.Result.Score.Value,
                     anomalies = r.Result.Anomalies.Select(a => new { a.Id, a.Address, a.Severity, a.Detail, protect = $"0x{a.Protect:X}", type = $"0x{a.Type:X}" }),
                 }),
@@ -740,7 +745,8 @@ internal static class Program
         }
         else
         {
-            Console.WriteLine($"Процессов: {results.Length}; пропущено предохранителем: {results.Count(r => r.Result.Skipped)}; с аномалиями памяти: {flagged.Length}");
+            Console.WriteLine($"Процессов: {results.Length}; пропущено предохранителем: {results.Count(r => r.Result.Skipped)}; "
+                + $"с аномалиями памяти: {flagged.Length}; из них угроз: {threats}");
             foreach (var (process, result) in pid is null ? flagged : results)
             {
                 Console.WriteLine();
@@ -752,7 +758,8 @@ internal static class Program
                 }
 
                 Console.WriteLine($"  регионов: {result.RegionsTotal}, прочитано: {result.RegionsInspected} ({result.BytesRead / 1024} КБ), "
-                    + $"приватных RWX: {result.PrivateWriteExecuteRegions}, балл: {result.Score.Value}{(result.BudgetExhausted ? ", бюджет чтения исчерпан" : string.Empty)}");
+                    + $"приватных RWX: {result.PrivateWriteExecuteRegions}, балл: {result.Score.Value}{(result.BudgetExhausted ? ", бюджет чтения исчерпан" : string.Empty)}"
+                    + (result.SuppressedRuntimePatches > 0 ? $", штатных RWX-страниц CLR: {result.SuppressedRuntimePatches}" : string.Empty));
                 foreach (var a in result.Anomalies.OrderByDescending(a => a.Severity))
                 {
                     Console.WriteLine($"  [{a.Severity,-8}] {a.Id,-20} {a.Address}  {a.Detail}");
@@ -760,7 +767,7 @@ internal static class Program
             }
         }
 
-        return flagged.Length > 0 ? ExitDetected : ExitOk;
+        return threats > 0 ? ExitDetected : ExitOk;
     }
 
     private static int AuditStartup(CliOptions opts)

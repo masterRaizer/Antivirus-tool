@@ -430,7 +430,7 @@ public sealed class RemediationEngine
         return Action(entry, RemediationStatus.Done, $"Задача планировщика '{taskPath}' удалена.") with { RollbackId = backup.Id };
     }
 
-    private RemediationAction RollbackHosts(string hostsPath, IReadOnlyList<PersistenceEntry> entries)
+    private RemediationAction RollbackHosts(string hostsPath, PersistenceEntry[] entries)
     {
         var target = entries[0];
         if (!File.Exists(hostsPath))

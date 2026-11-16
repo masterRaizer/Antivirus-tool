@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Синтетический стенд для проверки MemoryIntegrityScanner (модуль 8/2) на живой Windows.
 
@@ -10,7 +10,7 @@
         без единой инструкции кода) по адресу начала региона — ожидается MEM-REFLECTIVE-PE.
     Память никогда не исполняется. Служба проверяет процесс один раз — сразу после старта, когда региона ещё нет,
     поэтому детерминированная проверка — командой CLI из второго окна (от имени администратора), пока скрипт ждёт:
-        Sentinel.Cli.exe audit-memory <PID>        (PID печатается ниже)
+        sentinel.exe audit-memory <PID>        (PID печатается ниже)
 
     Ожидаемый результат: аномалии MEM-YARA-MATCH (EICAR-Test-File) и с -WithPeHeader — MEM-REFLECTIVE-PE (PE (x64))
     по адресу региона, код выхода 1.
@@ -57,10 +57,10 @@ try {
 
     # EICAR собирается из частей, чтобы сам скрипт на диске не детектировался.
     $eicar = [Text.Encoding]::ASCII.GetBytes('X5O!P%@AP[4\PZX54(P^)7CC)7}$' + 'EICAR' + '-STANDARD-ANTIVIRUS-TEST-' + 'FILE!$H+H*')
-    [Runtime.InteropServices.Marshal]::Copy($eicar, 0, [IntPtr]::Add($region, 0x1000), $eicar.Length)
+    [Runtime.InteropServices.Marshal]::Copy($eicar, 0, [IntPtr]::Add($region, 0x200), $eicar.Length)
 
-    Write-Host ("PID {0}: регион MEM_PRIVATE + PAGE_EXECUTE_READWRITE по адресу 0x{1:X} ({2} КБ) подготовлен." -f $PID, $region.ToInt64(), $size / 1KB)
-    Write-Host "Выполните во втором окне:  Sentinel.Cli.exe audit-memory $PID"
+    Write-Host ("PID {0}: регион MEM_PRIVATE + PAGE_EXECUTE_READWRITE по адресу 0x{1:X} ({2} КБ) подготовлен." -f $PID, $region.ToInt64(), ($size / 1KB))
+    Write-Host "Выполните во втором окне:  sentinel.exe audit-memory $PID"
     Write-Host "Ожидание $WaitSeconds с, затем регион будет освобождён..."
     Start-Sleep -Seconds $WaitSeconds
 }

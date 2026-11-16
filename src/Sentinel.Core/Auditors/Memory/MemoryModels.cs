@@ -69,4 +69,10 @@ public interface IMemoryReader
     /// при частичном чтении (<c>ERROR_PARTIAL_COPY</c>) — прочитанную часть, при отказе — 0.
     /// </summary>
     int ReadMemory(int processId, nint address, Span<byte> buffer);
+
+    /// <summary>
+    /// Файл, отображённый в регион образа (<c>MEM_IMAGE</c>), — путь в форме ядра (<c>\Device\HarddiskVolumeN\…</c>) или <c>null</c>.
+    /// Нужен, чтобы отличать штатный RWX-патч рантайма .NET (<c>clr.dll</c>/<c>coreclr.dll</c>) от патча стороннего образа.
+    /// </summary>
+    string? GetMappedFileName(int processId, nint address);
 }

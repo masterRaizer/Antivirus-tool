@@ -96,6 +96,26 @@ public sealed class WindowsMemoryReader : IMemoryReader
         }
     }
 
+    public string? GetMappedFileName(int processId, nint address)
+    {
+        var handle = Open(processId);
+        if (handle == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var buffer = new char[1024];
+            var length = K32GetMappedFileNameW(handle, address, buffer, (uint)buffer.Length);
+            return length == 0 ? null : new string(buffer, 0, (int)Math.Min(length, (uint)buffer.Length));
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
     private static IntPtr Open(int processId) =>
         processId <= 4 ? IntPtr.Zero : OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, (uint)processId);
 
@@ -118,6 +138,9 @@ public sealed class WindowsMemoryReader : IMemoryReader
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint K32GetMappedFileNameW(IntPtr hProcess, nint lpv, [Out] char[] lpFilename, uint nSize);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern nuint VirtualQueryEx(IntPtr hProcess, nint lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, nuint dwLength);
