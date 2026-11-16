@@ -739,3 +739,65 @@ public class ScanPreCountTests
         Assert.All(progress.Where(p => p.TotalCounted), p => Assert.True(p.Total <= 120));
     }
 }
+
+/// <summary>
+/// Отчёт 1.3.1 с Katana: 5 ложных находок на Защитник Windows — путь без кавычек «C:\ProgramData\Microsoft\Windows Defender\…»
+/// обрезался на пробеле до «C:\ProgramData\Microsoft\Windows», файл не находился, подпись не проверялась.
+/// </summary>
+public class UnquotedPathResolutionTests
+{
+    private const string MpCmdRun = @"C:\ProgramData\Microsoft\Windows Defender\Platform\4.18.26100.4-0\MpCmdRun.exe";
+    private const string MpKslDrv = @"C:\ProgramData\Microsoft\Windows Defender\Definition Updates\{E01B2D84-3DB5-4928-B8CB-32A13D806F29}\MpKslDrv.sys";
+
+    [Theory]
+    [InlineData(MpCmdRun + " -IdleTask -TaskName WdCacheMaintenance", MpCmdRun)]
+    [InlineData(MpCmdRun + " Scan -ScheduleJob -ScanTrigger 55 -IdleScheduledJob", MpCmdRun)]
+    [InlineData(MpCmdRun, MpCmdRun)]
+    [InlineData("\"" + MpCmdRun + "\" -IdleTask", MpCmdRun)]
+    [InlineData(@"C:\Program Files\App\tool -x", @"C:\Program Files\App\tool.exe")]                 // без расширения — как CreateProcess
+    [InlineData(@"C:\Missing Dir\gone.exe -y", @"C:\Missing")]                                     // ничего не существует — прежний первый токен
+    public void ResolveExecutable_FollowsCreateProcessRules(string command, string expected)
+    {
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MpCmdRun, @"C:\Program Files\App\tool.exe" };
+        Assert.Equal(expected, Sentinel.Core.Audit.Process.CommandLineParser.ResolveExecutable(command, files.Contains));
+    }
+
+    private static Sentinel.Core.Audit.Persistence.PersistenceAuditReport Audit(bool trustDefender)
+    {
+        var reg = new Sentinel.Core.Audit.Persistence.Registry.InMemoryRegistryProvider();
+        var key = new Sentinel.Core.Audit.Persistence.Registry.RegistryKeyPath(
+            Sentinel.Core.Audit.Persistence.Registry.RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\MpKslbffc8b48");
+        reg.Set(key, "ImagePath", @"\??\" + MpKslDrv);
+        reg.Set(key, "Start", "3", Sentinel.Core.Audit.Persistence.Registry.RegistryValueKind.Dword);
+        var task = new Sentinel.Core.Audit.Persistence.Tasks.ScheduledTaskInfo("Windows Defender Cache Maintenance",
+            @"\Microsoft\Windows\Windows Defender\Windows Defender Cache Maintenance", true,
+            [new Sentinel.Core.Audit.Persistence.Tasks.ScheduledTaskAction(MpCmdRun, "-IdleTask -TaskName WdCacheMaintenance")]);
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MpCmdRun, MpKslDrv };
+        var options = new Sentinel.Core.Audit.Persistence.PersistenceAuditorOptions
+        {
+            FileExists = files.Contains,
+            TrustedBinaryDirectories = trustDefender
+                ? [@"C:\ProgramData\Microsoft\Windows Defender\Platform", @"C:\ProgramData\Microsoft\Windows Defender\Definition Updates"]
+                : [],
+        };
+        return new Sentinel.Core.Audit.Persistence.PersistenceAuditor(options, reg, new FakeTaskProvider(task)).Audit();
+    }
+
+    [Fact]
+    public void DefenderTaskAndService_ResolveToRealFiles()
+    {
+        var report = Audit(trustDefender: false);
+
+        Assert.Contains(report.Entries, e => e.ResolvedTarget == MpCmdRun);
+        Assert.Contains(report.Entries, e => e.ResolvedTarget == MpKslDrv);
+        Assert.DoesNotContain(report.Entries, e => e.ResolvedTarget == @"C:\ProgramData\Microsoft\Windows");
+    }
+
+    [Fact]
+    public void DefenderPlatformDirectories_AreTrusted_NoUserWritableFindings()
+    {
+        var report = Audit(trustDefender: true);
+
+        Assert.DoesNotContain(report.Entries, e => e.Findings.Any(f => f.Id is "PERS-SERVICE-USERWRITABLE" or "PERS-TASK-USERWRITABLE"));
+    }
+}

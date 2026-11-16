@@ -553,21 +553,33 @@ public sealed class PersistenceAuditor
         return idx < 0 ? trimmed : trimmed[(idx + 1)..];
     }
 
-    private static string? ResolveTarget(string? command)
+    /// <summary>
+    /// Исполняемый файл команды автозапуска: раскрытие переменных, префиксы ядра (<c>\??\</c>, <c>\SystemRoot\</c>) и разбор пути без
+    /// кавычек по правилам CreateProcess — иначе «C:\ProgramData\Microsoft\Windows Defender\…\MpCmdRun.exe» обрезался до
+    /// «C:\ProgramData\Microsoft\Windows», файл не находился, подпись не проверялась и Защитник считался подозрительным.
+    /// </summary>
+    private string? ResolveTarget(string? command)
     {
         if (string.IsNullOrWhiteSpace(command))
         {
             return null;
         }
 
-        var expanded = Environment.ExpandEnvironmentVariables(command);
-        return CommandLineParser.ExtractExecutable(expanded);
+        var expanded = NormalizeKernelPrefix(Environment.ExpandEnvironmentVariables(command).Trim());
+        return CommandLineParser.ResolveExecutable(expanded, _options.FileExists);
     }
 
     /// <summary>
     /// Разбирает ImagePath службы/задачи: раскрывает переменные, снимает префиксы
     /// <c>\SystemRoot\</c>, <c>\??\</c>, <c>system32\</c> и выделяет путь к исполняемому файлу.
     /// </summary>
+    /// <summary><c>\SystemRoot\</c>, <c>\??\C:\</c> и т.п. → Win32; оставшийся префикс <c>\??\</c> снимается безусловно (как раньше).</summary>
+    private string NormalizeKernelPrefix(string path)
+    {
+        var normalized = Kernel.NtPath.ToWin32(path, null, _options.WindowsDirectory);
+        return normalized.StartsWith(@"\??\", StringComparison.Ordinal) ? normalized[4..] : normalized;
+    }
+
     private string? ResolveServiceImagePath(string? imagePath)
     {
         if (string.IsNullOrWhiteSpace(imagePath))
@@ -575,28 +587,16 @@ public sealed class PersistenceAuditor
             return null;
         }
 
-        var expanded = Environment.ExpandEnvironmentVariables(imagePath).Trim();
-        var exe = CommandLineParser.ExtractExecutable(expanded);
-        if (string.IsNullOrEmpty(exe))
+        // Префиксы ядра снимаются со всей строки ДО разбора: путь «\??\C:\ProgramData\Microsoft\Windows Defender\…\MpKslDrv.sys»
+        // содержит пробел и без кавычек; относительный «system32\drivers\x.sys» дополняется каталогом Windows.
+        var expanded = NormalizeKernelPrefix(Environment.ExpandEnvironmentVariables(imagePath).Trim());
+        if (expanded.StartsWith(@"system32\", StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            expanded = _options.WindowsDirectory.TrimEnd('\\', '/') + @"\" + expanded;
         }
 
-        if (exe.StartsWith(@"\??\", StringComparison.Ordinal))
-        {
-            exe = exe[4..];
-        }
-
-        if (exe.StartsWith(@"\SystemRoot\", StringComparison.OrdinalIgnoreCase))
-        {
-            exe = Path.Combine(_options.WindowsDirectory, exe[@"\SystemRoot\".Length..]);
-        }
-        else if (exe.StartsWith(@"system32\", StringComparison.OrdinalIgnoreCase))
-        {
-            exe = Path.Combine(_options.WindowsDirectory, exe);
-        }
-
-        return exe;
+        var exe = CommandLineParser.ResolveExecutable(expanded, _options.FileExists);
+        return string.IsNullOrEmpty(exe) ? null : exe;
     }
 
     private static (string? Target, string? Command) ResolveStartupTarget(string file)

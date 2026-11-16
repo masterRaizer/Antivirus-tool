@@ -180,6 +180,15 @@
   (`ScanProgress.TotalCounted`, знак «≈» снимается) и считается оценка оставшегося времени (`RemainingSeconds`, в приложении — «осталось ≈ …»
   под «ВРЕМЯ»; пока идёт подсчёт — «идёт подсчёт файлов…»). Разметка `ScanView.xaml` на Windows не проверялась.
 
+### 1.3.2 — ложные находки на Защитник Windows (отчёт быстрой проверки 1.3.1 с Katana, DESKTOP-DF557E0)
+- 5 находок Medium (`PERS-SERVICE-USERWRITABLE` у `MpKslbffc8b48`, `PERS-TASK-USERWRITABLE` у 4 задач Windows Defender) с путём
+  «C:\ProgramData\Microsoft\Windows»: команда без кавычек «C:\ProgramData\Microsoft\Windows Defender\Platform\…\MpCmdRun.exe -IdleTask …» и
+  ImagePath «\??\C:\ProgramData\Microsoft\Windows Defender\Definition Updates\…\MpKslDrv.sys» обрезались на первом пробеле, файл не находился,
+  подпись не проверялась. Теперь `CommandLineParser.ResolveExecutable` разбирает путь без кавычек по правилам CreateProcess (слева направо по
+  пробелам до существующего файла, с подстановкой `.exe`), префиксы ядра снимаются со всей строки до разбора, а каталоги
+  `ProgramData\Microsoft\Windows Defender\Platform` и `…\Definition Updates` (запись только SYSTEM/TrustedInstaller) — доверенные.
+  Две информационные находки о старых корневых сертификатах Microsoft — штатное поведение (Info, без действий).
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`
   показывает RESTART 5000/30000/60000 и сброс 86400; в `service-*.log` — «Восстановление службы: Политика восстановления выставлена…»;

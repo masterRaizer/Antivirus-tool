@@ -35,6 +35,9 @@ public sealed record PersistenceAuditorOptions
     /// <summary>Анализировать целевые файлы через FileAnalyzer (подпись, правила, энтропия).</summary>
     public bool AnalyzeTargets { get; init; } = true;
 
+    /// <summary>Проверка существования файла при разборе команд без кавычек (в тестах — синтетическая файловая система).</summary>
+    public Func<string, bool> FileExists { get; init; } = File.Exists;
+
     private static string DefaultWindows()
     {
         var win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
@@ -59,6 +62,14 @@ public sealed record PersistenceAuditorOptions
         if (!string.IsNullOrEmpty(programFilesX86))
         {
             trusted.Add(programFilesX86);
+        }
+
+        // Платформа и обновления определений Защитника Windows: запись только для SYSTEM/TrustedInstaller, хотя это ProgramData.
+        var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        if (!string.IsNullOrEmpty(programData))
+        {
+            trusted.Add(Path.Combine(programData, "Microsoft", "Windows Defender", "Platform"));
+            trusted.Add(Path.Combine(programData, "Microsoft", "Windows Defender", "Definition Updates"));
         }
 
         var startup = new List<string>();
