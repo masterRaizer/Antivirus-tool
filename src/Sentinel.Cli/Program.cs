@@ -76,6 +76,7 @@ internal static class Program
                 "rules" => Rules(opts),
                 "selftest" => SelfTest(opts),
                 "audit-processes" => AuditProcesses(opts),
+                "audit-memory" => AuditMemory(opts),
                 "audit-startup" => AuditStartup(opts),
                 "audit-config" => AuditConfig(opts),
                 "quarantine" => Quarantine(opts),
@@ -116,6 +117,9 @@ internal static class Program
               sentinel selftest [--rules <каталог>] самопроверка на синтетических артефактах (EICAR, PE-заглушки)
               sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan] [действия] [отчёт]
                                                    аудит активных процессов (только Windows)
+              sentinel audit-memory [PID] [--rules <каталог>] [--json]
+                                                   потоковый аудит памяти процессов: RWX-регионы, PE-образы без файла,
+                                                   сигнатуры в памяти; без PID — все процессы (только Windows)
               sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan] [действия] [отчёт]
                                                    аудит автозагрузки и персистентности (только Windows)
               sentinel audit-config [--rules <каталог>] [--json] [действия] [отчёт]
@@ -668,6 +672,95 @@ internal static class Program
         }
 
         return report.FlaggedCount > 0 ? ExitDetected : ExitOk;
+    }
+
+    /// <summary>
+    /// <c>audit-memory [PID]</c> — аудит целостности памяти одного или всех процессов. Защищённые процессы ОС и Sentinel
+    /// отсекаются <c>CriticalProcessGuard</c> до открытия дескриптора. Только чтение: нейтрализация — через службу.
+    /// </summary>
+    private static int AuditMemory(CliOptions opts)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.Error.WriteLine("Аудит памяти процессов доступен только в Windows (VirtualQueryEx/ReadProcessMemory).");
+            return ExitError;
+        }
+
+        int? pid = null;
+        if (opts.Target is not null)
+        {
+            if (!int.TryParse(opts.Target, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || parsed <= 0)
+            {
+                Console.Error.WriteLine($"Ошибка: '{opts.Target}' — не идентификатор процесса.");
+                return ExitError;
+            }
+
+            pid = parsed;
+        }
+
+        var (rules, _) = CreateAnalyzer(opts, printRuleErrors: !opts.Json);
+        var scanner = new Sentinel.Core.Auditors.Memory.MemoryIntegrityScanner(
+            new Sentinel.Core.Auditors.Memory.WindowsMemoryReader(), new SignatureEngine(rules));
+        var processes = new WindowsProcessProvider(TimeSpan.Zero).GetProcesses()
+            .Where(p => pid is null || p.Pid == pid)
+            .ToArray();
+        if (pid is not null && processes.Length == 0)
+        {
+            Console.Error.WriteLine($"Процесс PID {pid} не найден.");
+            return ExitError;
+        }
+
+        var results = processes
+            .Select(p => (Process: p, Result: scanner.Scan(p.Pid, p.Name, p.ExecutablePath)))
+            .ToArray();
+        var flagged = results.Where(r => r.Result.HasAnomalies).ToArray();
+
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                processes = results.Length,
+                skipped = results.Count(r => r.Result.Skipped),
+                flagged = flagged.Length,
+                entries = results.Where(r => pid is not null || r.Result.HasAnomalies).Select(r => new
+                {
+                    r.Process.Pid,
+                    r.Process.Name,
+                    r.Process.ExecutablePath,
+                    r.Result.SkipReason,
+                    r.Result.RegionsTotal,
+                    r.Result.RegionsInspected,
+                    r.Result.PrivateWriteExecuteRegions,
+                    r.Result.BytesRead,
+                    r.Result.BudgetExhausted,
+                    score = r.Result.Score.Value,
+                    anomalies = r.Result.Anomalies.Select(a => new { a.Id, a.Address, a.Severity, a.Detail, protect = $"0x{a.Protect:X}", type = $"0x{a.Type:X}" }),
+                }),
+            }, JsonOptions));
+        }
+        else
+        {
+            Console.WriteLine($"Процессов: {results.Length}; пропущено предохранителем: {results.Count(r => r.Result.Skipped)}; с аномалиями памяти: {flagged.Length}");
+            foreach (var (process, result) in pid is null ? flagged : results)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"PID {process.Pid,-6} {process.Name}  ({process.ExecutablePath ?? "путь неизвестен"})");
+                if (result.Skipped)
+                {
+                    Console.WriteLine($"  пропущен: {result.SkipReason}");
+                    continue;
+                }
+
+                Console.WriteLine($"  регионов: {result.RegionsTotal}, прочитано: {result.RegionsInspected} ({result.BytesRead / 1024} КБ), "
+                    + $"приватных RWX: {result.PrivateWriteExecuteRegions}, балл: {result.Score.Value}{(result.BudgetExhausted ? ", бюджет чтения исчерпан" : string.Empty)}");
+                foreach (var a in result.Anomalies.OrderByDescending(a => a.Severity))
+                {
+                    Console.WriteLine($"  [{a.Severity,-8}] {a.Id,-20} {a.Address}  {a.Detail}");
+                }
+            }
+        }
+
+        return flagged.Length > 0 ? ExitDetected : ExitOk;
     }
 
     private static int AuditStartup(CliOptions opts)

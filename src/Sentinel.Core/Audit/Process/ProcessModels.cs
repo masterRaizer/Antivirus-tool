@@ -53,6 +53,9 @@ public sealed record ProcessAuditEntry(
     /// <summary>Исключения встроенной защиты, под которые попал процесс (пусто — обычная проверка).</summary>
     public IReadOnlyList<DefenderExclusion> MatchedExclusions { get; init; } = [];
 
+    /// <summary>Итог аудита памяти процесса (<c>null</c> — память не проверялась).</summary>
+    public Auditors.Memory.MemoryScanResult? MemoryScan { get; init; }
+
     public bool HasFindings => Findings.Count > 0;
 }
 

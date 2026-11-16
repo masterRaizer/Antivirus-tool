@@ -14,6 +14,9 @@ public enum CorrelationChain
 
     /// <summary>BH-04: неподписанный файл, только что сброшенный в профиль, сразу запущен как процесс.</summary>
     DropAndExecute,
+
+    /// <summary>BH-05: полезная нагрузка в памяти (PE/сигнатура) у процесса с обфусцированным запуском или только что сброшенного.</summary>
+    InMemoryPayload,
 }
 
 public sealed record CorrelationFinding(CorrelationChain Chain, int Score, string Summary, IReadOnlyList<string> Artifacts);
@@ -100,6 +103,17 @@ public sealed class BehavioralCorrelationEngine
         return Ingest(new Event(EventKind.ProcessStart, Normalize(imagePath), commandLine, isSigned, _time.GetUtcNow().Ticks));
     }
 
+    /// <summary>
+    /// Аномалия памяти процесса (<c>MEM-REFLECTIVE-PE</c>/<c>MEM-YARA-MATCH</c>). Замыкает BH-05, если тот же образ недавно
+    /// стартовал с обфусцированной командной строкой или был только что сброшен в профиль и запущен.
+    /// </summary>
+    public CorrelationFinding? ReportMemoryAnomaly(string imagePath, string anomaly)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(imagePath);
+        ArgumentException.ThrowIfNullOrEmpty(anomaly);
+        return Ingest(new Event(EventKind.MemoryAnomaly, Normalize(imagePath), anomaly, false, _time.GetUtcNow().Ticks));
+    }
+
     private CorrelationFinding? Ingest(Event e)
     {
         lock (_sync)
@@ -154,6 +168,9 @@ public sealed class BehavioralCorrelationEngine
 
             case EventKind.ProcessStart:
                 return CorrelateProcessStart(e);
+
+            case EventKind.MemoryAnomaly:
+                return CorrelateMemoryAnomaly(e);
         }
 
         return null;
@@ -199,6 +216,47 @@ public sealed class BehavioralCorrelationEngine
             ? new CorrelationFinding(CorrelationChain.DropAndExecute, 60,
                 $"Неподписанный файл сброшен в профиль и сразу запущен (BH-04): {e.Path}.", [e.Path])
             : null;
+    }
+
+    private CorrelationFinding? CorrelateMemoryAnomaly(Event e)
+    {
+        for (var node = _events.Last?.Previous; node is not null; node = node.Previous)
+        {
+            var start = node.Value;
+            if (start.Kind != EventKind.ProcessStart || !string.Equals(start.Path, e.Path, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var imageName = Path.GetFileName(start.Path.Replace('\\', '/'));
+            var weaponized = IsWeaponized($"{imageName} {start.Detail}", start.Path);
+            var dropped = !start.Signed && IsInProfile(start.Path) && HasStagedExtension(start.Path) && WasDroppedBefore(start);
+            if (weaponized || dropped)
+            {
+                return new CorrelationFinding(CorrelationChain.InMemoryPayload, 85,
+                    $"Полезная нагрузка в памяти ({e.Detail}) у процесса с {(weaponized ? "обфусцированным запуском" : "только что сброшенным образом")}: {e.Path} (BH-05).",
+                    [e.Path]);
+            }
+
+            break; // учитывается только последний старт этого образа
+        }
+
+        return null;
+    }
+
+    private bool WasDroppedBefore(Event start)
+    {
+        for (var node = _events.First; node is not null; node = node.Next)
+        {
+            var v = node.Value;
+            if (v.Kind == EventKind.FileWritten && string.Equals(v.Path, start.Path, StringComparison.Ordinal)
+                && v.Ticks <= start.Ticks && start.Ticks - v.Ticks <= _dropperLink.Ticks)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private string? FindRecentStagedDropper(long nowTicks)
@@ -257,6 +315,7 @@ public sealed class BehavioralCorrelationEngine
         ShortcutOrScript,
         AutorunEntry,
         ProcessStart,
+        MemoryAnomaly,
     }
 
     private readonly record struct Event(EventKind Kind, string Path, string? Detail, bool Signed, long Ticks);

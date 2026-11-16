@@ -53,6 +53,15 @@ public sealed record ScoringInput
 
     /// <summary>Командная строка запуска содержит обфусцированный вызов интерпретатора.</summary>
     public bool ObfuscatedCommandLine { get; init; }
+
+    /// <summary>В приватной исполняемой памяти процесса найден PE-образ без файла на диске (<c>MEM-REFLECTIVE-PE</c>).</summary>
+    public bool MemoryReflectivePe { get; init; }
+
+    /// <summary>Сигнатурные правила/EICAR, сработавшие на исполняемой памяти процесса (<c>MEM-YARA-MATCH</c>).</summary>
+    public string? MemorySignatureMatch { get; init; }
+
+    /// <summary>Страницы образа (<c>MEM_IMAGE</c>) переведены в RWX — признак патча или хука (<c>MEM-RWX-IMAGE-PATCH</c>).</summary>
+    public bool MemoryImagePatch { get; init; }
 }
 
 /// <summary>
@@ -132,6 +141,22 @@ public static class ThreatScoringEngine
         if (input.ObfuscatedCommandLine)
         {
             factors.Add(new("OBFUSCATED-CMD", 15, "Обфусцированная командная строка интерпретатора"));
+        }
+
+        // Память процесса: весомы только PE-образ и сигнатуры. Сам по себе RWX-регион (JIT .NET, браузеров, PowerShell) баллов не даёт.
+        if (input.MemoryReflectivePe)
+        {
+            factors.Add(new("MEM-REFLECTIVE-PE", 50, "PE-образ в приватной исполняемой памяти без файла на диске"));
+        }
+
+        if (input.MemorySignatureMatch is { Length: > 0 } memoryMatch)
+        {
+            factors.Add(new("MEM-YARA-MATCH", 70, $"Сигнатура в исполняемой памяти процесса: {memoryMatch}"));
+        }
+
+        if (input.MemoryImagePatch)
+        {
+            factors.Add(new("MEM-RWX-IMAGE-PATCH", 10, "Страницы загруженного образа переведены в запись+исполнение"));
         }
 
         var raw = factors.Sum(f => f.Points);

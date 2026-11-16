@@ -18,6 +18,12 @@ public sealed class ProcessAuditorOptions
 
     /// <summary>Анализировать исполняемый файл процесса через <see cref="FileAnalyzer"/>, если он задан.</summary>
     public bool AnalyzeExecutable { get; init; } = true;
+
+    /// <summary>
+    /// Потоковый аудит памяти процесса (RWX-регионы, PE-образы без файла, сигнатуры в памяти); <c>null</c> — память не читается.
+    /// Защищённые процессы сканер отсекает сам через <c>CriticalProcessGuard</c> до открытия дескриптора.
+    /// </summary>
+    public Auditors.Memory.MemoryIntegrityScanner? MemoryScanner { get; init; }
 }
 
 /// <summary>
@@ -138,7 +144,14 @@ public sealed class ProcessAuditor
             }
         }
 
-        return new ProcessAuditEntry(p, findings, scan) { MatchedExclusions = matched };
+        Auditors.Memory.MemoryScanResult? memory = null;
+        if (_options.MemoryScanner is { } memoryScanner && p.Pid > 0)
+        {
+            memory = memoryScanner.Scan(p.Pid, p.Name, p.ExecutablePath);
+            findings.AddRange(memory.ToFindings(p.Name, p.ExecutablePath));
+        }
+
+        return new ProcessAuditEntry(p, findings, scan) { MatchedExclusions = matched, MemoryScan = memory };
     }
 
     private void CheckSystemImpersonation(ProcessSnapshot p, List<AuditFinding> findings)

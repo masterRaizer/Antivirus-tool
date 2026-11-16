@@ -46,7 +46,12 @@ public sealed partial class SentinelRuntime
             _o.Analyzer,
             () => _allowed.Load(),
             () => BehaviorConfig().BehavioralShadowMode,
-            new ProcessStartMonitorOptions { Dispatcher = _o.Dispatcher, ExtraOwnDirectories = [_o.DataDirectory] });
+            new ProcessStartMonitorOptions
+            {
+                Dispatcher = _o.Dispatcher,
+                ExtraOwnDirectories = [_o.DataDirectory],
+                Auditor = new Audit.Process.ProcessAuditorOptions { MemoryScanner = _o.MemoryScanner },
+            });
         monitor.Inspected += OnProcessStartInspected;
         monitor.Log += message => Log?.Invoke(message);
         return monitor;
@@ -71,6 +76,24 @@ public sealed partial class SentinelRuntime
         {
             Log?.Invoke($"Старт процесса {e.ProcessName} (PID {e.ProcessId}, {e.ExecutablePath}): балл {outcome.Score}, "
                 + $"решение {outcome.Decision}, итог {outcome.Threat?.Status.ToString() ?? "-"}.");
+        }
+    }
+
+    /// <summary>Аномалии памяти (PE/сигнатура) передаются в корреляционный движок; BH-05 попадает в журнал цепочек.</summary>
+    private void ReportMemoryAnomalies(Audit.Process.ProcessAuditEntry entry)
+    {
+        if (entry.MemoryScan is not { HasAnomalies: true } memory
+            || !memory.Anomalies.Any(a => a.Kind != Auditors.Memory.MemoryAnomalyKind.ImagePatch))
+        {
+            return;
+        }
+
+        var image = entry.Process.ExecutablePath ?? entry.Process.Name;
+        var anomaly = string.Join(", ", memory.Anomalies.Select(a => a.Id).Distinct());
+        Log?.Invoke($"Память процесса {entry.Process.Name} (PID {entry.Process.Pid}): {anomaly}, балл {memory.Score.Value}.");
+        if (_correlation.Value.ReportMemoryAnomaly(image, anomaly) is { } chain)
+        {
+            RecordChain($"Memory: {chain.Summary}");
         }
     }
 }

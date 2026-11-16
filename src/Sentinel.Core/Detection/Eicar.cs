@@ -21,6 +21,9 @@ public static class Eicar
     /// <summary>Байты эталонного тестового файла EICAR (68 байт).</summary>
     public static byte[] CreateTestFileBytes() => (byte[])Signature.Clone();
 
+    /// <summary>Позиция 68-байтовой тестовой строки EICAR в произвольном буфере (например, в фрагменте памяти процесса) или −1.</summary>
+    public static int IndexOfSignature(ReadOnlySpan<byte> buffer) => buffer.IndexOf(Signature);
+
     public static bool IsEicar(ReadOnlySpan<byte> content)
     {
         if (content.Length < Signature.Length || content.Length > MaxFileLength)

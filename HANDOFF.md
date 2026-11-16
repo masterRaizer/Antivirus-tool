@@ -22,7 +22,7 @@
 > **Важное правило для агента:** Все модули этапа 8 пишутся в Linux-контейнере. То, что физически нельзя запустить на Linux (Win32 API, WMI/ETW, WDK драйвер `SentinelDrv.sys`), НЕ является заглушкой: C#-логика закрывается интерфейсами и тестируется на Linux моками (`dotnet test Sentinel.sln`), а компиляция нативных частей проверяется через GitHub Actions (`windows-latest`). Живой запуск на Windows делает пользователь на своём ноутбуке.
 
 1. ~~**Модуль 8/1 (`ProcessStartMonitor`)**~~ — **готов** (см. «Этап 8: сделано» ниже).
-2. **Модуль 8/2 (`MemoryIntegrityScanner`)**: расширение `ProcessAuditor` для потоковой проверки секций памяти с `PAGE_EXECUTE_READWRITE` чанками по 64 КБ через интерфейс `IMemoryReader` (поиск заголовков `MZ`/`PE` в приватной памяти и прогон по правилам YARA) с обязательным пропуском защищённых процессов через `CriticalProcessGuard`.
+2. ~~**Модуль 8/2 (`MemoryIntegrityScanner`)**~~ — **готов** (см. «Этап 8: сделано» ниже).
 3. **Модуль 8/3 (Изоляция потоков перед карантином)**: в `RemediationEngine` перед завершением дерева процессов и перемещением файла в `QuarantineManager` добавить предварительную приостановку потоков процесса (через интерфейс `IProcessContainment`), получившего финальный вердикт `Malicious`, строго после проверки `CriticalProcessGuard` и `FalsePositiveGuard`.
 4. **Модуль 8/4 (`IKernelBridge` + `driver/SentinelDrv`)**: реализация `IKernelBridge` (с `NullKernelBridge` / graceful fallback в User-Mode, если драйвер не загружен) по спецификации `docs/ARCHITECTURE_V2_KERNEL_SPEC.md`, создание `driver/SentinelDrv` (вне `Sentinel.sln`) и добавление шага его компиляции и тестовой подписи на `windows-latest` в `.github/workflows/release.yml`.
 5. После каждого модуля обновлять этот файл.
@@ -41,7 +41,28 @@
 - `SentinelRuntime.RunProcessStartMonitorAsync` / `CreateProcessStartMonitor`, `SentinelRuntimeOptions.ProcessStartSource`; служба — `ProcessStartMonitorWorker`.
 - Окружение контейнера: в сеть окружения добавлены `dot.net` и `builds.dotnet.microsoft.com` — без них `scripts/setup-linux.sh` не ставит SDK с WindowsDesktop и `Sentinel.App` не собирается на Linux.
 
+### 8/2 `MemoryIntegrityScanner` (Linux: build 0/0 Debug и Release; 685 тестов — 680 passed, 5 skipped `WindowsFact`)
+- `src/Sentinel.Core/Auditors/Memory/`: `MemoryConstants` (имена Win32), `MemoryRegionInfo`, `IMemoryReader`;
+  `WindowsMemoryReader` (`[SupportedOSPlatform("windows")]`): `OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)` на время одного вызова
+  с `CloseHandle` в `finally`, `VirtualQueryEx`, `ReadProcessMemory` не более 64 КБ за вызов, `ERROR_PARTIAL_COPY` → прочитанная часть.
+- `MemoryIntegrityScanner`: сначала `CriticalProcessGuard` и собственный PID (до `EnumerateRegions` — 0 обращений к памяти защищённых процессов);
+  кандидаты — `MEM_COMMIT` без `PAGE_GUARD`/`PAGE_NOACCESS`: `MEM_PRIVATE` с RWX/WCX (текущая защита или при выделении) и `MEM_IMAGE` с RWX;
+  окна по 64 КБ из `ArrayPool` (очистка при возврате) с перекрытием 4 КБ; бюджет 4 МБ на регион и 16 МБ на процесс.
+  Находки: `MEM-REFLECTIVE-PE` (MZ на границе страницы, `e_lfanew` 0x40..0x400 в окне, `PE\0\0`, известный Machine; +50),
+  `MEM-YARA-MATCH` (EICAR в любом месте буфера + все правила `rules/`; +70), `MEM-RWX-IMAGE-PATCH` (Low, +10).
+  Чистый JIT-регион RWX (.NET/браузеры/PowerShell) — ни находки, ни баллов. Баллы — новые факторы `ThreatScoringEngine`.
+- Встраивание: `ProcessAuditorOptions.MemoryScanner` → `ProcessAuditEntry.MemoryScan` и находки; `SentinelRuntimeOptions.MemoryScanner` (Windows) —
+  периодический аудит новых процессов и `ProcessStartMonitor`; `BehavioralCorrelationEngine.ReportMemoryAnomaly` — новая цепочка
+  BH-05 «полезная нагрузка в памяти» (обфусцированный запуск или «сброшен и запущен» + PE/сигнатура в памяти, 85 баллов).
+- CLI: `sentinel audit-memory [PID] [--json]` — ручной аудит памяти (только чтение).
+- `scripts/test-memory-scanner.ps1` — синтетический стенд для ноутбука (EICAR и заголовок MZ/PE без кода в RWX-памяти собственного PowerShell).
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
+- **8/2:** окно 1: `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` (печатает PID);
+  окно 2 (администратор): `Sentinel.Cli.exe audit-memory <PID>` → `MEM-YARA-MATCH` (EICAR-Test-File) и `MEM-REFLECTIVE-PE` (PE (x64)), код выхода 1.
+  `Sentinel.Cli.exe audit-memory 4` / PID `lsass` → «пропущен: CriticalProcessGuard». `Sentinel.Cli.exe audit-memory` (все процессы) при открытых
+  браузере и .NET-приложениях — без аномалий у них (контроль ложных срабатываний на JIT); заметить время выполнения.
+  Служба использует тот же сканер при периодическом аудите новых процессов и в `ProcessStartMonitor`.
 - **8/1:** в журнале службы при старте — «Мониторинг старта процессов: подписка WMI (SELECT * FROM Win32_ProcessStartTrace)». Запуск `powershell -enc <base64>` даёт
   в разделе «Поведенческий щит и USB» цепочку `Process: … (BH-02)` и событие с источником `process-start`. Маскировка: копия безвредного .exe,
   запущенная как `C:\Temp\svchost.exe`, — находка `PROC-IMPERSONATION`; неподписанная копия завершается и уходит в карантин, копия с действительной

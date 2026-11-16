@@ -189,6 +189,7 @@ public sealed class ProcessStartMonitor
         var scan = audited.FileScan;
 
         var score = Math.Max(scan?.Score?.Value ?? 0, findings.Count == 0 ? 0 : findings.Max(f => ScoreOf(f.Severity)));
+        score = Math.Max(score, audited.MemoryScan?.Score.Value ?? 0);
         if (scan is { Verdict: Verdict.Malicious })
         {
             score = 100;
@@ -212,6 +213,14 @@ public sealed class ProcessStartMonitor
         // (4) Поведенческая корреляция по командной строке.
         var signed = scan?.Signature is { Status: SignatureStatus.Valid } signature && TrustedPublishers.IsTrusted(signature.SignerSubject);
         var correlation = _correlation.ReportProcessStart(path ?? name, created.CommandLine, signed);
+
+        // Аномалия памяти (PE/сигнатура) у того же образа может замкнуть BH-05 — она сильнее цепочки старта.
+        if (audited.MemoryScan is { HasAnomalies: true } memory
+            && memory.Anomalies.Any(a => a.Kind != Auditors.Memory.MemoryAnomalyKind.ImagePatch)
+            && _correlation.ReportMemoryAnomaly(path ?? name, string.Join(", ", memory.Anomalies.Select(a => a.Id).Distinct())) is { } payload)
+        {
+            correlation = payload;
+        }
         if (correlation is not null)
         {
             // Статический и поведенческий сигналы вместе весомее каждого по отдельности.
@@ -326,6 +335,7 @@ public sealed class ProcessStartMonitor
         CorrelationChain.DropperStaging => "BH-01",
         CorrelationChain.WeaponizedArtifact => "BH-02",
         CorrelationChain.PersistenceUnsignedProfile => "BH-03",
-        _ => "BH-04",
+        CorrelationChain.DropAndExecute => "BH-04",
+        _ => "BH-05",
     };
 }

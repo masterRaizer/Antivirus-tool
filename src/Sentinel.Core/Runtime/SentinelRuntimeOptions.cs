@@ -37,6 +37,9 @@ public sealed class SentinelRuntimeOptions
 
     public IProcessProvider? Processes { get; init; }
 
+    /// <summary>Потоковый аудит памяти процессов (только Windows); <c>null</c> — память не проверяется.</summary>
+    public Auditors.Memory.MemoryIntegrityScanner? MemoryScanner { get; init; }
+
     /// <summary>Фабрика источника событий старта процессов (WMI/опрос); <c>null</c> — мониторинг старта недоступен.</summary>
     public Func<Monitoring.IProcessCreationEventSource>? ProcessStartSource { get; init; }
     public Func<PersistenceAuditReport>? PersistenceAudit { get; init; }
@@ -89,6 +92,7 @@ public sealed class SentinelRuntimeOptions
         RemediationEngine? engine = null;
         IProcessProvider? processes = null;
         Func<Monitoring.IProcessCreationEventSource>? processStarts = null;
+        Auditors.Memory.MemoryIntegrityScanner? memoryScanner = null;
         Func<PersistenceAuditReport>? persistence = null;
         Func<ConfigAuditReport>? config = null;
         if (OperatingSystem.IsWindows())
@@ -96,6 +100,7 @@ public sealed class SentinelRuntimeOptions
             engine = RemediationEngine.CreateDefault(whitelist, RemediationOptions.CreateDefault(data));
             processes = ProcessProviderFactory.CreateDefault();
             processStarts = Monitoring.ProcessCreationEventSourceFactory.CreateDefault;
+            memoryScanner = new Auditors.Memory.MemoryIntegrityScanner(new Auditors.Memory.WindowsMemoryReader(), new SignatureEngine(rules));
             // Провайдеры создаются здесь, под проверкой платформы; аудиторы — заново на каждый прогон.
             var registry = RegistryProviderFactory.CreateDefault();
             var tasks = new WindowsTaskSchedulerProvider();
@@ -115,6 +120,7 @@ public sealed class SentinelRuntimeOptions
             Engine = engine,
             Processes = processes,
             ProcessStartSource = processStarts,
+            MemoryScanner = memoryScanner,
             PersistenceAudit = persistence,
             ConfigAudit = config,
             Telemetry = TelemetryProviderFactory.CreateDefault(),
