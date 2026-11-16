@@ -56,6 +56,17 @@
                         Wait="yes" />
       </Component>
 
+      <!-- Запуск SentinelService в Безопасном режиме (минимальном и с сетью): ключи SafeBoot со значением по умолчанию «Service».
+           Удаляются вместе с программой. -->
+      <Component Id="SafeBootRegistration" Bitness="always64">
+        <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\SafeBoot\Minimal\SentinelService">
+          <RegistryValue Type="string" Value="Service" KeyPath="yes" />
+        </RegistryKey>
+        <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Control\SafeBoot\Network\SentinelService">
+          <RegistryValue Type="string" Value="Service" />
+        </RegistryKey>
+      </Component>
+
       <Component Id="CliExe" Bitness="always64">
         <File Id="SentinelCliExe" Source="$(DistDir)Sentinel.Cli.exe" KeyPath="yes" />
       </Component>

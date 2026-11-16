@@ -41,8 +41,15 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBox Text="{Binding CustomPath, UpdateSourceTrigger=PropertyChanged}" ToolTip="Полный путь к папке или файлу" />
-                <Button Grid.Column="1" Margin="10,0,0,0" Command="{Binding BrowseCommand}" Content="Выбрать папку…" />
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBox Text="{Binding CustomPath, UpdateSourceTrigger=PropertyChanged}" FontFamily="{StaticResource MonoFont}"
+                         ToolTip="Путь к папке, диску или файлу — можно ввести вручную, например C:\ или D:\Windows" />
+                <Button Grid.Column="1" Margin="10,0,0,0" Command="{Binding BrowseCommand}" Content="Обзор…" />
+                <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Muted}" Margin="2,6,0,0" TextWrapping="Wrap"
+                           Text="Путь можно вписать вручную (например, C:\, D:\Windows или букву флешки) — это работает и в среде восстановления, где диалог выбора папок ограничен." />
             </Grid>
 
             <!-- Ход проверки -->

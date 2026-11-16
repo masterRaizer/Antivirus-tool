@@ -50,12 +50,13 @@ public sealed partial class SentinelRuntime
         switch (request.Mode)
         {
             case ScanMode.Custom:
-                if (string.IsNullOrWhiteSpace(request.Path) || (!Directory.Exists(request.Path) && !File.Exists(request.Path)))
+                var customPath = NormalizeManualPath(request.Path);
+                if (customPath is null || (!Directory.Exists(customPath) && !File.Exists(customPath)))
                 {
                     return Task.FromResult(OperationResult.Fail("Укажите существующую папку или файл для выборочной проверки."));
                 }
 
-                roots = [new ScanRoot(Path.GetFullPath(request.Path))];
+                roots = [new ScanRoot(Path.GetFullPath(customPath))];
                 break;
             case ScanMode.Full:
                 roots = _o.FullScanRoots;
@@ -90,6 +91,26 @@ public sealed partial class SentinelRuntime
 
         ScanProgressChanged?.Invoke(CurrentScan);
         return Task.FromResult(OperationResult.Ok("Проверка запущена."));
+    }
+
+    /// <summary>
+    /// Путь, введённый вручную: без кавычек и пробелов по краям; «C:» превращается в корень «C:\» (иначе Windows понимает его
+    /// как текущий каталог диска). <c>null</c> — путь пуст.
+    /// </summary>
+    public static string? NormalizeManualPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var trimmed = path.Trim().Trim('"').Trim();
+        if (trimmed.Length == 2 && char.IsAsciiLetter(trimmed[0]) && trimmed[1] == ':')
+        {
+            return trimmed + "\\";
+        }
+
+        return trimmed.Length == 0 ? null : trimmed;
     }
 
     public Task<OperationResult> PauseScanAsync(CancellationToken cancellationToken = default)
@@ -255,6 +276,7 @@ public sealed partial class SentinelRuntime
         var report = _o.PersistenceAudit();
         run.Total += report.Count;
         run.Report.AddPersistenceAudit(report);
+        RecordSkipped(run, report.Skipped);
         foreach (var entry in report.Entries)
         {
             Checkpoint(run, token);
@@ -290,6 +312,7 @@ public sealed partial class SentinelRuntime
         run.Total += config.Count;
         run.Scanned += config.Count;
         run.Report.AddConfigAudit(config);
+        RecordSkipped(run, config.Skipped);
 
         // Всё, что скрыто от встроенной защиты, проверяется приоритетно и глубоко — до удаления самих исключений.
         if (config.DefenderExclusions.Count > 0)
@@ -422,6 +445,16 @@ public sealed partial class SentinelRuntime
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return null;
+        }
+    }
+
+    /// <summary>Шаги аудита, пропущенные из-за остановленной службы (WMI, брандмауэр, планировщик), — в журнал и в отчёт.</summary>
+    private void RecordSkipped(ScanRun run, IReadOnlyList<Audit.SkippedAuditStep> skipped)
+    {
+        foreach (var step in skipped)
+        {
+            Log?.Invoke($"Шаг «{step.Step}» пропущен: {step.Reason}");
+            run.Report.AddArea(step.Step, 0, 0, $"пропущено: служба или источник недоступны ({step.Reason})");
         }
     }
 

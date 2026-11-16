@@ -6,6 +6,7 @@ using System.Windows.Threading;
 using Sentinel.App.Mvvm;
 using Sentinel.App.Services;
 using Sentinel.Core.Ipc;
+using Sentinel.Core.Runtime;
 using Sentinel.Core.Realtime;
 
 namespace Sentinel.App.ViewModels;
@@ -45,7 +46,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Startup = new StartupViewModel(hub, Notify);
         Reports = new ReportsViewModel(hub, Notify);
         Settings = new SettingsViewModel(hub, Notify);
-        StartServiceCommand = new AsyncCommand(StartServiceAsync, () => !IsServiceMode, ex => Notify(ex.Message, true));
+        StartServiceCommand = new AsyncCommand(StartServiceAsync, () => !IsServiceMode && !_hub.IsRecoveryMode, ex => Notify(ex.Message, true));
         Decisions = new DecisionViewModel(Threats);
 
         hub.ModeChanged += () => Post(() => _ = ReloadAsync());
@@ -124,9 +125,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public string ModeTitle => IsServiceMode ? "Служба Sentinel" : "Автономный режим";
+    public string ModeTitle => _hub.IsRecoveryMode ? "Режим восстановления (Автономно)" : IsServiceMode ? "Служба Sentinel" : "Автономный режим";
 
-    public string ModeDetail => IsServiceMode
+    /// <summary>Режим загрузки, определённый при старте (Безопасный режим или WinRE).</summary>
+    public BootEnvironment BootEnvironment { get; set; } = BootEnvironment.Normal;
+
+    public string ModeDetail => _hub.IsRecoveryMode
+        ? $"{_hub.BootEnvironment.Describe()}: службы Windows ограничены, интерфейс отрисовывается программно, Sentinel работает напрямую через Sentinel.Core."
+          + (_hub.LocalDataDirectory is { } recoveryDir ? $" Данные: {recoveryDir}" : string.Empty)
+        : IsServiceMode
         ? "Подключено к фоновой службе Sentinel.Service (канал \\\\.\\pipe\\" + IpcProtocol.DefaultPipeName + "). Защита работает и при закрытом окне."
         : "Служба не запущена: приложение работает напрямую через Sentinel.Core. Защита действует, пока Sentinel открыт или свёрнут в трей."
           + (_hub.LocalDataDirectory is { } dir ? $" Данные: {dir}" : string.Empty);
@@ -160,7 +167,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         try
         {
-            await _hub.InitializeAsync();
+            await _hub.InitializeAsync(BootEnvironment);
             IsReady = true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
@@ -245,7 +252,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 await RefreshSectionAsync(Section);
             }
 
-            Notify(IsServiceMode ? "Подключено к службе Sentinel." : "Автономный режим: служба не запущена.");
+            Notify(_hub.IsRecoveryMode
+                ? $"{_hub.BootEnvironment.Describe()}: режим восстановления, автономная работа."
+                : IsServiceMode ? "Подключено к службе Sentinel." : "Автономный режим: служба не запущена.");
+            Raise(nameof(ModeTitle));
+            Raise(nameof(ModeDetail));
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or IpcRemoteException)
         {

@@ -47,29 +47,32 @@ public sealed class PersistenceAuditor
     public PersistenceAuditReport Audit()
     {
         var entries = new List<PersistenceEntry>();
+        var skipped = new List<SkippedAuditStep>();
 
+        // Каждый шаг изолирован: остановленная служба (WMI, планировщик) или недоступная ветка реестра в Безопасном режиме
+        // и WinRE пропускает только свой шаг.
         if (_registry is not null)
         {
-            AuditRunKeys(entries);
-            AuditWinlogon(entries);
-            AuditIfeo(entries);
-            AuditServices(entries);
+            AuditStepGuard.Run("Реестр: Run/RunOnce", () => AuditRunKeys(entries), skipped);
+            AuditStepGuard.Run("Реестр: Winlogon", () => AuditWinlogon(entries), skipped);
+            AuditStepGuard.Run("Реестр: IFEO", () => AuditIfeo(entries), skipped);
+            AuditStepGuard.Run("Службы", () => AuditServices(entries), skipped);
         }
 
         if (_tasks is not null)
         {
-            AuditScheduledTasks(entries);
+            AuditStepGuard.Run("Планировщик задач", () => AuditScheduledTasks(entries), skipped);
         }
 
         if (_wmi is not null)
         {
-            AuditWmi(entries);
+            AuditStepGuard.Run("Подписки WMI", () => AuditWmi(entries), skipped);
         }
 
-        AuditStartupFolders(entries);
-        AuditHostsFile(entries);
+        AuditStepGuard.Run("Папки автозагрузки", () => AuditStartupFolders(entries), skipped);
+        AuditStepGuard.Run("Файл hosts", () => AuditHostsFile(entries), skipped);
 
-        return new PersistenceAuditReport(entries);
+        return new PersistenceAuditReport(entries) { Skipped = skipped };
     }
 
     // ---- Реестр: Run / RunOnce -------------------------------------------------

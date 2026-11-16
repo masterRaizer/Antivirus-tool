@@ -49,6 +49,9 @@ public sealed record PersistenceEntry
 /// <summary>Итог аудита персистентности.</summary>
 public sealed record PersistenceAuditReport(IReadOnlyList<PersistenceEntry> Entries)
 {
+    /// <summary>Шаги, пропущенные из-за недоступности системной службы (Безопасный режим, WinRE).</summary>
+    public IReadOnlyList<Audit.SkippedAuditStep> Skipped { get; init; } = [];
+
     public int Count => Entries.Count;
     public int FlaggedCount => Entries.Count(e => e.HasFindings);
     public IEnumerable<PersistenceEntry> Flagged => Entries.Where(e => e.HasFindings);

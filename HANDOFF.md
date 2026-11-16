@@ -47,3 +47,7 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 - Обновление баз с реальной сетью (`api.github.com`, `raw.githubusercontent.com`, Feodo Tracker, abuse.ch API с ключом), облачные Kaspersky OpenTIP и VirusTotal.
 - WPF 1.1.0: внешний вид тёмной темы, группировка Expander, раздел «Настройки и базы», PasswordBox.
 - WiX: `ServiceConfigFailureActions`, обновление поверх 1.0.0.
+
+## 1.1.1 — Безопасный режим и WinRE
+- Сделано: определение Безопасного режима (`GetSystemMetrics(SM_CLEANBOOT)`, `SAFEBOOT_OPTION`) и WinRE (`X:\Windows\System32\winpeshl.ini`, `HKLM\...\Control\MiniNT`); программный рендеринг WPF и сразу автономный режим «Режим восстановления (Автономно)» без ожидания канала; каталог данных по первой доступной для записи папке (`%ProgramData%\Sentinel` → `SentinelData` рядом с exe → `%LocalAppData%\Sentinel` → `%TEMP%\SentinelData`); шаги аудита изолированы (пропуск с причиной в журнале и отчёте); ручной ввод пути в «Выборочной папке»; ключи `SafeBoot\Minimal|Network\SentinelService` в MSI.
+- Не проверено: запуск в настоящем Безопасном режиме и в WinRE (программный рендеринг, отсутствие PowerShell/WMI), старт службы в Безопасном режиме по ключам SafeBoot.
