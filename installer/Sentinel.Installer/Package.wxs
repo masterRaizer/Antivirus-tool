@@ -40,14 +40,11 @@
                         Start="auto"
                         ErrorControl="normal"
                         Account="LocalSystem"
-                        Vital="yes">
-          <!-- Восстановление после сбоя: перезапуск через 5 с, затем через 30 с и 60 с; счётчик сбоев сбрасывается за сутки. -->
-          <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
-            <Failure Action="restartService" Delay="5000" />
-            <Failure Action="restartService" Delay="30000" />
-            <Failure Action="restartService" Delay="60000" />
-          </ServiceConfigFailureActions>
-        </ServiceInstall>
+                        Vital="yes" />
+        <!-- Восстановление после сбоя (перезапуск через 5/30/60 с, сброс за сутки) служба выставляет себе сама при старте
+             (Sentinel.Service/ServiceRecovery.cs). Таблица MsiServiceConfigFailureActions (ServiceConfigFailureActions) не используется:
+             Windows Installer открывает службу без SERVICE_START, нужного для действий «restart», получает ACCESS_DENIED → ошибка 1939
+             → откат всей установки (1603), что и случилось на Windows 11 24H2 в 1.3.0. -->
         <ServiceControl Id="SentinelServiceControl"
                         Name="SentinelService"
                         Start="install"

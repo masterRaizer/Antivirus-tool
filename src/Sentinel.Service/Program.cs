@@ -51,6 +51,7 @@ builder.Services.AddSingleton(_ =>
 
 // Порядок важен: защита дескрипторов ядром и именованный канал поднимаются первыми, долгие аудиты — последними.
 builder.Services.AddHostedService<RuntimeLogWorker>();
+builder.Services.AddHostedService<ServiceRecoveryWorker>();
 builder.Services.AddHostedService<KernelBridgeWorker>();
 builder.Services.AddHostedService<IpcServerWorker>();
 builder.Services.AddHostedService<ProcessStartMonitorWorker>();

@@ -183,11 +183,21 @@ public sealed partial class SentinelRuntime
             Update(run, p => p with { State = ScanState.Running }, force: true);
             run.Active.Start();
 
+            // Процент считается по этапам: процессы, автозагрузка и конфигурация занимают первые 15 %, файлы — остальное.
+            // Раньше процент брался от всех известных объектов, и после этапа процессов «204 из 204» сразу давало 95 %.
             if (request.Mode is ScanMode.Quick or ScanMode.Full)
             {
+                BeginPhase(run, 0, 4);
                 await ScanProcessesAsync(run, token).ConfigureAwait(false);
+                BeginPhase(run, 4, 8);
                 await ScanPersistenceAsync(run, token).ConfigureAwait(false);
+                BeginPhase(run, 12, 3);
                 await ScanConfigAsync(run, token).ConfigureAwait(false);
+                BeginPhase(run, 15, 85, files: true);
+            }
+            else
+            {
+                BeginPhase(run, 0, 100, files: true);
             }
 
             await ScanFilesAsync(roots, request.Mode, run, token).ConfigureAwait(false);
@@ -252,7 +262,7 @@ public sealed partial class SentinelRuntime
             {
                 run.Report.AddProcessFinding(entry, "Процессы");
                 Record(run, ReportBuilder.ProcessKey(process.Pid),
-                    await _dispatcher.DispatchProcessAsync(entry, "scan", token).ConfigureAwait(false));
+                    await DispatchAuditedProcessAsync(entry, "scan", token).ConfigureAwait(false));
             }
         }
 
@@ -273,7 +283,7 @@ public sealed partial class SentinelRuntime
             Stage = "Автозагрузка и реестр",
             CurrentItem = @"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run, службы, планировщик задач, WMI, hosts",
         }, force: true);
-        var report = _o.PersistenceAudit();
+        var report = await GetPersistenceReportAsync(run, token).ConfigureAwait(false);
         run.Total += report.Count;
         run.Report.AddPersistenceAudit(report);
         RecordSkipped(run, report.Skipped);
@@ -337,6 +347,68 @@ public sealed partial class SentinelRuntime
         }
 
         run.Threats += config.Findings.Count(f => f.Area != ConfigArea.DefenderExclusion);
+    }
+
+    private static void BeginPhase(ScanRun run, double start, double span, bool files = false)
+    {
+        run.PhaseStart = start;
+        run.PhaseSpan = span;
+        run.PhaseBaseScanned = run.Scanned;
+        run.PhaseBaseTotal = run.Total;
+        run.FilesPhase = files;
+    }
+
+    /// <summary>
+    /// Процент по этапам: начало этапа + его доля × выполненная часть этапа. Пока обход каталогов не закончен, файловый этап
+    /// не поднимается выше 95 % своей доли (число файлов ещё растёт).
+    /// </summary>
+    private static double PhasePercent(ScanRun run, long total, bool enumerationDone)
+    {
+        var phaseTotal = Math.Max(0, total - run.PhaseBaseTotal);
+        var phaseScanned = Math.Max(0, run.Scanned - run.PhaseBaseScanned);
+        var fraction = phaseTotal == 0 ? 0 : Math.Min(1.0, (double)phaseScanned / phaseTotal);
+        if (run.FilesPhase)
+        {
+            fraction = Math.Min(enumerationDone ? 0.999 : 0.95, fraction);
+        }
+
+        return Math.Round(Math.Min(99.9, run.PhaseStart + (run.PhaseSpan * fraction)), 1);
+    }
+
+    /// <summary>
+    /// Отчёт аудита автозагрузки: свежий результат фонового аудита службы (не старше <see cref="SentinelRuntimeOptions.ConfigAuditInterval"/>)
+    /// используется повторно; иначе аудит выполняется в фоне, а интерфейс раз в секунду видит, сколько он уже идёт
+    /// (полный обход служб, задач и WMI с проверкой подписей занимает 1–3 минуты).
+    /// </summary>
+    private async Task<Audit.Persistence.PersistenceAuditReport> GetPersistenceReportAsync(ScanRun run, CancellationToken token)
+    {
+        const string surface = @"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run, службы, планировщик задач, WMI, hosts";
+        if (TryGetFreshPersistence(out var cached, out var age))
+        {
+            Update(run, p => p with { CurrentItem = $"{surface} — результат фонового аудита службы ({age.TotalSeconds:0} с назад)" }, force: true);
+            return cached;
+        }
+
+        var audit = Task.Run(() => _o.PersistenceAudit!(), token);
+        var started = _o.TimeProvider.GetTimestamp();
+        while (!audit.IsCompleted)
+        {
+            try
+            {
+                await Task.WhenAny(audit, Task.Delay(TimeSpan.FromSeconds(1), _o.TimeProvider, token)).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            Checkpoint(run, token);
+            var elapsed = _o.TimeProvider.GetElapsedTime(started);
+            Update(run, p => p with { CurrentItem = $"{surface} — идёт аудит, {elapsed.TotalSeconds:0} с (обычно 1–3 мин)" }, force: true);
+        }
+
+        var report = await audit.ConfigureAwait(false);
+        StorePersistence(report);
+        return report;
     }
 
     private async Task ScanFilesAsync(IReadOnlyList<ScanRoot> roots, ScanMode mode, ScanRun run, CancellationToken token)
@@ -517,8 +589,7 @@ public sealed partial class SentinelRuntime
                 Threats = run.Threats,
                 ElapsedSeconds = run.Wall.Elapsed.TotalSeconds,
                 ItemsPerSecond = active > 0.2 ? run.Scanned / active : 0,
-                Percent = next.State == ScanState.Completed ? 100 : total == 0 ? 0
-                    : Math.Min(enumerationDone ? 99.9 : 95, 100.0 * run.Scanned / total),
+                Percent = next.State == ScanState.Completed ? 100 : PhasePercent(run, total, enumerationDone),
                 Workers = pool?.WorkerCount ?? 0,
                 ActiveWorkers = pool?.ActiveWorkers ?? 0,
                 PoolMode = pool is null ? next.PoolMode : pool.Mode == Scanning.Pool.ScanPoolMode.MultiProcess ? "процессы" : "потоки",
@@ -565,5 +636,17 @@ public sealed partial class SentinelRuntime
         public int EnumerationDoneFlag;
 
         public IReadOnlyList<ProcessSnapshot> Processes { get; set; } = [];
+
+        /// <summary>Начало и доля текущего этапа в общей шкале процентов.</summary>
+        public double PhaseStart { get; set; }
+
+        public double PhaseSpan { get; set; } = 100;
+
+        public long PhaseBaseScanned { get; set; }
+
+        public long PhaseBaseTotal { get; set; }
+
+        /// <summary>Текущий этап — файлы (обход каталогов идёт параллельно с проверкой).</summary>
+        public bool FilesPhase { get; set; }
     }
 }

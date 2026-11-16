@@ -38,6 +38,13 @@ internal sealed class RuntimeBench : IAsyncDisposable
     public List<(DefenderExclusion Exclusion, Severity Severity)> Exclusions { get; } = [];
     public SentinelRuntime Runtime { get; }
     public List<ScanProgress> Progress { get; } = [];
+
+    /// <summary>Задержка синтетического аудита автозагрузки (настоящий идёт 1–3 минуты).</summary>
+    public TimeSpan PersistenceDelay { get; set; }
+
+    private int _persistenceAudits;
+
+    public int PersistenceAudits => Volatile.Read(ref _persistenceAudits);
     public List<ThreatEvent> Raised { get; } = [];
 
     public string DataDir => Path.Combine(Tmp.Path, "data");
@@ -62,7 +69,12 @@ internal sealed class RuntimeBench : IAsyncDisposable
                     Host, Host, Registry, new FakeTaskEditor(), Defender)
                 : null,
             Processes = withPlatform ? Host : null,
-            PersistenceAudit = withPlatform ? () => new PersistenceAuditReport(Persistence.ToArray()) : null,
+            PersistenceAudit = withPlatform ? () =>
+            {
+                Interlocked.Increment(ref _persistenceAudits);
+                Thread.Sleep(PersistenceDelay);
+                return new PersistenceAuditReport(Persistence.ToArray());
+            } : null,
             ConfigAudit = withPlatform
                 ? () => new ConfigAuditReport(Exclusions
                     .Select(e => new ConfigFinding(ConfigArea.DefenderExclusion, AuditFinding.Create("CFG-DEFENDER-EXCL", e.Severity, "Исключение", "Нештатное исключение.")))

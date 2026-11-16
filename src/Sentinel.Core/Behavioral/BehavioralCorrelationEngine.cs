@@ -37,11 +37,29 @@ public sealed class BehavioralCorrelationEngine
 
     private static readonly string[] WeaponizedArtifactExtensions = [".lnk", ".hta", ".vbs", ".ps1", ".cmd", ".js"];
 
-    private static readonly string[] FilelessMarkers =
+    /// <summary>Признаки бесфайлового запуска сами по себе (закодированная/декодируемая нагрузка, скрипт по URL).</summary>
+    private static readonly string[] StrongFilelessMarkers =
     [
-        "-enc", "-encodedcommand", "frombase64string", "invoke-expression", "iex(", "iex ", "downloadstring",
-        "mshta http", "mshta  http", "rundll32 javascript:", "javascript:\"", "regsvr32 /s /n /u /i:http", "/i:http",
+        "frombase64string", "downloadstring", "mshta http", "mshta  http", "rundll32 javascript:", "javascript:\"",
+        "regsvr32 /s /n /u /i:http", "/i:http",
     ];
+
+    /// <summary>
+    /// <c>-e</c>/<c>-ec</c>/<c>-enc</c>…<c>-EncodedCommand</c> как отдельный ключ с base64-аргументом. Подстрока «-enc» без этого
+    /// ловила и обычный <c>-Encoding UTF8</c> служебных команд.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex EncodedCommand = new(
+        @"(?<![\w-])[-/]e(?:c|n|nc|nco|ncod|ncode|ncoded|ncodedc|ncodedco|ncodedcom|ncodedcomm|ncodedcomma|ncodedcomman|ncodedcommand)?\s+['""]?[a-z0-9+/]{8,}={0,2}",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Invoke-Expression/IEX — отдельным словом.</summary>
+    private static readonly System.Text.RegularExpressions.Regex Iex = new(
+        @"(?<![a-z0-9_-])iex(?![a-z0-9_-])|invoke-expression", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Загрузка из сети: IEX опасен как «download cradle», а одиночный IEX — обычный приём служебных сценариев.</summary>
+    private static readonly System.Text.RegularExpressions.Regex Download = new(
+        @"downloadstring|downloadfile|downloaddata|invoke-webrequest|invoke-restmethod|net\.webclient|start-bitstransfer|(?<![a-z0-9_-])(?:iwr|irm|curl|wget)(?![a-z0-9_-])",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private readonly int _capacity;
     private readonly TimeSpan _window;
@@ -296,7 +314,9 @@ public sealed class BehavioralCorrelationEngine
         }
 
         var lower = commandLine.ToLowerInvariant();
-        var fileless = FilelessMarkers.Any(m => lower.Contains(m, StringComparison.Ordinal));
+        var fileless = StrongFilelessMarkers.Any(m => lower.Contains(m, StringComparison.Ordinal))
+            || EncodedCommand.IsMatch(lower)
+            || (Iex.IsMatch(lower) && Download.IsMatch(lower));
         return fileless && (hasArtifactExt || lower.Contains("powershell", StringComparison.Ordinal)
             || lower.Contains("mshta", StringComparison.Ordinal) || lower.Contains("rundll32", StringComparison.Ordinal)
             || lower.Contains("regsvr32", StringComparison.Ordinal) || lower.Contains("wscript", StringComparison.Ordinal)

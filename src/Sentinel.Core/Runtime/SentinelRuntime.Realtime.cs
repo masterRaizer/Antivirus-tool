@@ -12,6 +12,7 @@ public sealed partial class SentinelRuntime
     private FileActivityMonitor? _monitor;
     private IReadOnlyList<DefenderExclusion> _knownExclusions = [];
     private volatile bool _auditRequested = true;
+    private (Audit.Persistence.PersistenceAuditReport Report, long Timestamp)? _persistenceCache;
 
     /// <summary>
     /// Цикл файлового монитора: изменённые файлы (после дебаунса и отсева шума) анализируются,
@@ -166,7 +167,7 @@ public sealed partial class SentinelRuntime
 
         foreach (var entry in report.Flagged)
         {
-            await _dispatcher.DispatchProcessAsync(entry, "realtime", cancellationToken).ConfigureAwait(false);
+            await DispatchAuditedProcessAsync(entry, "realtime", cancellationToken).ConfigureAwait(false);
         }
 
         return fresh.Count;
@@ -174,12 +175,76 @@ public sealed partial class SentinelRuntime
         static (int, long, string?) Key(ProcessSnapshot p) => (p.Pid, p.StartTimeUtc?.Ticks ?? 0, p.ExecutablePath);
     }
 
+    /// <summary>
+    /// Находка периодического аудита проходит тот же <see cref="Behavioral.FalsePositiveGuard"/>, что и монитор старта процессов:
+    /// образ с доверенной подписью (например, powershell.exe из System32) с одиночными слабыми признаками в журнал не попадает,
+    /// спорное — ждёт решения пользователя без занижения критичности, опасное — нейтрализуется.
+    /// </summary>
+    private async Task<ThreatEvent?> DispatchAuditedProcessAsync(ProcessAuditEntry entry, string source, CancellationToken cancellationToken)
+    {
+        var scan = entry.FileScan;
+        var signed = scan?.Signature is { Status: Trust.SignatureStatus.Valid } signature && Trust.TrustedPublishers.IsTrusted(signature.SignerSubject);
+        var score = Math.Max(entry.Findings.Max(f => f.Severity switch
+        {
+            Signatures.Severity.Critical => 100,
+            Signatures.Severity.High => 85,
+            Signatures.Severity.Medium => 60,
+            Signatures.Severity.Low => 30,
+            _ => 10,
+        }), entry.MemoryScan?.Score.Value ?? 0);
+
+        var guard = new Behavioral.FalsePositiveGuard(_allowed.Load(), null, [_o.DataDirectory]).Evaluate(new Behavioral.GuardContext
+        {
+            Path = entry.Process.ExecutablePath,
+            Sha256 = scan?.Sha256,
+            Score = score,
+            HasValidTrustedSignature = signed,
+            ShadowMode = BehaviorConfig().BehavioralShadowMode,
+        });
+
+        return guard.Decision switch
+        {
+            Behavioral.GuardDecision.Protected => null,
+            Behavioral.GuardDecision.LogOnly when signed => null, // слабые признаки у доверенного образа — не событие
+            Behavioral.GuardDecision.AskUser =>
+                await _dispatcher.DispatchProcessForDecisionAsync(entry, guard.Reason, source, cancellationToken).ConfigureAwait(false),
+            _ => await _dispatcher.DispatchProcessAsync(entry, source, cancellationToken).ConfigureAwait(false),
+        };
+    }
+
+    private void StorePersistence(Audit.Persistence.PersistenceAuditReport report)
+    {
+        lock (_sync)
+        {
+            _persistenceCache = (report, _o.TimeProvider.GetTimestamp());
+        }
+    }
+
+    private bool TryGetFreshPersistence(out Audit.Persistence.PersistenceAuditReport report, out TimeSpan age)
+    {
+        lock (_sync)
+        {
+            if (_persistenceCache is { } cache && _o.TimeProvider.GetElapsedTime(cache.Timestamp) is var elapsed && elapsed <= _o.ConfigAuditInterval)
+            {
+                report = cache.Report;
+                age = elapsed;
+                return true;
+            }
+        }
+
+        report = null!;
+        age = TimeSpan.Zero;
+        return false;
+    }
+
     /// <summary>Аудит критических точек автозагрузки и исключений конфигурации; находки уходят диспетчеру.</summary>
     public async Task AuditPersistenceAndConfigAsync(CancellationToken cancellationToken = default)
     {
         if (_o.PersistenceAudit is not null)
         {
-            foreach (var entry in _o.PersistenceAudit().Flagged)
+            var persistence = _o.PersistenceAudit();
+            StorePersistence(persistence);
+            foreach (var entry in persistence.Flagged)
             {
                 await _dispatcher.DispatchPersistenceAsync(entry, "realtime", cancellationToken).ConfigureAwait(false);
             }

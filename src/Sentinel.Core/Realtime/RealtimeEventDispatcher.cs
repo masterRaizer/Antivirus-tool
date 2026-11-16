@@ -138,7 +138,8 @@ public sealed class RealtimeEventDispatcher
             Entropy = entry.FileScan?.Entropy,
             SignatureStatus = entry.FileScan is null ? "не проверялась" : ReportBuilder.DescribeSignature(entry.FileScan),
             Reason = reason,
-            Description = string.Join(" ", entry.Findings.Select(f => f.Description)),
+            Description = string.Join(" ", entry.Findings.Select(f => f.Description))
+                + (string.IsNullOrWhiteSpace(process.CommandLine) ? string.Empty : $" Команда: {Truncate(process.CommandLine, 500)}"),
             Severity = entry.Findings.Max(f => f.Severity),
             Source = source,
             ProcessId = process.Pid,
@@ -478,6 +479,8 @@ public sealed class RealtimeEventDispatcher
         var idx = path.LastIndexOfAny(['\\', '/']);
         return idx < 0 || idx == path.Length - 1 ? path : path[(idx + 1)..];
     }
+
+    private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max] + "…";
 
     private static string NewId() => Guid.NewGuid().ToString("N")[..12];
 

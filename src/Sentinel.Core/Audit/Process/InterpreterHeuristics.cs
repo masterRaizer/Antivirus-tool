@@ -63,11 +63,16 @@ public static partial class InterpreterHeuristics
 
         // IEX ищется только среди аргументов и только как отдельное слово: имя исполняемого файла (например msiexec.exe)
         // и слова, содержащие «iex» внутри, не считаются.
+        // Одиночный IEX — обычный приём служебных сценариев и установщиков (Medium); в связке с загрузкой из сети или
+        // декодированием base64 это «download cradle» — High.
         if (IexRegex().IsMatch(string.Join(' ', args).ToLowerInvariant()))
         {
-            findings.Add(AuditFinding.Create("PROC-CMD-IEX", Severity.High,
-                "Динамическое исполнение выражения",
-                "Командная строка содержит Invoke-Expression (IEX) — исполнение произвольного кода из строки.",
+            var cradle = DownloadRegex().IsMatch(lower) || lower.Contains("frombase64string", StringComparison.Ordinal);
+            findings.Add(AuditFinding.Create("PROC-CMD-IEX", cradle ? Severity.High : Severity.Medium,
+                cradle ? "Исполнение загруженного или декодированного кода" : "Динамическое исполнение выражения",
+                cradle
+                    ? "Командная строка исполняет через Invoke-Expression (IEX) код, загруженный из сети или декодированный из base64."
+                    : "Командная строка содержит Invoke-Expression (IEX) — исполнение кода из строки (часто встречается в служебных сценариях).",
                 Evidence.Of("name", name), Evidence.Of("cmdline", commandLine)));
         }
 
@@ -142,7 +147,8 @@ public static partial class InterpreterHeuristics
                 var value = i + 1 < args.Count ? args[i + 1] : string.Empty;
                 if (value.Contains("bypass", StringComparison.OrdinalIgnoreCase) || value.Contains("unrestricted", StringComparison.OrdinalIgnoreCase))
                 {
-                    findings.Add(AuditFinding.Create("PROC-PS-BYPASS", Severity.Medium,
+                    // Штатно используется установщиками и средствами разработки — сам по себе слабый сигнал.
+                    findings.Add(AuditFinding.Create("PROC-PS-BYPASS", Severity.Low,
                         "PowerShell: обход политики выполнения",
                         "Запуск с -ExecutionPolicy Bypass/Unrestricted снимает ограничения на запуск скриптов.",
                         Evidence.Of("name", name), Evidence.Of("cmdline", commandLine)));
