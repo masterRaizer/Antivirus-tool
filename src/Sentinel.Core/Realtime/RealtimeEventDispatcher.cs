@@ -104,7 +104,21 @@ public sealed class RealtimeEventDispatcher
             cancellationToken);
     }
 
-    public Task<ThreatEvent?> DispatchProcessAsync(ProcessAuditEntry entry, string source = "realtime", CancellationToken cancellationToken = default)
+    public Task<ThreatEvent?> DispatchProcessAsync(ProcessAuditEntry entry, string source = "realtime", CancellationToken cancellationToken = default) =>
+        DispatchProcessCoreAsync(entry, source, null, cancellationToken);
+
+    /// <summary>
+    /// Находка процесса, которая в любом случае ждёт решения пользователя (например, <c>FalsePositiveGuard</c> запретил
+    /// автоматическое действие для образа с доверенной подписью). Критичность сохраняется как есть: Critical остаётся Critical.
+    /// </summary>
+    public Task<ThreatEvent?> DispatchProcessForDecisionAsync(
+        ProcessAuditEntry entry, string decisionReason, string source = "realtime", CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(decisionReason);
+        return DispatchProcessCoreAsync(entry, source, decisionReason, cancellationToken);
+    }
+
+    private Task<ThreatEvent?> DispatchProcessCoreAsync(ProcessAuditEntry entry, string source, string? decisionReason, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(entry);
         var process = entry.Process;
@@ -155,7 +169,8 @@ public sealed class RealtimeEventDispatcher
                 return outcome;
             },
             () => process.ExecutablePath is { Length: > 0 } path ? AllowPath(path) : AllowProcess(process.Name),
-            cancellationToken);
+            cancellationToken,
+            decisionReason);
     }
 
     public Task<ThreatEvent?> DispatchPersistenceAsync(PersistenceEntry entry, string source = "realtime", CancellationToken cancellationToken = default)
@@ -313,7 +328,8 @@ public sealed class RealtimeEventDispatcher
         ThreatEvent threat,
         Func<bool, CancellationToken, Task<Outcome>> neutralize,
         Func<(bool Ok, string Message)> allow,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? decisionReason = null)
     {
         Entry entry;
         lock (_sync)
@@ -335,7 +351,12 @@ public sealed class RealtimeEventDispatcher
         ThreatEvent result;
         try
         {
-            if (threat.Severity >= _options.AutoThreshold)
+            if (decisionReason is not null)
+            {
+                // Решение за пользователем независимо от критичности: автоматическое действие запрещено выше по стеку.
+                result = entry.Event with { Status = ThreatStatus.PendingDecision, ActionMessage = $"Ожидает решения пользователя: {decisionReason}" };
+            }
+            else if (threat.Severity >= _options.AutoThreshold)
             {
                 result = Apply(entry.Event, await NeutralizeSafeAsync(entry, false, cancellationToken).ConfigureAwait(false));
             }

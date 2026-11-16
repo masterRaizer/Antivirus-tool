@@ -387,3 +387,63 @@ public class DelayedMemoryRescanTests
         Assert.Equal(1, monitor.MemoryRescansDropped);
     }
 }
+
+/// <summary>
+/// Решение «спросить пользователя» (FalsePositiveGuard: доверенная подпись или теневой режим) не занижает критичность:
+/// MEM-YARA-MATCH/MEM-REFLECTIVE-PE остаются Critical, а от автоматического действия защищает явный маршрут диспетчера.
+/// </summary>
+public class AskUserSeverityTests
+{
+    [Fact]
+    public async Task MemoryPayload_InAskUserProcess_StaysCritical_AndWaitsForDecision()
+    {
+        using var b = new DispatcherBench();
+        const string ps = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+        b.Host.Add(9600, 100, "powershell.exe", ps);
+        var data = MemoryPayloads.WithPeHeader(MemoryPayloads.JitCode(64 * 1024), 0);
+        MemoryPayloads.With(data, 0x200, Eicar.CreateTestFileBytes());
+        var reader = new FakeMemoryReader().Add(9600, 0x10000, data, MEM_PRIVATE, PAGE_EXECUTE_READWRITE);
+        var monitor = new ProcessStartMonitor(new FakeProcessCreationEventSource(), b.Dispatcher, new BehavioralCorrelationEngine(), null,
+            shadowMode: () => true,
+            options: new ProcessStartMonitorOptions
+            {
+                Auditor = new ProcessAuditorOptions
+                {
+                    MemoryScanner = new MemoryIntegrityScanner(reader, new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory))),
+                },
+                MemoryRescanDelay = TimeSpan.Zero,
+            });
+
+        var outcome = await monitor.InspectAsync(new ProcessCreationEvent(9600, 100, "powershell.exe", ps, "powershell.exe -File test.ps1", DateTimeOffset.UtcNow));
+
+        Assert.Equal(ProcessStartDecision.AskUser, outcome.Decision);
+        Assert.Contains(outcome.Findings, f => f.Id == "MEM-YARA-MATCH" && f.Severity == Severity.Critical);
+        Assert.Contains(outcome.Findings, f => f.Id == "MEM-REFLECTIVE-PE" && f.Severity == Severity.Critical);
+        var threat = Assert.IsType<Realtime.ThreatEvent>(outcome.Threat);
+        Assert.Equal(Severity.Critical, threat.Severity);
+        Assert.Equal(Realtime.ThreatStatus.PendingDecision, threat.Status);
+        Assert.StartsWith("Ожидает решения пользователя:", threat.ActionMessage, StringComparison.Ordinal);
+        Assert.Empty(b.Host.Killed);
+    }
+
+    [Fact]
+    public async Task Dispatcher_DecisionRoute_KeepsCritical_ThenUserConfirmationNeutralizes()
+    {
+        using var b = new DispatcherBench();
+        b.Host.Add(9700, 1, "loader.exe", @"C:\Temp\loader.exe");
+        var entry = new ProcessAuditEntry(
+            new ProcessSnapshot { Pid = 9700, Name = "loader.exe", ExecutablePath = @"C:\Temp\loader.exe" },
+            [AuditFinding.Create("MEM-YARA-MATCH", Severity.Critical, "Сигнатура в памяти", "Синтетика.")],
+            null);
+
+        var pending = await b.Dispatcher.DispatchProcessForDecisionAsync(entry, "Файл подписан доверенным издателем — решает пользователь.");
+
+        Assert.Equal(Severity.Critical, pending!.Severity);
+        Assert.Equal(Realtime.ThreatStatus.PendingDecision, pending.Status);
+        Assert.Empty(b.Host.Killed);
+
+        var resolved = await b.Dispatcher.ResolveAsync(pending.Id, Realtime.ThreatDecision.Quarantine);
+        Assert.Equal(Realtime.ThreatStatus.Terminated, resolved.Status);
+        Assert.Contains(9700, b.Host.Killed);
+    }
+}

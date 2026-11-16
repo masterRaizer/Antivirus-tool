@@ -3,8 +3,8 @@
 Обновлено: 2026-11-16 (UTC). Ведёт `repo-scout`; правила — скиллы `sentinel-stage-flow` и `av-core-engineer`.
 
 ## Ветка и коммит
-- Основная ветка: `main` — включает этапы 1–7 (релиз `v1.2.0` + `SelfProtection` DACL и `CriticalProcessGuard`), скиллы `.claude/skills/` и актуальную документацию.
-- Все новые работы для этапа 8 (`v1.3.0`) вести от актуального `main` по одному модулю за итерацию.
+- Основная ветка: `main` — включает этапы 1–8 (релиз `v1.3.0`: `ProcessStartMonitor`, `MemoryIntegrityScanner`, `IProcessContainment`, драйвер `SentinelDrv`), скиллы `.claude/skills/` и актуальную документацию.
+- Релиз `v1.3.0` — аннотированный тег на `main`; GitHub Release публикуется workflow по тегу. Новые работы вести от актуального `main` по одному модулю за итерацию.
 
 ## Статус этапов
 | Этап | Содержание | Статус |
@@ -16,7 +16,7 @@
 | 5 | Релизы в GitHub Actions: `.github/workflows/release.yml` (windows-latest: тесты, `publish-windows.ps1`, MSI на WiX 5.0.2, GitHub Release с `.msi` и `Sentinel.App.exe`), `installer/Sentinel.Installer/` (вне `Sentinel.sln`), шаблон `allowed_exclusions.json` | Release `v1.0.0` опубликован (run на `main` зелёный: тесты, publish, MSI). |
 | 6 | Версия 1.1.0 / 1.1.1: скоринг угроз (0–100), потоковый `FileAnalyzer`, импорт PE и .NET, режимы Quick/Full/Custom с защитой от ReparsePoint, кэш чистых файлов, самозащита; база угроз `data/threat_hashes.bin` (11 743 SHA-256, MemoryMappedFile) с обновлятором и облачной проверкой; пул проверки; исправления по отчёту 1.0.0; ACL канала для AuthenticatedUsers, автоподключение 2 с, «Запустить службу»; WPF 1.1.0; WiX 1.1.0; Безопасный режим и WinRE (1.1.1) | Готов, слит в `main`. Linux, Release: build 0/0, 538 тестов — 533 passed, 5 skipped (`WindowsFact`). |
 | 7 | Версия 1.2.0: `NativePersistenceParser` (7/1), `RansomwareBehaviorShield` + `CanaryFileGuard` (7/2), `BehavioralCorrelationEngine` + `FalsePositiveGuard` (7/3), `RemovableMediaShield` — USB-щит (7/4), интеграция в Service/CLI/WPF (7/5), спецификация `docs/ARCHITECTURE_V2_KERNEL_SPEC.md` (7/6), DACL-самозащита (`SelfProtection`) и `CriticalProcessGuard` (7/7) | Готов, слит в `main`. Release build 0/0, 632+ теста зелёные. |
-| 8 | Версия 1.3.0 (код готов, 8/1–8/4; ждёт живой проверки драйвера): написание в Linux-контейнере с компиляцией на `windows-latest` в GitHub Actions и живой проверкой пользователем на ноутбуке с Windows: (8/1) `ProcessStartMonitor` (подписка на события старта процессов через `IProcessCreationEventSource`); (8/2) `MemoryIntegrityScanner` в `ProcessAuditor` (потоковая проверка регионов `MEM_PRIVATE`/`PAGE_EXECUTE_READWRITE` буфером 64 КБ через `IMemoryReader`); (8/3) изоляция потоков в `RemediationEngine` перед карантином (строго под защитой `CriticalProcessGuard`); (8/4) `IKernelBridge` и исходный код драйвера `driver/SentinelDrv` (вне `Sentinel.sln`) со сборкой на `windows-latest` в `.github/workflows/release.yml` | Готов в коде; 8/2 проверен на Windows 11, драйвер — на проверке |
+| 8 | Версия 1.3.0 (8/1–8/4 + стабилизация D1–D7): написание в Linux-контейнере с компиляцией на `windows-latest` в GitHub Actions и живой проверкой пользователем на ноутбуке с Windows: (8/1) `ProcessStartMonitor` (подписка на события старта процессов через `IProcessCreationEventSource`); (8/2) `MemoryIntegrityScanner` в `ProcessAuditor` (потоковая проверка регионов `MEM_PRIVATE`/`PAGE_EXECUTE_READWRITE` буфером 64 КБ через `IMemoryReader`); (8/3) изоляция потоков в `RemediationEngine` перед карантином (строго под защитой `CriticalProcessGuard`); (8/4) `IKernelBridge` и исходный код драйвера `driver/SentinelDrv` (вне `Sentinel.sln`) со сборкой на `windows-latest` в `.github/workflows/release.yml` | Готов и верифицирован на реальном ядре Windows 11 26100 (контрольная проверка `f77f5b7`); релиз `v1.3.0` |
 
 ## Следующие шаги (Этап 8 — v1.3.0)
 > **Важное правило для агента:** Все модули этапа 8 пишутся в Linux-контейнере. То, что физически нельзя запустить на Linux (Win32 API, WMI/ETW, WDK драйвер `SentinelDrv.sys`), НЕ является заглушкой: C#-логика закрывается интерфейсами и тестируется на Linux моками (`dotnet test Sentinel.sln`), а компиляция нативных частей проверяется через GitHub Actions (`windows-latest`). Живой запуск на Windows делает пользователь на своём ноутбуке.
@@ -136,16 +136,31 @@
     (`Sentinel.*` с Information). `ProcessStartMonitor` через 1,75 с повторно проверяет память интерпретаторов (`powershell`, `pwsh`, `cmd`, `mshta`,
     `rundll32`, `regsvr32`, `wscript`, `cscript`) и неподписанных `.exe` (не более 2 одновременно, очередь до 32) — ловит RWX-нагрузку, выделенную после старта.
 
+### Контрольная проверка `f77f5b7` (Windows 11 26100, `PCARKNIGHT`, администратор, Test Mode) — D1–D7 закрыты, этап 8 верифицирован на реальном ядре
+- D6: `dist\rules` и `dist\data` плоские, `Sentinel.Cli.exe rules` — «Итого: 5 правил, 0 ошибок», дублей id нет.
+- D1: `install-driver-testmode.ps1 -Action Install` без `-SourceDirectory` — сертификат импортирован, `SentinelDrv` `RUNNING`, `kernel-status` — kernel, 1.3.0 / 1.
+- D2/D5/D7: `Start-Service` за 0,7 с, все рабочие процессы стартовали одновременно, 8 PID в ядре через 74 мс; `taskkill /F /IM Sentinel.Service.exe` —
+  `Access is denied`; служба из `C:\Sentinel-v1.3.0-fix\` себя не детектирует и не отключает; журнал `service-*.log` пишется.
+- D4: `cmd.exe` с порождением `conhost.exe` (`\SystemRoot\System32\conhost.exe`) — без ложных `PROC-IMPERSONATION`.
+- D3: `sc stop SentinelDrv` — `STOPPED` за 3,2 с без зависания, служба продолжила в user-mode; после `sc start SentinelDrv` — переподключение и
+  синхронизация 8 PID через ~12–14 с без перезапуска службы.
+- D7 (служба): `test-memory-scanner.ps1 -WithPeHeader` — автоматически `MEM-REFLECTIVE-PE`, `MEM-YARA-MATCH`, `MEM-RWX-IMAGE-PATCH`, решение
+  AskUser / PendingDecision (powershell.exe подписан Microsoft — `FalsePositiveGuard`).
+- По итогам: при решении AskUser `ProcessStartMonitor` больше не занижает критичность находок до Medium — `MEM-YARA-MATCH`/`MEM-REFLECTIVE-PE`
+  остаются Critical в событии и журнале, а автоматическое действие запрещает явный маршрут диспетчера
+  `DispatchProcessForDecisionAsync` (статус PendingDecision, «Ожидает решения пользователя: <причина FalsePositiveGuard>»). Тесты `AskUserSeverityTests`.
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
-- **Контрольная проверка 1.3.0 (артефакт стабилизационного коммита):**
+- **Контрольная проверка 1.3.0 — пройдена на `f77f5b7` (см. выше); чек-лист для повторных проверок:**
   1. Журнал `%ProgramData%\Sentinel\Logs\service-*.log`: в первые секунды после `sc start SentinelService` — «Драйвер ядра [kernel]: …»,
      «Драйвер ядра: защищаемых процессов N (…)», «Мониторинг старта процессов запущен (источник: драйвер ядра)»; `sentinel.exe service-status` отвечает сразу.
   2. Запуск `cmd.exe`/`conhost.exe` — никаких `PROC-IMPERSONATION` и завершений системных процессов.
   3. `sc stop SentinelDrv` при работающей службе — `STATE 1 STOPPED` за 2–3 с; в журнале «Драйвер ядра отключён: …»; `sc start SentinelDrv` —
-     через ~10 с «Драйвер ядра подключён» и снова «защищаемых процессов N».
+     через ≈15 с «Драйвер ядра подключён» и снова «защищаемых процессов N» (переподключение раз в 10 с + синхронизация PID).
   4. Служба, запущенная из `C:\Sentinel-v1.3.0\`, не отключает сама себя (в журнале нет `SentinelService [Service] … Cleaned`).
   5. `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` при работающей службе — через ~2 с событие по
-     `powershell.exe` с `MEM-YARA-MATCH`/`MEM-REFLECTIVE-PE` (итог «Blocked» — powershell.exe подписан Microsoft) без ручного `audit-memory`.
+     `powershell.exe` с `MEM-YARA-MATCH`/`MEM-REFLECTIVE-PE` (критичность Critical) без ручного `audit-memory`; ожидаемый итог — AskUser /
+     PendingDecision: powershell.exe подписан Microsoft, поэтому `FalsePositiveGuard` оставляет решение пользователю.
   6. В `dist` нет `rules\rules` и `data\data`; `sentinel.exe rules` — без «Дублирующийся id правила».
 - **8/2:** окно 1: `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` (печатает PID);
   окно 2 (администратор): `sentinel.exe audit-memory <PID>` → `MEM-YARA-MATCH` (EICAR-Test-File) и `MEM-REFLECTIVE-PE` (PE (x64)), код выхода 1.

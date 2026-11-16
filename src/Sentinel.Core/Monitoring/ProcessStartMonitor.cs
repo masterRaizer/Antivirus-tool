@@ -320,7 +320,9 @@ public sealed class ProcessStartMonitor
         // (6) Критичность находок приводится к решению предохранителя: диспетчер реагирует по критичности.
         var routed = AlignSeverity(findings, decision, guard);
         var entry = new ProcessAuditEntry(snapshot, routed, scan);
-        var threat = await _dispatcher.DispatchProcessAsync(entry, Source, cancellationToken).ConfigureAwait(false);
+        var threat = decision == ProcessStartDecision.AskUser
+            ? await _dispatcher.DispatchProcessForDecisionAsync(entry, guard.Reason, Source, cancellationToken).ConfigureAwait(false)
+            : await _dispatcher.DispatchProcessAsync(entry, Source, cancellationToken).ConfigureAwait(false);
         return Finish(created, decision, guard.EffectiveScore, guard.Reason, routed, correlation, threat);
     }
 
@@ -412,14 +414,15 @@ public sealed class ProcessStartMonitor
         var ask = _options.Dispatcher.AskThreshold;
         if (decision == ProcessStartDecision.AskUser)
         {
-            // Спорное не нейтрализуется автоматически, даже если отдельное правило критично (например, подписанный файл).
-            var capped = findings.Select(f => f.Severity >= auto ? f with { Severity = ask } : f).ToList();
-            if (capped.Max(f => f.Severity) < ask)
+            // Критичность не занижается (MEM-YARA-MATCH/MEM-REFLECTIVE-PE остаются Critical): автоматическое действие
+            // запрещает не она, а явный маршрут «решение за пользователем» в диспетчере (decisionReason).
+            var kept = findings.ToList();
+            if (kept.Max(f => f.Severity) < ask)
             {
-                capped.Add(Summary(ask, guard));
+                kept.Add(Summary(ask, guard));
             }
 
-            return capped;
+            return kept;
         }
 
         var result = findings.ToList();
