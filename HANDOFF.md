@@ -60,4 +60,8 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 ### 7/2 RansomwareBehaviorShield + CanaryFileGuard (готово)
 - `src/Sentinel.Core/Behavioral/`: `CanaryFileGuard` (приманки с валидными заголовками + SHA-256, реестр путей, Inspect/RemoveUntouched, вес +85) и `RansomwareBehaviorShield` (окно 5 с, дебаунс 300 мс, исключение node_modules/.git/bin/obj/кэшей, потоковая энтропия, пороги всплеск+расширение+энтропия, тревога ≥75).
 - Проверка: build 0/0, 588 тестов (583 passed, 5 Windows-only skipped). Чистый всплеск текстовых файлов и работа в .git/node_modules тревогу не вызывают.
-### Следующий модуль: 7/3 BehavioralCorrelationEngine + FalsePositiveGuard
+### 7/3 BehavioralCorrelationEngine + FalsePositiveGuard (готово)
+- `FalsePositiveGuard`: самозащита с защитой от маскировки (поддельный C:\Temp\lsass.exe не иммунен), белый список (путь/хеш), кэш чистых файлов, подпись −35 и запрет авто-карантина подписанного/в теневом режиме; пороги LogOnly/AskUser/Act.
+- `BehavioralCorrelationEngine`: кольцевой буфер (2048, окно 60 с), цепочки BH-01 (дроппер+ярлык/автозапуск, +50), BH-02 (обфускация/fileless, +55), BH-03 (автозапуск на неподписанный профильный бинарник, +65).
+- Проверка: build 0/0, 609 тестов (604 passed, 5 Windows-only skipped).
+### Следующий модуль: 7/4 RemovableMediaShield (USB-щит)
