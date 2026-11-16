@@ -3,7 +3,10 @@ using System.Windows.Threading;
 using Sentinel.App.Services;
 using Sentinel.App.ViewModels;
 using Sentinel.App.Views;
+using System.Windows.Interop;
+using System.Windows.Media;
 using Sentinel.Core.Realtime;
+using Sentinel.Core.Runtime;
 
 namespace Sentinel.App;
 
@@ -49,13 +52,20 @@ public partial class App : Application
             return;
         }
 
+        // Безопасный режим и WinRE: базовый видеодрайвер без DirectX — WPF рисует программно, иначе окно может не открыться.
+        var boot = RecoveryEnvironment.DetectCurrent();
+        if (boot.IsRecoveryMode())
+        {
+            RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+        }
+
         DispatcherUnhandledException += OnUnhandledException;
         _showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSignalName);
         _showRegistration = ThreadPool.RegisterWaitForSingleObject(
             _showSignal, (_, _) => Dispatcher.BeginInvoke(ShowMainWindow), null, Timeout.Infinite, executeOnlyOnce: false);
 
         _hub = new BackendHub();
-        _model = new MainViewModel(_hub);
+        _model = new MainViewModel(_hub) { BootEnvironment = boot };
         _window = new MainWindow { DataContext = _model };
         MainWindow = _window;
         _popup = new DecisionPopup(_model.Decisions);

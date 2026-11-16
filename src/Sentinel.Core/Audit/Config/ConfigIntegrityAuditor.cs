@@ -66,23 +66,24 @@ public sealed class ConfigIntegrityAuditor
     {
         var findings = new List<ConfigFinding>();
         var exclusions = new List<DefenderExclusion>();
+        var skipped = new List<SkippedAuditStep>();
         if (_registry is not null || _defender is not null)
         {
-            AuditDefenderExclusions(findings, exclusions);
+            AuditStepGuard.Run("Исключения Defender", () => AuditDefenderExclusions(findings, exclusions), skipped);
         }
 
         if (_registry is not null)
         {
-            AuditFirewall(findings);
-            AuditProxy(findings);
+            AuditStepGuard.Run("Правила брандмауэра", () => AuditFirewall(findings), skipped);
+            AuditStepGuard.Run("Системный прокси", () => AuditProxy(findings), skipped);
         }
 
         if (_certificates is not null)
         {
-            AuditRootCertificates(findings);
+            AuditStepGuard.Run("Корневые сертификаты", () => AuditRootCertificates(findings), skipped);
         }
 
-        return new ConfigAuditReport(findings) { DefenderExclusions = exclusions };
+        return new ConfigAuditReport(findings) { DefenderExclusions = exclusions, Skipped = skipped };
     }
 
     // ---- Исключения Windows Defender ------------------------------------------
@@ -112,7 +113,17 @@ public sealed class ConfigIntegrityAuditor
         // Действующие настройки Defender (WMI MSFT_MpPreference): исключения, которых нет в прочитанных ветках реестра.
         if (_defender is not null)
         {
-            foreach (var exclusion in _defender.GetExclusions())
+            IReadOnlyList<DefenderExclusion> fromWmi;
+            try
+            {
+                fromWmi = _defender.GetExclusions();
+            }
+            catch (Exception ex) when (AuditStepGuard.IsUnavailable(ex))
+            {
+                fromWmi = []; // WMI/Defender остановлены (Безопасный режим, WinRE): остаются данные реестра
+            }
+
+            foreach (var exclusion in fromWmi)
             {
                 if (seen.Add((exclusion.Kind, exclusion.Value.Trim().Trim('"').ToLowerInvariant())))
                 {

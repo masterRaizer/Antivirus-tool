@@ -26,6 +26,9 @@ public sealed record ConfigAuditReport(IReadOnlyList<ConfigFinding> Findings)
     /// </summary>
     public IReadOnlyList<DefenderExclusion> DefenderExclusions { get; init; } = [];
 
+    /// <summary>Шаги, пропущенные из-за недоступности системной службы (Безопасный режим, WinRE).</summary>
+    public IReadOnlyList<SkippedAuditStep> Skipped { get; init; } = [];
+
     public int Count => Findings.Count;
 
     public IEnumerable<ConfigFinding> ByArea(ConfigArea area) => Findings.Where(f => f.Area == area);

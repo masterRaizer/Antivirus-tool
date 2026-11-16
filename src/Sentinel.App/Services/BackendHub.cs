@@ -42,19 +42,28 @@ public sealed class BackendHub : ISentinelBackend, IAsyncDisposable
 
     public bool IsServiceMode { get; private set; }
 
+    /// <summary>Режим загрузки Windows (Безопасный режим, WinRE): в нём приложение работает только автономно.</summary>
+    public BootEnvironment BootEnvironment { get; private set; } = BootEnvironment.Normal;
+
+    public bool IsRecoveryMode => BootEnvironment.IsRecoveryMode();
+
     /// <summary>Каталог данных автономного режима (для подсказки в интерфейсе).</summary>
     public string? LocalDataDirectory => _local?.DataDirectory;
 
     private ISentinelBackend Current =>
         _current ?? throw new InvalidOperationException("Движок Sentinel ещё не инициализирован.");
 
-    /// <summary>Подключается к службе, а если она не запущена — поднимает локальный рантайм.</summary>
-    public async Task InitializeAsync()
+    /// <summary>
+    /// Подключается к службе, а если она не запущена — поднимает локальный рантайм. В Безопасном режиме и WinRE
+    /// канал службы не ожидается: приложение сразу работает автономно, без цикла переподключения.
+    /// </summary>
+    public async Task InitializeAsync(BootEnvironment environment = BootEnvironment.Normal)
     {
+        BootEnvironment = environment;
         await _switchLock.WaitAsync();
         try
         {
-            if (!await TryAttachServiceAsync())
+            if (IsRecoveryMode || !await TryAttachServiceAsync())
             {
                 StartLocal();
             }
@@ -65,7 +74,10 @@ public sealed class BackendHub : ISentinelBackend, IAsyncDisposable
         }
 
         ModeChanged?.Invoke();
-        _reconnectLoop = Task.Run(ReconnectLoopAsync);
+        if (!IsRecoveryMode)
+        {
+            _reconnectLoop = Task.Run(ReconnectLoopAsync);
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -350,23 +362,8 @@ public sealed class BackendHub : ISentinelBackend, IAsyncDisposable
     private void OnStatus(ServiceStatus s) => StatusChanged?.Invoke(s);
 
     /// <summary>
-    /// Каталог данных автономного режима: общий <c>%ProgramData%\Sentinel</c>, если в него можно писать
-    /// (приложение запущено администратором), иначе личный <c>%LocalAppData%\Sentinel</c>.
+    /// Каталог данных автономного режима: первый доступный для записи из <c>%ProgramData%\Sentinel</c>, <c>SentinelData</c>
+    /// рядом с <c>Sentinel.App.exe</c> (портативный запуск с флешки, WinRE), <c>%LocalAppData%\Sentinel</c>, <c>%TEMP%\SentinelData</c>.
     /// </summary>
-    private static string ChooseDataDirectory()
-    {
-        var shared = SentinelRuntimeOptions.DefaultDataDirectory();
-        try
-        {
-            Directory.CreateDirectory(shared);
-            var probe = Path.Combine(shared, $".write-probe-{Environment.ProcessId}");
-            File.WriteAllText(probe, string.Empty);
-            File.Delete(probe);
-            return shared;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sentinel");
-        }
-    }
+    private static string ChooseDataDirectory() => DataDirectoryResolver.ChooseDefault();
 }
