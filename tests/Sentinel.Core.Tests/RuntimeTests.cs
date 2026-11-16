@@ -74,6 +74,9 @@ internal sealed class RuntimeBench : IAsyncDisposable
             FullScanRoots = [new ScanRoot(ScanDir)],
             RulesLoaded = 7,
             KernelBridgeFactory = kernelBridge,
+            KernelHealthInterval = TimeSpan.FromMilliseconds(20),
+            KernelReconnectInterval = TimeSpan.FromMilliseconds(60),
+            KernelSyncInterval = TimeSpan.FromMilliseconds(60),
         });
         Runtime.ScanProgressChanged += p => { lock (Progress) { Progress.Add(p); } };
         Runtime.ThreatRaised += t => { lock (Raised) { Raised.Add(t); } };

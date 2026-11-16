@@ -27,6 +27,23 @@ internal sealed class FakeKernelBridge : IKernelBridge
 
     public bool Disposed { get; private set; }
 
+    /// <summary>Имитация <c>sc stop SentinelDrv</c>: следующая проверка живости отпускает «дескриптор».</summary>
+    public bool StopRequested { get; set; }
+
+    public int HealthChecks { get; private set; }
+
+    public bool CheckConnection()
+    {
+        HealthChecks++;
+        if (StopRequested && IsConnected)
+        {
+            IsConnected = false;
+            Disposed = true; // дескриптор закрыт сразу, а не при остановке службы
+        }
+
+        return IsConnected;
+    }
+
     public KernelDriverStatus GetStatus() => IsConnected
         ? new KernelDriverStatus(true, KernelDriverStatus.KernelMode, "fake driver") { ProcessNotifyActive = ProcessNotify, ObCallbacksActive = true }
         : KernelDriverStatus.UserMode();
@@ -55,6 +72,16 @@ internal sealed class FakeKernelBridge : IKernelBridge
     }
 
     public void Dispose() => Disposed = true;
+}
+
+/// <summary>
+/// Тесты, меняющие общий набор PID под защитой ядра (<see cref="CriticalProcessGuard.SetKernelProtectedProcessIds"/>),
+/// выполняются последовательно — иначе параллельные тесты видели бы чужое состояние.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class KernelGuardStateGroup
+{
+    public const string Name = "KernelGuardState";
 }
 
 public class KernelProtocolTests
@@ -305,6 +332,7 @@ public class KernelBridgeFallbackTests
     }
 }
 
+[Collection(KernelGuardStateGroup.Name)]
 public class KernelProtectionSyncTests
 {
     private const int OwnPid = 910_000;
@@ -435,6 +463,7 @@ public class KernelProcessCreationEventSourceTests
     }
 }
 
+[Collection(KernelGuardStateGroup.Name)]
 public class RuntimeKernelTests
 {
     [Fact]
@@ -459,7 +488,10 @@ public class RuntimeKernelTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
         await bench.Runtime.RunProcessStartMonitorAsync(cts.Token);
-        await bench.Runtime.RunKernelBridgeAsync(cts.Token);
+        using (var loop = new CancellationTokenSource(TimeSpan.FromMilliseconds(300)))
+        {
+            await bench.Runtime.RunKernelBridgeAsync(loop.Token); // без драйвера цикл ждёт переподключения до отмены
+        }
 
         Assert.Equal(1, bench.Runtime.ProcessStartsInspected);
         Assert.Contains(bench.Raised, t => t.ProcessId == 7100 && t.Source == ProcessStartMonitor.Source);

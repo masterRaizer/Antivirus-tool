@@ -45,6 +45,12 @@ public sealed class SentinelRuntimeOptions
 
     public TimeSpan KernelSyncInterval { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>Как часто проверять, не останавливают ли драйвер (тогда дескриптор устройства отпускается сразу).</summary>
+    public TimeSpan KernelHealthInterval { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>Как часто без драйвера пробовать подключиться к нему снова.</summary>
+    public TimeSpan KernelReconnectInterval { get; init; } = TimeSpan.FromSeconds(10);
+
     /// <summary>Потоковый аудит памяти процессов (только Windows); <c>null</c> — память не проверяется.</summary>
     public Auditors.Memory.MemoryIntegrityScanner? MemoryScanner { get; init; }
 

@@ -19,8 +19,13 @@
 param(
     [ValidateSet('Install', 'Uninstall', 'Status')]
     [string] $Action = 'Install',
-    [string] $SourceDirectory = $PSScriptRoot
+    [string] $SourceDirectory = ''
 )
+
+# В Windows PowerShell 5.1 $PSScriptRoot внутри param(...) пуст при запуске через -File — вычисляем в теле скрипта.
+if ([string]::IsNullOrWhiteSpace($SourceDirectory)) {
+    $SourceDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+}
 
 $ErrorActionPreference = 'Stop'
 $serviceName = 'SentinelDrv'

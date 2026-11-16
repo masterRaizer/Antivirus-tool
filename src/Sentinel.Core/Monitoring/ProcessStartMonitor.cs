@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Sentinel.Core.Audit;
 using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Behavioral;
@@ -62,8 +63,20 @@ public sealed class ProcessStartMonitorOptions
     /// <summary>Дополнительные каталоги Sentinel (например, каталог данных рантайма).</summary>
     public IReadOnlyList<string> ExtraOwnDirectories { get; init; } = [];
 
-    /// <summary>Аудитор процессов (политика системных каталогов, пороги).</summary>
+    /// <summary>Аудитор процессов (политика системных каталогов, пороги, сканер памяти).</summary>
     public ProcessAuditorOptions Auditor { get; init; } = new();
+
+    /// <summary>
+    /// Задержка отложенной повторной проверки памяти интерпретаторов и неподписанных процессов: полезная нагрузка часто
+    /// распаковывается в RWX-память через 1–2 с после старта. <see cref="TimeSpan.Zero"/> — повторная проверка выключена.
+    /// </summary>
+    public TimeSpan MemoryRescanDelay { get; init; } = TimeSpan.FromSeconds(1.75);
+
+    /// <summary>Сколько повторных проверок памяти выполняется одновременно.</summary>
+    public int MaxConcurrentMemoryRescans { get; init; } = 2;
+
+    /// <summary>Предел очереди повторных проверок: при всплеске запусков лишние не ставятся (периодический аудит их догонит).</summary>
+    public int MaxPendingMemoryRescans { get; init; } = 32;
 }
 
 /// <summary>
@@ -89,6 +102,17 @@ public sealed class ProcessStartMonitor
     private readonly ProcessStartMonitorOptions _options;
     private long _processed;
     private long _skipped;
+    private long _rescansScheduled;
+    private long _rescansDropped;
+    private int _pendingRescans;
+    private SemaphoreSlim? _rescanGate;
+    private readonly ConcurrentDictionary<Task, byte> _rescans = new();
+
+    /// <summary>Интерпретаторы и хосты сценариев: им всегда назначается отложенная повторная проверка памяти.</summary>
+    private static readonly HashSet<string> RescanHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "wscript.exe", "cscript.exe",
+    };
 
     public ProcessStartMonitor(
         IProcessCreationEventSource source,
@@ -124,6 +148,16 @@ public sealed class ProcessStartMonitor
     /// <summary>Пропущено предохранителями без анализа (защищённые и разрешённые процессы).</summary>
     public long Skipped => Interlocked.Read(ref _skipped);
 
+    public long MemoryRescansScheduled => Interlocked.Read(ref _rescansScheduled);
+
+    public long MemoryRescansDropped => Interlocked.Read(ref _rescansDropped);
+
+    /// <summary>Итог отложенной повторной проверки памяти, нашедшей угрозу.</summary>
+    public event Action<ProcessStartOutcome>? MemoryRescanned;
+
+    /// <summary>Дожидается завершения запланированных повторных проверок памяти (остановка службы, тесты).</summary>
+    public Task DrainMemoryRescansAsync() => Task.WhenAll(_rescans.Keys);
+
     /// <summary>Читает источник до отмены. <paramref name="isEnabled"/> = false — события пропускаются (защита приостановлена).</summary>
     public async Task RunAsync(Func<bool>? isEnabled = null, CancellationToken cancellationToken = default)
     {
@@ -157,7 +191,8 @@ public sealed class ProcessStartMonitor
     {
         ArgumentNullException.ThrowIfNull(created);
         Interlocked.Increment(ref _processed);
-        var path = string.IsNullOrWhiteSpace(created.ExecutablePath) ? null : created.ExecutablePath;
+        // Пути из ядра (\SystemRoot\System32\conhost.exe, \??\C:\…) приводятся к Win32 до сравнения со штатными каталогами.
+        var path = string.IsNullOrWhiteSpace(created.ExecutablePath) ? null : Kernel.NtPath.ToWin32(created.ExecutablePath);
         var name = string.IsNullOrWhiteSpace(created.ProcessName) ? Path.GetFileName(path ?? string.Empty) : created.ProcessName;
 
         // (1) Жёсткий предохранитель: ядро ОС в системном каталоге и сам Sentinel не анализируются и не трогаются.
@@ -234,16 +269,28 @@ public sealed class ProcessStartMonitor
         }
 
         score = Math.Clamp(score, 0, 100);
-        if (findings.Count == 0)
+        var outcome = findings.Count == 0
+            ? Finish(created, ProcessStartDecision.Clean, score, "Замечаний нет.", findings, correlation, null)
+            : await DecideAsync(created, snapshot, findings, score, scan, signed, allowed, correlation, cancellationToken).ConfigureAwait(false);
+
+        if (ShouldRescanMemory(outcome.Decision, name, path, scan, signed))
         {
-            return Finish(created, ProcessStartDecision.Clean, score, "Замечаний нет.", findings, correlation, null);
+            ScheduleMemoryRescan(created, snapshot, signed, cancellationToken);
         }
 
+        return outcome;
+    }
+
+    /// <summary>(5) FalsePositiveGuard → (6) выравнивание критичности → диспетчер. Общий для первичной и повторной проверки.</summary>
+    private async Task<ProcessStartOutcome> DecideAsync(
+        ProcessCreationEvent created, ProcessSnapshot snapshot, List<AuditFinding> findings, int score, FileScanResult? scan,
+        bool signed, AllowedExclusions allowed, CorrelationFinding? correlation, CancellationToken cancellationToken)
+    {
         // (5) Фильтр ложных срабатываний: самозащита, белый список (пути/хеши), доверенная подпись, теневой режим.
         var guard = new FalsePositiveGuard(allowed, null, _options.ExtraOwnDirectories, _options.ActThreshold, _options.AskThreshold)
             .Evaluate(new GuardContext
             {
-                Path = path,
+                Path = snapshot.ExecutablePath,
                 Sha256 = scan?.Sha256,
                 Score = score,
                 HasValidTrustedSignature = signed,
@@ -265,7 +312,7 @@ public sealed class ProcessStartMonitor
 
         if (decision is ProcessStartDecision.LogOnly)
         {
-            Log?.Invoke($"Старт процесса {name} (PID {created.ProcessId}): балл {guard.EffectiveScore}, только журнал — "
+            Log?.Invoke($"Старт процесса {snapshot.Name} (PID {created.ProcessId}): балл {guard.EffectiveScore}, только журнал — "
                 + string.Join("; ", findings.Select(f => f.Id)));
             return Finish(created, decision, guard.EffectiveScore, guard.Reason, findings, correlation, null);
         }
@@ -275,6 +322,88 @@ public sealed class ProcessStartMonitor
         var entry = new ProcessAuditEntry(snapshot, routed, scan);
         var threat = await _dispatcher.DispatchProcessAsync(entry, Source, cancellationToken).ConfigureAwait(false);
         return Finish(created, decision, guard.EffectiveScore, guard.Reason, routed, correlation, threat);
+    }
+
+    private bool ShouldRescanMemory(ProcessStartDecision decision, string name, string? path, FileScanResult? scan, bool signed) =>
+        _options.Auditor.MemoryScanner is not null
+        && _options.MemoryRescanDelay > TimeSpan.Zero
+        && path is not null
+        && decision is ProcessStartDecision.Clean or ProcessStartDecision.LogOnly or ProcessStartDecision.AskUser
+        && (RescanHosts.Contains(name)
+            || (scan is not null && !signed && path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)));
+
+    private void ScheduleMemoryRescan(ProcessCreationEvent created, ProcessSnapshot snapshot, bool signed, CancellationToken cancellationToken)
+    {
+        if (Interlocked.Increment(ref _pendingRescans) > _options.MaxPendingMemoryRescans)
+        {
+            Interlocked.Decrement(ref _pendingRescans);
+            Interlocked.Increment(ref _rescansDropped);
+            return;
+        }
+
+        Interlocked.Increment(ref _rescansScheduled);
+        var gate = LazyInitializer.EnsureInitialized(ref _rescanGate, () => new SemaphoreSlim(Math.Max(1, _options.MaxConcurrentMemoryRescans)));
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(_options.MemoryRescanDelay, cancellationToken).ConfigureAwait(false);
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (await RescanMemoryAsync(created, snapshot, signed, cancellationToken).ConfigureAwait(false) is { } outcome)
+                    {
+                        MemoryRescanned?.Invoke(outcome);
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                or ArgumentException or System.ComponentModel.Win32Exception)
+            {
+                Log?.Invoke($"Повторная проверка памяти {snapshot.Name} (PID {created.ProcessId}) не выполнена: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _pendingRescans);
+            }
+        }, CancellationToken.None);
+        _rescans.TryAdd(task, 0);
+        _ = task.ContinueWith(t => _rescans.TryRemove(t, out _), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Отложенная проверка памяти: ловит RWX-регионы с PE/сигнатурами, выделенные уже после старта. Угроза проходит тот же
+    /// путь, что и первичная находка: корреляция BH-05 → FalsePositiveGuard → диспетчер. <c>null</c> — память чиста.
+    /// </summary>
+    private async Task<ProcessStartOutcome?> RescanMemoryAsync(
+        ProcessCreationEvent created, ProcessSnapshot snapshot, bool signed, CancellationToken cancellationToken)
+    {
+        var memory = _options.Auditor.MemoryScanner!.Scan(snapshot.Pid, snapshot.Name, snapshot.ExecutablePath);
+        if (!memory.IsThreat)
+        {
+            return null;
+        }
+
+        var findings = memory.ToFindings(snapshot.Name, snapshot.ExecutablePath).ToList();
+        var score = memory.Score.Value;
+        var correlation = _correlation.ReportMemoryAnomaly(snapshot.ExecutablePath ?? snapshot.Name,
+            string.Join(", ", memory.Anomalies.Select(a => a.Id).Distinct()));
+        if (correlation is not null)
+        {
+            score = Math.Max(score, correlation.Score) + 10;
+            findings.Add(AuditFinding.Create($"PROC-{ChainCode(correlation.Chain)}", Severity.High,
+                "Поведенческая цепочка после старта процесса", correlation.Summary, Evidence.Of("pid", created.ProcessId)));
+        }
+
+        return await DecideAsync(created, snapshot, findings, Math.Clamp(score, 0, 100), null, signed, _allowed(), correlation, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private List<AuditFinding> AlignSeverity(List<AuditFinding> findings, ProcessStartDecision decision, GuardVerdict guard)

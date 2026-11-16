@@ -41,7 +41,8 @@ public sealed class SystemProcessPolicy
             return null;
         }
 
-        var dir = GetDirectory(executablePath);
+        // \SystemRoot\System32\conhost.exe и \??\C:\… из телеметрии ядра сравниваются как C:\Windows\System32.
+        var dir = GetDirectory(Kernel.NtPath.ToWin32(executablePath));
         if (dir is null)
         {
             return null;

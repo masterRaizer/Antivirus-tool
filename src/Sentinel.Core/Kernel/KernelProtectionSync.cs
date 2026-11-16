@@ -115,14 +115,21 @@ public sealed class KernelProcessCreationEventSource : IProcessCreationEventSour
     private readonly Func<IProcessCreationEventSource>? _fallback;
     private readonly TimeSpan _interval;
     private readonly TimeProvider _time;
+    private readonly Func<int, string?>? _resolveImagePath;
     private IProcessCreationEventSource? _active;
 
+    /// <param name="resolveImagePath">
+    /// Путь образа по PID в форме Win32 (на Windows — <c>QueryFullProcessImageName</c>), если путь из ядра остался в форме
+    /// <c>\Device\…</c> после нормализации.
+    /// </param>
     public KernelProcessCreationEventSource(
-        IKernelBridge bridge, Func<IProcessCreationEventSource>? fallback = null, TimeSpan? pollInterval = null, TimeProvider? timeProvider = null)
+        IKernelBridge bridge, Func<IProcessCreationEventSource>? fallback = null, TimeSpan? pollInterval = null, TimeProvider? timeProvider = null,
+        Func<int, string?>? resolveImagePath = null)
     {
         ArgumentNullException.ThrowIfNull(bridge);
         _bridge = bridge;
         _fallback = fallback;
+        _resolveImagePath = resolveImagePath;
         _interval = pollInterval ?? TimeSpan.FromMilliseconds(250);
         _time = timeProvider ?? TimeProvider.System;
     }
@@ -141,7 +148,7 @@ public sealed class KernelProcessCreationEventSource : IProcessCreationEventSour
             {
                 if (e.Kind == KernelProcessEventKind.Create)
                 {
-                    yield return e.ToCreationEvent();
+                    yield return Normalize(e.ToCreationEvent());
                 }
             }
 
@@ -163,6 +170,18 @@ public sealed class KernelProcessCreationEventSource : IProcessCreationEventSour
         {
             yield return e;
         }
+    }
+
+    /// <summary>Путь, оставшийся в форме ядра, дочитывается по PID; если процесс уже завершился — остаётся как есть.</summary>
+    private ProcessCreationEvent Normalize(ProcessCreationEvent created)
+    {
+        if (NtPath.IsWin32(created.ExecutablePath) || _resolveImagePath?.Invoke(created.ProcessId) is not { Length: > 0 } resolved)
+        {
+            return created;
+        }
+
+        var win32 = NtPath.ToWin32(resolved);
+        return created with { ExecutablePath = win32, ProcessName = win32[(win32.LastIndexOf('\\') + 1)..] };
     }
 
     public async ValueTask DisposeAsync()

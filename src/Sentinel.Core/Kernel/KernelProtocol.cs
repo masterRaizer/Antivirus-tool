@@ -53,6 +53,13 @@ public static class KernelProtocol
     public const uint EventFlagCommandTruncated = 0x2;
     public const uint EventFlagWasProtected = 0x4;
 
+    /// <summary>
+    /// Коды Win32 ответа <c>DeviceIoControl</c>, означающие остановку или выгрузку драйвера: <c>ERROR_FILE_NOT_FOUND</c> (2),
+    /// <c>ERROR_INVALID_HANDLE</c> (6), <c>ERROR_NOT_READY</c> (21), <c>ERROR_GEN_FAILURE</c> (31), <c>ERROR_NO_SUCH_DEVICE</c> (433),
+    /// <c>ERROR_OPERATION_ABORTED</c> (995), <c>ERROR_DEVICE_NOT_CONNECTED</c> (1167). Дескриптор при них закрывается немедленно.
+    /// </summary>
+    public static bool IsDriverGoneError(int win32Error) => win32Error is 2 or 6 or 21 or 31 or 433 or 995 or 1167;
+
     /// <summary>Макрос <c>CTL_CODE</c> из <c>winioctl.h</c>.</summary>
     public static uint CtlCode(uint deviceType, uint function, uint method, uint access) =>
         (deviceType << 16) | (access << 14) | (function << 2) | method;

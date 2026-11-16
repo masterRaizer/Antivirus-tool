@@ -321,6 +321,10 @@ public sealed class RemediationEngine
             {
                 actions.Add(Action(entry, RemediationStatus.Skipped, "Запись без находок — штатная, изменения не требуются."));
             }
+            else if (OwnPersistence(entry) is { } own)
+            {
+                actions.Add(Action(entry, RemediationStatus.Blocked, own));
+            }
             else if (entry.Kind == PersistenceKind.HostsFile)
             {
                 hosts.Add(entry);
@@ -344,6 +348,19 @@ public sealed class RemediationEngine
     {
         ArgumentNullException.ThrowIfNull(entry);
         return RollbackPersistence([entry])[0];
+    }
+
+    /// <summary>Самозащита: службы и файлы Sentinel не отключаются и не «откатываются» ни при каких находках.</summary>
+    private static string? OwnPersistence(PersistenceEntry entry)
+    {
+        if (entry.Kind == PersistenceKind.Service && Scanning.SelfProtection.IsOwnServiceName(entry.Name))
+        {
+            return $"Служба '{entry.Name}' — компонент Sentinel (самозащита): изменение и отключение запрещены.";
+        }
+
+        return entry.ResolvedTarget is { Length: > 0 } target && Scanning.SelfProtection.IsProtectedFile(target)
+            ? $"Цель '{target}' — файл Sentinel или критический файл Windows (самозащита): изменение автозагрузки запрещено."
+            : null;
     }
 
     private static RemediationAction Safely(PersistenceEntry entry, Func<RemediationAction> action)

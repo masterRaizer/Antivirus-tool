@@ -161,9 +161,11 @@ public sealed class RealtimeEventDispatcher
     public Task<ThreatEvent?> DispatchPersistenceAsync(PersistenceEntry entry, string source = "realtime", CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        if (!entry.HasFindings || _allowed.Load().IsPathAllowed(entry.ResolvedTarget))
+        if (!entry.HasFindings || _allowed.Load().IsPathAllowed(entry.ResolvedTarget)
+            || (entry.Kind == PersistenceKind.Service && SelfProtection.IsOwnServiceName(entry.Name))
+            || (entry.ResolvedTarget is { Length: > 0 } ownTarget && SelfProtection.IsProtectedFile(ownTarget)))
         {
-            return Task.FromResult<ThreatEvent?>(null);
+            return Task.FromResult<ThreatEvent?>(null); // собственные службы и файлы Sentinel находками не считаются
         }
 
         var reason = DescribeFindings(entry.Findings);

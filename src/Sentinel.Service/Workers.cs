@@ -11,6 +11,7 @@ internal sealed partial class FileMonitorWorker(SentinelRuntime runtime, ILogger
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Yield(); // не держать StartAsync службы на синхронной части запуска
         LogStarted(logger, runtime.RealtimeEnabled);
         await runtime.RunFileMonitorAsync(stoppingToken).ConfigureAwait(false);
     }
@@ -24,8 +25,11 @@ internal sealed partial class PeriodicAuditWorker(SentinelRuntime runtime, ILogg
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Первый аудит автозагрузки и конфигурации выполняется синхронно 1–3 минуты: уступаем поток, чтобы он не
+        // блокировал StartAsync службы (драйвер ядра, IPC и монитор старта процессов поднимаются сразу).
+        await Task.Yield();
         LogStarted(logger);
-        await runtime.RunPeriodicAuditAsync(stoppingToken).ConfigureAwait(false);
+        await Task.Run(() => runtime.RunPeriodicAuditAsync(stoppingToken), stoppingToken).ConfigureAwait(false);
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Фоновый аудит процессов, автозагрузки и конфигурации запущен.")]
@@ -40,6 +44,7 @@ internal sealed partial class ProcessStartMonitorWorker(SentinelRuntime runtime,
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Yield(); // подписка WMI при старте синхронна — не задерживаем остальные рабочие процессы
         LogStarted(logger);
         await runtime.RunProcessStartMonitorAsync(stoppingToken).ConfigureAwait(false);
     }
@@ -56,9 +61,17 @@ internal sealed partial class KernelBridgeWorker(SentinelRuntime runtime, ILogge
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Yield();
         var status = runtime.GetKernelStatus();
         LogStatus(logger, status.Mode, status.Message);
         await runtime.RunKernelBridgeAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Остановка службы: дескриптор \\.\SentinelDrv закрывается сразу, чтобы драйвер можно было остановить и выгрузить.</summary>
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        runtime.ReleaseKernelBridge();
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Драйвер ядра [{Mode}]: {Message}")]
@@ -68,13 +81,21 @@ internal sealed partial class KernelBridgeWorker(SentinelRuntime runtime, ILogge
 /// <summary>Фоновое автообновление баз угроз каждые 6 часов (если не отключено в «Настройках и базах»).</summary>
 internal sealed class DatabaseUpdateWorker(SentinelRuntime runtime) : BackgroundService
 {
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) => runtime.RunDatabaseUpdatesAsync(stoppingToken);
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        await runtime.RunDatabaseUpdatesAsync(stoppingToken).ConfigureAwait(false);
+    }
 }
 
 /// <summary>Сбор телеметрии (CPU, память, диск) для графиков интерфейса.</summary>
 internal sealed class TelemetryWorker(SentinelRuntime runtime) : BackgroundService
 {
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) => runtime.RunTelemetryAsync(stoppingToken);
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        await runtime.RunTelemetryAsync(stoppingToken).ConfigureAwait(false);
+    }
 }
 
 /// <summary>Встроенный <see cref="SentinelIpcServer"/>: связь с пользовательским интерфейсом по именованному каналу.</summary>
@@ -82,6 +103,7 @@ internal sealed partial class IpcServerWorker(SentinelRuntime runtime, ServiceOp
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Yield();
         // Вне Windows (отладка) канал доступен только текущему пользователю; в службе — интерактивным пользователям.
         var server = new SentinelIpcServer(runtime, new IpcServerOptions
         {
@@ -109,6 +131,7 @@ internal sealed partial class RuntimeLogWorker(SentinelRuntime runtime, ILogger<
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         runtime.Log += OnLog;
+        runtime.Info += OnInfo;
         runtime.ThreatRaised += OnThreat;
         try
         {
@@ -120,17 +143,23 @@ internal sealed partial class RuntimeLogWorker(SentinelRuntime runtime, ILogger<
         finally
         {
             runtime.Log -= OnLog;
+            runtime.Info -= OnInfo;
             runtime.ThreatRaised -= OnThreat;
         }
     }
 
     private void OnLog(string message) => LogRuntime(logger, message);
 
+    private void OnInfo(string message) => LogRuntimeInfo(logger, message);
+
     private void OnThreat(Sentinel.Core.Realtime.ThreatEvent threat) =>
         LogThreat(logger, threat.Severity.ToString(), threat.Name, threat.Path ?? "-", threat.Reason, threat.Status.ToString());
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "{Message}")]
     private static partial void LogRuntime(ILogger logger, string message);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{Message}")]
+    private static partial void LogRuntimeInfo(ILogger logger, string message);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Находка [{Severity}] {Name} ({Path}): {Reason} → {Status}")]
     private static partial void LogThreat(ILogger logger, string severity, string name, string path, string reason, string status);

@@ -48,6 +48,9 @@ public static class CriticalProcessGuard
             return true;
         }
 
+        // Путь из ядра (\SystemRoot\…, \??\C:\…) сравнивается в форме Win32, иначе системный процесс выглядел бы маскировкой.
+        executablePath = string.IsNullOrEmpty(executablePath) ? executablePath : Kernel.NtPath.ToWin32(executablePath);
+
         // Процесс под защитой драйвера ядра (Sentinel или ядро ОС, проверенные при синхронизации).
         if (_kernelProtected.Contains(pid))
         {

@@ -60,8 +60,11 @@ public sealed partial class SentinelRuntime : ISentinelBackend, IAsyncDisposable
 
     public event Action<ServiceStatus>? StatusChanged;
 
-    /// <summary>Диагностические сообщения фоновых циклов (для журнала службы).</summary>
+    /// <summary>Диагностические сообщения фоновых циклов о сбоях и находках (журнал службы, уровень Warning).</summary>
     public event Action<string>? Log;
+
+    /// <summary>Информационные сообщения: подключение/отключение драйвера, синхронизация PID, источники мониторов (уровень Information).</summary>
+    public event Action<string>? Info;
 
     public string DataDirectory => _o.DataDirectory;
 

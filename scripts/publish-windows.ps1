@@ -101,14 +101,15 @@ try {
             if (-not (Test-Path $exe)) { throw "После публикации не найден файл $exe." }
             Copy-Item $exe (Join-Path $Output $p.Final)
 
-            $rules = Join-Path $target 'rules'
-            if (Test-Path $rules) {
-                Copy-Item $rules (Join-Path $Output 'rules') -Recurse -Force
-            }
-
-            $data = Join-Path $target 'data'
-            if (Test-Path $data) {
-                Copy-Item $data (Join-Path $Output 'data') -Recurse -Force
+            # Копируется СОДЕРЖИМОЕ каталогов: Copy-Item каталога в уже существующий каталог (второй и третий проект)
+            # создал бы вложенные dist\rules\rules и dist\data\data — дубли правил при загрузке.
+            foreach ($folder in @('rules', 'data')) {
+                $source = Join-Path $target $folder
+                if (Test-Path $source) {
+                    $destination = Join-Path $Output $folder
+                    New-Item -ItemType Directory -Force -Path $destination | Out-Null
+                    Copy-Item (Join-Path $source '*') $destination -Recurse -Force
+                }
             }
         }
     }
@@ -117,6 +118,9 @@ try {
     }
 
     if (-not (Test-Path (Join-Path $Output 'rules'))) { throw 'В dist не попал каталог rules.' }
+    foreach ($nested in @('rules\rules', 'data\data')) {
+        if (Test-Path (Join-Path $Output $nested)) { throw "В dist обнаружен вложенный каталог $nested (дубли правил/баз)." }
+    }
 
     $Exclusions = Join-Path $Root 'allowed_exclusions.json'
     if (-not (Test-Path $Exclusions)) { throw "Не найден шаблон $Exclusions." }

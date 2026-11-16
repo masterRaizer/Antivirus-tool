@@ -21,8 +21,9 @@ public sealed partial class SentinelRuntime
         if (kernel.IsConnected && kernel.GetStatus().ProcessNotifyActive)
         {
             // Телеметрия ядра (PsSetCreateProcessNotifyRoutineEx) с откатом на WMI/опрос при потере драйвера.
-            var fromKernel = new Kernel.KernelProcessCreationEventSource(kernel, _o.ProcessStartSource);
-            fromKernel.Log += message => Log?.Invoke(message);
+            var fromKernel = new Kernel.KernelProcessCreationEventSource(kernel, _o.ProcessStartSource,
+                resolveImagePath: pid => OperatingSystem.IsWindows() ? Audit.Process.WindowsProcessProvider.TryGetImagePath(pid) : null);
+            fromKernel.Log += message => Info?.Invoke(message);
             source = fromKernel;
         }
         else if (_o.ProcessStartSource is not null)
@@ -37,13 +38,15 @@ public sealed partial class SentinelRuntime
 
         if (OperatingSystem.IsWindows() && source is WindowsProcessCreationEventSource windows)
         {
-            windows.Log += message => Log?.Invoke(message);
+            windows.Log += message => Info?.Invoke(message);
         }
 
         await using (source.ConfigureAwait(false))
         {
             var monitor = CreateProcessStartMonitor(source);
+            Info?.Invoke($"Мониторинг старта процессов запущен (источник: {(source is Kernel.KernelProcessCreationEventSource ? "драйвер ядра" : "WMI / опрос")}).");
             await monitor.RunAsync(() => _realtimeEnabled, cancellationToken).ConfigureAwait(false);
+            await monitor.DrainMemoryRescansAsync().ConfigureAwait(false);
         }
     }
 
@@ -65,6 +68,16 @@ public sealed partial class SentinelRuntime
                 Auditor = new Audit.Process.ProcessAuditorOptions { MemoryScanner = _o.MemoryScanner },
             });
         monitor.Inspected += OnProcessStartInspected;
+        monitor.MemoryRescanned += outcome =>
+        {
+            if (outcome.Correlation is { } chain)
+            {
+                RecordChain($"Memory: {chain.Summary}");
+            }
+
+            Log?.Invoke($"Повторная проверка памяти {outcome.Event.ProcessName} (PID {outcome.Event.ProcessId}): "
+                + $"{string.Join(", ", outcome.Findings.Select(f => f.Id).Distinct())}, решение {outcome.Decision}, итог {outcome.Threat?.Status.ToString() ?? "-"}.");
+        };
         monitor.Log += message => Log?.Invoke(message);
         return monitor;
     }

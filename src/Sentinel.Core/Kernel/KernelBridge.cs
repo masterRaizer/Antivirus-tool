@@ -84,6 +84,12 @@ public interface IKernelBridge : IDisposable
     /// <summary>Драйвер доступен (устройство открыто и протокол совпал).</summary>
     bool IsConnected { get; }
 
+    /// <summary>
+    /// Проверка живости: если драйвер останавливают (<c>sc stop SentinelDrv</c>) или он выгружен, мост сразу закрывает
+    /// дескриптор устройства — иначе открытый дескриптор держит драйвер в <c>STOP_PENDING</c> — и возвращает <c>false</c>.
+    /// </summary>
+    bool CheckConnection();
+
     KernelDriverStatus GetStatus();
 
     /// <summary>Заменяет список защищаемых PID (не более <see cref="KernelProtocol.MaxProtectedPids"/>).</summary>
@@ -99,6 +105,8 @@ public sealed class NullKernelBridge(string? reason = null) : IKernelBridge
     private readonly KernelDriverStatus _status = KernelDriverStatus.UserMode(reason);
 
     public bool IsConnected => false;
+
+    public bool CheckConnection() => false;
 
     public KernelDriverStatus GetStatus() => _status;
 
@@ -120,23 +128,46 @@ public static class KernelBridgeFactory
         : new NullKernelBridge($"{KernelDriverStatus.NotLoadedMessage} (kernel driver is Windows-only)");
 }
 
-/// <summary>Пути ядра (<c>\??\C:\…</c>, <c>\Device\HarddiskVolumeN\…</c>) → пути Win32 (<c>C:\…</c>).</summary>
+/// <summary>
+/// Пути ядра → пути Win32. Ядро (<c>PS_CREATE_NOTIFY_INFO.ImageFileName</c>, <c>SeLocateProcessImageName</c>) отдаёт
+/// <c>\SystemRoot\System32\conhost.exe</c>, <c>\??\C:\…</c> или <c>\Device\HarddiskVolumeN\…</c>; аудит процессов сравнивает
+/// пути со штатными каталогами (<c>C:\Windows\System32</c>), поэтому без нормализации легитимные системные процессы выглядели бы
+/// как маскировка (<c>PROC-IMPERSONATION</c>).
+/// </summary>
 public static class NtPath
 {
-    /// <summary>
-    /// <c>\??\C:\x</c> и <c>\\?\C:\x</c> → <c>C:\x</c>; <c>\??\UNC\srv\share</c> → <c>\\srv\share</c>; префикс устройства
-    /// заменяется по карте <paramref name="devices"/> («\Device\HarddiskVolume3» → «C:»), если она передана.
-    /// </summary>
-    public static string ToWin32(string path) => ToWin32(path, null);
+    private static readonly string[] UncPrefixes = [@"\??\UNC\", @"\\?\UNC\"];
+    private static readonly string[] DosPrefixes = [@"\??\", @"\\?\", @"\\.\", @"\DosDevices\", @"\GLOBAL??\"];
 
-    public static string ToWin32(string path, IReadOnlyDictionary<string, string>? devices)
+    /// <summary>Каталог Windows для <c>\SystemRoot\</c>: текущей ОС, вне Windows — <c>C:\Windows</c>.</summary>
+    public static string DefaultWindowsDirectory
+    {
+        get
+        {
+            var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            return string.IsNullOrEmpty(windows) ? @"C:\Windows" : windows.TrimEnd('\\', '/');
+        }
+    }
+
+    /// <summary>Путь в форме ядра или Win32 → путь Win32; уже нормальный путь возвращается как есть.</summary>
+    public static string ToWin32(string? path) => ToWin32(path, null);
+
+    /// <param name="devices">Карта «\Device\HarddiskVolume3» → «C:» (из <c>QueryDosDevice</c>); <c>null</c> — без замены устройств.</param>
+    /// <param name="windowsDirectory">Подстановка для <c>\SystemRoot\</c>; по умолчанию <see cref="DefaultWindowsDirectory"/>.</param>
+    public static string ToWin32(string? path, IReadOnlyDictionary<string, string>? devices, string? windowsDirectory = null)
     {
         if (string.IsNullOrEmpty(path))
         {
             return string.Empty;
         }
 
-        foreach (var prefix in new[] { @"\??\UNC\", @"\\?\UNC\" })
+        const string systemRoot = @"\SystemRoot\";
+        if (path.StartsWith(systemRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return (windowsDirectory ?? DefaultWindowsDirectory).TrimEnd('\\', '/') + @"\" + path[systemRoot.Length..];
+        }
+
+        foreach (var prefix in UncPrefixes)
         {
             if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
@@ -144,9 +175,9 @@ public static class NtPath
             }
         }
 
-        foreach (var prefix in new[] { @"\??\", @"\\?\", @"\\.\" })
+        foreach (var prefix in DosPrefixes)
         {
-            if (path.StartsWith(prefix, StringComparison.Ordinal))
+            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && path.Length > prefix.Length + 1 && path[prefix.Length + 1] == ':')
             {
                 return path[prefix.Length..];
             }
@@ -165,4 +196,11 @@ public static class NtPath
 
         return path;
     }
+
+    /// <summary>Путь уже в форме Win32 (<c>C:\…</c> или UNC <c>\\server\share</c>), а не в форме ядра.</summary>
+    public static bool IsWin32(string? path) =>
+        !string.IsNullOrEmpty(path)
+        && ((path.Length > 2 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/')
+            || (path.StartsWith(@"\\", StringComparison.Ordinal) && !path.StartsWith(@"\\?\", StringComparison.Ordinal)
+                && !path.StartsWith(@"\\.\", StringComparison.Ordinal)));
 }

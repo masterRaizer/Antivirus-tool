@@ -24,12 +24,12 @@ public sealed class WindowsKernelBridge : IKernelBridge
     private const int ERROR_FILE_NOT_FOUND = 2;
     private const int ERROR_PATH_NOT_FOUND = 3;
     private const int ERROR_ACCESS_DENIED = 5;
-    private const int ERROR_INVALID_HANDLE = 6;
-    private const int ERROR_NOT_READY = 21;
-    private const int ERROR_GEN_FAILURE = 31;
     private const int ERROR_PRIVILEGE_NOT_HELD = 1314;
-    private const int ERROR_DEVICE_NOT_CONNECTED = 1167;
-    private const int ERROR_OPERATION_ABORTED = 995;
+
+    private const uint SC_MANAGER_CONNECT = 0x0001;
+    private const uint SERVICE_QUERY_STATUS = 0x0004;
+    private const uint SERVICE_STOPPED = 1;
+    private const uint SERVICE_STOP_PENDING = 3;
 
     private readonly object _sync = new();
     private readonly IReadOnlyDictionary<string, string> _devices;
@@ -51,6 +51,24 @@ public sealed class WindowsKernelBridge : IKernelBridge
                 return _handle is { IsInvalid: false, IsClosed: false };
             }
         }
+    }
+
+    public bool CheckConnection()
+    {
+        if (!IsConnected)
+        {
+            return false;
+        }
+
+        // Пока дескриптор открыт, Windows не вызывает DriverUnload, а IOCTL продолжают выполняться — поэтому состояние
+        // службы драйвера спрашиваем у SCM и отпускаем устройство, как только его начали останавливать.
+        if (QueryDriverServiceState() is SERVICE_STOP_PENDING or SERVICE_STOPPED)
+        {
+            Disconnect($"driver service {KernelProtocol.ServiceName} is stopping");
+            return false;
+        }
+
+        return IsConnected;
     }
 
     /// <summary>Открывает устройство драйвера; при неудаче возвращает <see cref="NullKernelBridge"/> с причиной.</summary>
@@ -157,8 +175,7 @@ public sealed class WindowsKernelBridge : IKernelBridge
 
         var code32 = Marshal.GetLastPInvokeError();
         var message = new Win32Exception(code32).Message;
-        if (code32 is ERROR_INVALID_HANDLE or ERROR_FILE_NOT_FOUND or ERROR_NOT_READY or ERROR_GEN_FAILURE
-            or ERROR_DEVICE_NOT_CONNECTED or ERROR_OPERATION_ABORTED)
+        if (KernelProtocol.IsDriverGoneError(code32))
         {
             // Драйвер остановлен или выгружен — Fail-Open: дальше работаем в профиле User-Mode.
             Disconnect($"driver connection lost: {message}");
@@ -183,6 +200,38 @@ public sealed class WindowsKernelBridge : IKernelBridge
         }
 
         handle?.Dispose();
+    }
+
+    /// <summary>Состояние службы ядра SentinelDrv по данным SCM; <c>null</c> — служба не найдена или SCM недоступен.</summary>
+    private static uint? QueryDriverServiceState()
+    {
+        var scm = OpenSCManagerW(null, null, SC_MANAGER_CONNECT);
+        if (scm == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var service = OpenServiceW(scm, KernelProtocol.ServiceName, SERVICE_QUERY_STATUS);
+            if (service == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            try
+            {
+                return QueryServiceStatus(service, out var status) ? status.dwCurrentState : null;
+            }
+            finally
+            {
+                CloseServiceHandle(service);
+            }
+        }
+        finally
+        {
+            CloseServiceHandle(scm);
+        }
     }
 
     /// <summary>Карта «\Device\HarddiskVolumeN» → «C:» для путей образов из ядра.</summary>
@@ -216,6 +265,32 @@ public sealed class WindowsKernelBridge : IKernelBridge
     private static extern bool DeviceIoControl(
         SafeFileHandle hDevice, uint dwIoControlCode, byte[]? lpInBuffer, int nInBufferSize,
         byte[]? lpOutBuffer, int nOutBufferSize, out int lpBytesReturned, IntPtr lpOverlapped);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SERVICE_STATUS
+    {
+        public uint dwServiceType;
+        public uint dwCurrentState;
+        public uint dwControlsAccepted;
+        public uint dwWin32ExitCode;
+        public uint dwServiceSpecificExitCode;
+        public uint dwCheckPoint;
+        public uint dwWaitHint;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr OpenSCManagerW(string? lpMachineName, string? lpDatabaseName, uint dwDesiredAccess);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr OpenServiceW(IntPtr hSCManager, string lpServiceName, uint dwDesiredAccess);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryServiceStatus(IntPtr hService, out SERVICE_STATUS lpServiceStatus);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseServiceHandle(IntPtr hSCObject);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern int QueryDosDeviceW(string lpDeviceName, [Out] char[] lpTargetPath, int ucchMax);

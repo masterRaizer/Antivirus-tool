@@ -14,6 +14,15 @@ public static class SelfProtection
 
     private static readonly string[] OwnImageNames = ["sentinel.app.exe", "sentinel.service.exe", "sentinel.cli.exe", "sentinel.exe"];
 
+    /// <summary>Службы Sentinel, которые нельзя отключать, удалять или перенастраивать (в том числе «откатом» автозагрузки).</summary>
+    private static readonly string[] OwnServiceNames = ["SentinelService", "SentinelDrv"];
+
+    /// <summary>Исполняемый файл текущего процесса, если это образ Sentinel (иначе <c>null</c>, например в тестах).</summary>
+    public static string? CurrentSentinelImagePath { get; } =
+        Environment.ProcessPath is { Length: > 0 } image && OwnImageNames.Contains(FileNameOf(image), StringComparer.OrdinalIgnoreCase)
+            ? image
+            : null;
+
     // Сравнение строковое, в стиле Windows (без обращения к файловой системе): одинаково работает на любой ОС
     // и в сомнительных случаях защищает больше (регистр не различается).
     private const StringComparison PathComparison = StringComparison.OrdinalIgnoreCase;
@@ -71,7 +80,47 @@ public static class SelfProtection
     {
         var full = Normalize(path);
         return OwnDirectories(extraOwnDirectories).Any(d => full.StartsWith(d + '\\', PathComparison)
-            || string.Equals(full, d, PathComparison));
+            || string.Equals(full, d, PathComparison))
+            || IsOwnInstallationFile(path);
+    }
+
+    /// <summary>Имя службы Sentinel (<c>SentinelService</c>, <c>SentinelDrv</c>).</summary>
+    public static bool IsOwnServiceName(string? serviceName) =>
+        !string.IsNullOrWhiteSpace(serviceName) && OwnServiceNames.Contains(serviceName.Trim(), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Файл текущей установки Sentinel вне Program Files (см. <see cref="IsOwnInstallationFile(string?, string?)"/>).</summary>
+    public static bool IsOwnInstallationFile(string? path) => IsOwnInstallationFile(path, CurrentSentinelImagePath);
+
+    /// <summary>
+    /// Файл установки, из которой запущен Sentinel (например, <c>C:\Sentinel-v1.3.0\</c>): сам образ, соседние образы Sentinel
+    /// и подкаталоги <c>rules\</c> и <c>data\</c>. Каталог целиком не защищается: если Sentinel запущен из «Загрузок»,
+    /// остальные файлы там проверяются и изолируются как обычно.
+    /// </summary>
+    public static bool IsOwnInstallationFile(string? path, string? currentSentinelImage)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(currentSentinelImage))
+        {
+            return false;
+        }
+
+        var full = Normalize(path);
+        var image = Normalize(currentSentinelImage);
+        if (string.Equals(full, image, PathComparison))
+        {
+            return true;
+        }
+
+        var separator = image.LastIndexOf('\\');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var directory = image[..separator];
+        var parent = full.LastIndexOf('\\') is var p and > 0 ? full[..p] : string.Empty;
+        return (string.Equals(parent, directory, PathComparison) && IsOwnImageName(FileNameOf(full)))
+            || full.StartsWith(directory + @"\rules\", PathComparison)
+            || full.StartsWith(directory + @"\data\", PathComparison);
     }
 
     private static bool IsInSystemDirectory(string path)

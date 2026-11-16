@@ -112,7 +112,41 @@
   `ProcessStartMonitor` с откатом на WMI/опрос). Служба — `KernelBridgeWorker`; `ServiceStatus.KernelDriver`; CLI — `sentinel kernel-status [--json]`.
 - Версия 1.3.0: `Directory.Build.props`, `Sentinel.Installer.wixproj`, `release.yml`.
 
+### 8/4 — живая проверка (Windows 11, `PCARKNIGHT`, Test Mode, коммит `7553165`) и стабилизация перед тегом `v1.3.0`
+- Пройдено: `SentinelDrv.sys` загружен без BSOD (`STATE 4 RUNNING`), `kernel-status` — Ob-колбэки и process-notify активны; после синхронизации
+  (8 защищаемых PID) `taskkill /F /IM Sentinel.Service.exe` → `Access is denied`, служба жива, «Снято опасных прав» 0 → 1.
+- Исправлено по дефектам D1–D7:
+  - **D4 (критичный):** пути из ядра (`\SystemRoot\System32\Conhost.exe`, `\??\C:\…`, `\GLOBAL??\…`, `\DosDevices\…`) приводятся к Win32
+    (`NtPath.ToWin32`) в `ProcessStartMonitor`, `SystemProcessPolicy`, `CriticalProcessGuard`; путь `\Device\HarddiskVolumeN\…` — по таблице
+    `QueryDosDevice`, а если не удалось — `QueryFullProcessImageName` по PID (`KernelProcessCreationEventSource`). Ложный `PROC-IMPERSONATION` на conhost устранён.
+  - **D2:** все рабочие процессы службы начинают с `await Task.Yield()`, периодический аудит идёт в `Task.Run`, `HostOptions.ServicesStartConcurrently`;
+    `KernelBridgeWorker` и `IpcServerWorker` регистрируются первыми — драйвер и IPC поднимаются в первые секунды.
+  - **D3:** пока у драйвера открыт дескриптор, Windows не вызывает `DriverUnload` и IOCTL продолжают проходить, поэтому мост раз в 2 с спрашивает у SCM
+    состояние службы `SentinelDrv` и при `STOP_PENDING`/`STOPPED` сразу закрывает `\\.\SentinelDrv` (плюс немедленное отключение по кодам
+    2/6/21/31/433/995/1167 от `DeviceIoControl`). Без драйвера служба раз в 10 с пробует подключиться снова (`sc start SentinelDrv` подхватывается
+    без перезапуска службы); `KernelBridgeWorker.StopAsync` отпускает драйвер сразу.
+  - **D5:** `SelfProtection.IsOwnInstallationFile` — сам `Environment.ProcessPath` (если это образ Sentinel), соседние образы Sentinel и `rules\`/`data\`
+    рядом с ним защищены в `CriticalProcessGuard`, `FalsePositiveGuard`, карантине; каталог целиком не защищается (запуск из «Загрузок» не делает их
+    неприкосновенными). Службы `SentinelService`/`SentinelDrv` не «откатываются» `RemediationEngine` (Blocked) и не становятся находками диспетчера.
+  - **D1:** `install-driver-testmode.ps1` вычисляет каталог источника в теле скрипта (`$PSScriptRoot` в `param()` пуст в Windows PowerShell 5.1).
+  - **D6:** `publish-windows.ps1` копирует содержимое `rules`/`data`, а не сами каталоги (раньше второй и третий проект давали `rules\rules`, `data\data`),
+    и падает, если вложенный каталог всё же появился.
+  - **D7:** событие рантайма `Info` (подключение/отключение драйвера, синхронизация PID, источник монитора старта) пишется с уровнем Information;
+    журнал службы — `%ProgramData%\Sentinel\Logs\service-ГГГГММДД.log` (14 дней; `Sentinel.*` с Information, прочее с Warning) и EventLog
+    (`Sentinel.*` с Information). `ProcessStartMonitor` через 1,75 с повторно проверяет память интерпретаторов (`powershell`, `pwsh`, `cmd`, `mshta`,
+    `rundll32`, `regsvr32`, `wscript`, `cscript`) и неподписанных `.exe` (не более 2 одновременно, очередь до 32) — ловит RWX-нагрузку, выделенную после старта.
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
+- **Контрольная проверка 1.3.0 (артефакт стабилизационного коммита):**
+  1. Журнал `%ProgramData%\Sentinel\Logs\service-*.log`: в первые секунды после `sc start SentinelService` — «Драйвер ядра [kernel]: …»,
+     «Драйвер ядра: защищаемых процессов N (…)», «Мониторинг старта процессов запущен (источник: драйвер ядра)»; `sentinel.exe service-status` отвечает сразу.
+  2. Запуск `cmd.exe`/`conhost.exe` — никаких `PROC-IMPERSONATION` и завершений системных процессов.
+  3. `sc stop SentinelDrv` при работающей службе — `STATE 1 STOPPED` за 2–3 с; в журнале «Драйвер ядра отключён: …»; `sc start SentinelDrv` —
+     через ~10 с «Драйвер ядра подключён» и снова «защищаемых процессов N».
+  4. Служба, запущенная из `C:\Sentinel-v1.3.0\`, не отключает сама себя (в журнале нет `SentinelService [Service] … Cleaned`).
+  5. `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` при работающей службе — через ~2 с событие по
+     `powershell.exe` с `MEM-YARA-MATCH`/`MEM-REFLECTIVE-PE` (итог «Blocked» — powershell.exe подписан Microsoft) без ручного `audit-memory`.
+  6. В `dist` нет `rules\rules` и `data\data`; `sentinel.exe rules` — без «Дублирующийся id правила».
 - **8/2:** окно 1: `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` (печатает PID);
   окно 2 (администратор): `sentinel.exe audit-memory <PID>` → `MEM-YARA-MATCH` (EICAR-Test-File) и `MEM-REFLECTIVE-PE` (PE (x64)), код выхода 1.
   `sentinel.exe audit-memory 4` / PID `lsass` → «пропущен: CriticalProcessGuard». `sentinel.exe audit-memory` (все процессы) при открытых
