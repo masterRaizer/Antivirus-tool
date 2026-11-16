@@ -157,7 +157,14 @@ public class RansomwareBehaviorTests
         var canary = created[0];
         Assert.Null(guard.Inspect(canary)); // нетронут
 
-        File.WriteAllText(canary, "ENCRYPTED-BY-RANSOMWARE");
+        // Симуляция шифрования: перезапись существующего файла (File.WriteAllText не пересоздаёт скрытый файл на Windows).
+        var payload = System.Text.Encoding.UTF8.GetBytes("ENCRYPTED-BY-RANSOMWARE");
+        using (var fs = new FileStream(canary, FileMode.Open, FileAccess.Write))
+        {
+            fs.Write(payload);
+            fs.SetLength(payload.Length);
+        }
+
         var tamper = guard.Inspect(canary);
         Assert.NotNull(tamper);
 
