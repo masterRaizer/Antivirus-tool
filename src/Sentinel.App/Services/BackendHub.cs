@@ -170,6 +170,12 @@ public sealed class BackendHub : ISentinelBackend, IAsyncDisposable
     public Task<Sentinel.Core.ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default) =>
         Current.UpdateDatabasesAsync(cancellationToken);
 
+    public Task<Sentinel.Core.Runtime.BehavioralStatus> GetBehavioralStatusAsync(CancellationToken cancellationToken = default) =>
+        Current.GetBehavioralStatusAsync(cancellationToken);
+
+    public Task<IReadOnlyList<Sentinel.Core.Protection.UsbFinding>> ScanRemovableAsync(string? pathOrDrive, CancellationToken cancellationToken = default) =>
+        Current.ScanRemovableAsync(pathOrDrive, cancellationToken);
+
     /// <summary>
     /// Запускает службу <c>SentinelService</c> командой <c>sc.exe start</c> с запросом повышения прав (UAC).
     /// Подключение к запущенной службе выполнит цикл автопереподключения (каждые 2 секунды).

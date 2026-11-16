@@ -29,6 +29,12 @@ internal sealed class FakeBackend : ISentinelBackend
         return Task.FromResult(OperationResult.Ok("saved"));
     }
 
+    public Task<Sentinel.Core.Runtime.BehavioralStatus> GetBehavioralStatusAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new Sentinel.Core.Runtime.BehavioralStatus(true, true, true, false, 4, 0, ["BH-02 test"]));
+
+    public Task<IReadOnlyList<Sentinel.Core.Protection.UsbFinding>> ScanRemovableAsync(string? pathOrDrive, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Sentinel.Core.Protection.UsbFinding>>([new Sentinel.Core.Protection.UsbFinding("Autorun", Sentinel.Core.Signatures.Severity.High, pathOrDrive ?? "E:\\", "autorun")]);
+
     public Task<Sentinel.Core.ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new Sentinel.Core.ThreatIntel.DatabaseStatus { LastStatus = "Обновление баз выполняется…" });
 
@@ -302,6 +308,19 @@ public sealed class IpcPipeTests : IAsyncLifetime
         Assert.False(_backend.SavedSettings.AutoUpdateDatabases);
         Assert.StartsWith("Обновление", update.LastStatus, StringComparison.Ordinal);
         Assert.Equal("deleted q9", deleted.Message);
+    }
+
+    [Fact]
+    public async Task BehavioralStatusAndUsbScan_RoundTripOverThePipe()
+    {
+        await using var client = await ConnectAsync();
+        var status = await client.GetBehavioralStatusAsync();
+        var findings = await client.ScanRemovableAsync(@"E:\");
+        Assert.Equal(4, status.CanaryCount);
+        Assert.Equal("BH-02 test", Assert.Single(status.RecentChains));
+        var finding = Assert.Single(findings);
+        Assert.Equal("Autorun", finding.Kind);
+        Assert.Equal(@"E:\", finding.Path);
     }
 
     [Fact]

@@ -82,6 +82,8 @@ internal static class Program
                 "rollback" => Rollback(opts),
                 "service-status" => ServiceStatus(opts),
                 "threatdb" => ThreatDb(opts),
+                "scan-usb" => ScanUsb(opts),
+                "behavioral-status" => BehavioralStatus(opts),
                 _ => Unknown(args[0]),
             };
         }
@@ -105,6 +107,8 @@ internal static class Program
             Sentinel — системный аудитор и сканер безопасности
 
             Использование:
+              sentinel scan-usb [путь]        проверка съёмных носителей USB-щитом
+              sentinel behavioral-status     состояние поведенческого щита
               sentinel scan <путь> [--rules <каталог>] [--json] [--no-recurse] [--max-size <МБ>] [действия] [отчёт]
               sentinel hash <файл>                 SHA-256 и энтропия Шеннона
               sentinel pe <файл> [--json]          разбор PE-заголовков
@@ -205,6 +209,105 @@ internal static class Program
     }
 
     /// <summary><c>threatdb build --out файл [--signature-base каталог] [--eset каталог]</c>, <c>threatdb info</c>, <c>threatdb lookup &lt;sha256&gt;</c>.</summary>
+    /// <summary><c>scan-usb [путь|диск]</c> — проверка съёмных носителей или указанного пути USB-щитом.</summary>
+    private static int ScanUsb(CliOptions opts)
+    {
+        var (_, analyzer) = CreateAnalyzer(opts);
+        var shield = new Sentinel.Core.Protection.RemovableMediaShield(path =>
+        {
+            var r = analyzer.Analyze(path);
+            return r.Verdict is Verdict.Malicious or Verdict.Suspicious && r.Detections.Count > 0
+                ? r.Detections.Max(d => d.Severity)
+                : (Severity?)null;
+        });
+
+        IReadOnlyList<string> roots;
+        if (opts.Target is { Length: > 0 } target)
+        {
+            roots = [target];
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            roots = System.IO.DriveInfo.GetDrives()
+                .Where(d => d is { DriveType: System.IO.DriveType.Removable, IsReady: true })
+                .Select(d => d.RootDirectory.FullName).ToArray();
+        }
+        else
+        {
+            roots = [];
+        }
+
+        if (roots.Count == 0)
+        {
+            Console.WriteLine("Съёмные носители не обнаружены. Укажите путь: sentinel scan-usb <папка|диск>");
+            return ExitOk;
+        }
+
+        var findings = new List<Sentinel.Core.Protection.UsbFinding>();
+        foreach (var root in roots)
+        {
+            Console.WriteLine($"Проверка: {root}");
+            findings.AddRange(shield.ScanDirectory(root));
+        }
+
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(findings.Select(f => new { f.Kind, Severity = f.Severity.ToString(), f.Path, f.Description }), JsonOptions));
+        }
+        else if (findings.Count == 0)
+        {
+            Console.WriteLine("Угроз на носителях не найдено.");
+        }
+        else
+        {
+            foreach (var f in findings)
+            {
+                Console.WriteLine($"  [{f.Severity}] {f.Kind}: {f.Path}");
+                Console.WriteLine($"      {f.Description}");
+            }
+        }
+
+        return findings.Any(f => f.Severity >= Severity.High) ? ExitDetected : ExitOk;
+    }
+
+    /// <summary><c>behavioral-status</c> — состояние поведенческого щита и файлов-приманок (по конфигурации каталога данных).</summary>
+    private static int BehavioralStatus(CliOptions opts)
+    {
+        var store = Sentinel.Core.ThreatIntel.SentinelConfigStore.ForDataDirectory(DataDirectory(opts));
+        Sentinel.Core.ThreatIntel.SentinelConfig config;
+        try
+        {
+            config = store.Load();
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            Console.Error.WriteLine($"Повреждён {store.Path}: {ex.Message}");
+            return ExitError;
+        }
+
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                config.EnableRansomwareShield,
+                config.EnableCanaryFiles,
+                config.EnableUsbShield,
+                config.BehavioralShadowMode,
+            }, JsonOptions));
+            return ExitOk;
+        }
+
+        Console.WriteLine("Поведенческий щит Sentinel:");
+        Console.WriteLine($"  Анти-шифровальщик : {OnOff(config.EnableRansomwareShield)}");
+        Console.WriteLine($"  Файлы-приманки    : {OnOff(config.EnableCanaryFiles)}");
+        Console.WriteLine($"  USB-щит           : {OnOff(config.EnableUsbShield)}");
+        Console.WriteLine($"  Теневой режим     : {OnOff(config.BehavioralShadowMode)}");
+        Console.WriteLine($"  Каталог данных    : {DataDirectory(opts)}");
+        return ExitOk;
+
+        static string OnOff(bool value) => value ? "включён" : "выключен";
+    }
+
     private static int ThreatDb(CliOptions opts)
     {
         switch (opts.Target)

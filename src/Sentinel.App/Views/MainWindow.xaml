@@ -121,6 +121,13 @@
                             </StackPanel>
                         </RadioButton>
                         <RadioButton Style="{StaticResource NavItem}" GroupName="Nav"
+                                     IsChecked="{Binding Section, Converter={StaticResource EnumMatch}, ConverterParameter=Behavioral}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE945;" Width="22" />
+                                <TextBlock Margin="10,0,0,0" Text="Поведенческий щит и USB" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton Style="{StaticResource NavItem}" GroupName="Nav"
                                      IsChecked="{Binding Section, Converter={StaticResource EnumMatch}, ConverterParameter=Settings}">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Style="{StaticResource Glyph}" Text="&#xE713;" Width="22" />
@@ -152,6 +159,8 @@
                                    Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EnumToVis}, ConverterParameter=Startup}" />
                 <views:ReportsView DataContext="{Binding Reports}"
                                    Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EnumToVis}, ConverterParameter=Reports}" />
+                <views:BehavioralView DataContext="{Binding Behavioral}"
+                                      Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EnumToVis}, ConverterParameter=Behavioral}" />
                 <views:SettingsView DataContext="{Binding Settings}"
                                     Visibility="{Binding DataContext.Section, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource EnumToVis}, ConverterParameter=Settings}" />
             </Grid>

@@ -37,6 +37,8 @@ public sealed record ExportReportArgs(string Id, ReportFormat Format);
 
 public sealed record StartupArgs(bool Refresh);
 
+public sealed record ScanRemovableArgs(string? PathOrDrive);
+
 /// <summary>Сведения о сервере, которыми стороны обмениваются при подключении.</summary>
 public sealed record HelloInfo(int ProtocolVersion, string Product);
 
@@ -75,6 +77,8 @@ public static class IpcProtocol
     public const string GetSettings = "settings.get";
     public const string SaveSettings = "settings.save";
     public const string UpdateDatabases = "databases.update";
+    public const string GetBehavioralStatus = "behavioral.status";
+    public const string ScanRemovable = "behavioral.scanusb";
 
     // События.
     public const string ScanProgressEvent = "event.scan";

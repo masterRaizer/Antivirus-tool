@@ -56,6 +56,10 @@ public sealed partial class SentinelRuntime
             HasVirusTotalApiKey = !string.IsNullOrWhiteSpace(config.VirusTotalApiKey),
             HasAbuseChAuthKey = !string.IsNullOrWhiteSpace(config.AbuseChAuthKey),
             AutoUpdateDatabases = config.AutoUpdateDatabases,
+            EnableRansomwareShield = config.EnableRansomwareShield,
+            EnableCanaryFiles = config.EnableCanaryFiles,
+            EnableUsbShield = config.EnableUsbShield,
+            BehavioralShadowMode = config.BehavioralShadowMode,
             AllowedPaths = allowed.Paths,
             AllowedProcesses = allowed.Processes,
             AllowedHashes = allowed.Hashes,
@@ -86,6 +90,10 @@ public sealed partial class SentinelRuntime
                 VirusTotalApiKey = Apply(config.VirusTotalApiKey, update.VirusTotalApiKey),
                 AbuseChAuthKey = Apply(config.AbuseChAuthKey, update.AbuseChAuthKey),
                 AutoUpdateDatabases = update.AutoUpdateDatabases,
+                EnableRansomwareShield = update.EnableRansomwareShield,
+                EnableCanaryFiles = update.EnableCanaryFiles,
+                EnableUsbShield = update.EnableUsbShield,
+                BehavioralShadowMode = update.BehavioralShadowMode,
             });
 
             _allowed.Replace(new AllowedExclusions

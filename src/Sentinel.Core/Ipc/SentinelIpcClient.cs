@@ -151,6 +151,12 @@ public sealed class SentinelIpcClient : ISentinelBackend, IAsyncDisposable
     public Task<ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default) =>
         RequestAsync<ThreatIntel.DatabaseStatus>(IpcProtocol.UpdateDatabases, null, cancellationToken);
 
+    public Task<Runtime.BehavioralStatus> GetBehavioralStatusAsync(CancellationToken cancellationToken = default) =>
+        RequestAsync<Runtime.BehavioralStatus>(IpcProtocol.GetBehavioralStatus, null, cancellationToken);
+
+    public Task<IReadOnlyList<Protection.UsbFinding>> ScanRemovableAsync(string? pathOrDrive, CancellationToken cancellationToken = default) =>
+        RequestAsync<IReadOnlyList<Protection.UsbFinding>>(IpcProtocol.ScanRemovable, new ScanRemovableArgs(pathOrDrive), cancellationToken);
+
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync().ConfigureAwait(false);

@@ -136,6 +136,14 @@ public sealed record SettingsSnapshot
 
     public bool AutoUpdateDatabases { get; init; } = true;
 
+    public bool EnableRansomwareShield { get; init; } = true;
+
+    public bool EnableCanaryFiles { get; init; } = true;
+
+    public bool EnableUsbShield { get; init; } = true;
+
+    public bool BehavioralShadowMode { get; init; }
+
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];
 
     public IReadOnlyList<string> AllowedProcesses { get; init; } = [];
@@ -157,6 +165,14 @@ public sealed record SettingsUpdate
     public string? AbuseChAuthKey { get; init; }
 
     public bool AutoUpdateDatabases { get; init; } = true;
+
+    public bool EnableRansomwareShield { get; init; } = true;
+
+    public bool EnableCanaryFiles { get; init; } = true;
+
+    public bool EnableUsbShield { get; init; } = true;
+
+    public bool BehavioralShadowMode { get; init; }
 
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];
 
@@ -272,4 +288,8 @@ public interface ISentinelBackend
     Task<OperationResult> SaveSettingsAsync(SettingsUpdate update, CancellationToken cancellationToken = default);
 
     Task<ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default);
+
+    Task<Runtime.BehavioralStatus> GetBehavioralStatusAsync(CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Protection.UsbFinding>> ScanRemovableAsync(string? pathOrDrive, CancellationToken cancellationToken = default);
 }

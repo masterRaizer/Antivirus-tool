@@ -67,4 +67,10 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 ### 7/4 RemovableMediaShield — USB-щит (готово)
 - `src/Sentinel.Core/Protection/`: `ShellLinkBinaryParser` ([MS-SHLLINK], Unicode/ANSI, IconLocation), `AutorunInfParser` (потоковый, секция [autorun]), `RemovableMediaShield` (обход глубиной 2 с пропуском ReparsePoint; детекторы autorun.inf, USB-червь скрытой папки, двойное расширение, вредоносный .lnk с подменой значка, инъектируемый анализатор бинарников), `PollingRemovableDriveWatcher` (опрос DriveInfo без WMI, DiffNew).
 - Проверка: build 0/0, 629 тестов (624 passed, 5 Windows-only skipped). Атрибут Hidden на Linux не ставится — детект червя покрыт чистым помощником DetectWorm и WindowsFact оставлен на будущее.
-### Следующий модуль: 7/5 интеграция в Service/CLI/WPF
+### 7/5 Интеграция в Service/CLI/WPF (готово)
+- `SentinelConfig`: флаги `EnableRansomwareShield`/`EnableCanaryFiles`/`EnableUsbShield`/`BehavioralShadowMode` (обратная совместимость со старым конфигом).
+- `SentinelRuntime.Behavioral.cs`: приманки, наблюдение файловой активности (встроено в InspectFileAsync, приманки пропускаются сканером), `ScanRemovableAsync`, `GetBehavioralStatus(Async)`; USB-щит использует FileAnalyzer рантайма как анализатор бинарников.
+- IPC: `behavioral.status`, `behavioral.scanusb` + флаги в SettingsSnapshot/Update; `BackendHub` проброс.
+- CLI: `scan-usb [путь]`, `behavioral-status`. WPF: раздел «Поведенческий щит и USB» (переключатели, проверка USB, статус приманок, лента цепочек), виртуализация списков.
+- Проверка: build 0/0, 632 теста (627 passed, 5 Windows-only skipped).
+### Следующий модуль: 7/6 docs/ARCHITECTURE_V2_KERNEL_SPEC.md, версия 1.2.0, релиз

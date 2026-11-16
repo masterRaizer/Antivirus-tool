@@ -19,6 +19,18 @@ public sealed record SentinelConfig
 
     public bool AutoUpdateDatabases { get; init; } = true;
 
+    /// <summary>Поведенческий анти-шифровальщик (всплеск/энтропия/расширения).</summary>
+    public bool EnableRansomwareShield { get; init; } = true;
+
+    /// <summary>Файлы-приманки (canary) в пользовательских каталогах.</summary>
+    public bool EnableCanaryFiles { get; init; } = true;
+
+    /// <summary>USB-щит (сканирование съёмных носителей).</summary>
+    public bool EnableUsbShield { get; init; } = true;
+
+    /// <summary>Теневой аудит поведения: активные действия не выполняются автоматически, только запрос решения.</summary>
+    public bool BehavioralShadowMode { get; init; }
+
     public bool HasCloudKeys => !string.IsNullOrWhiteSpace(KasperskyOpenTipApiKey) || !string.IsNullOrWhiteSpace(VirusTotalApiKey);
 }
 
