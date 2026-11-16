@@ -24,6 +24,8 @@ builder.Services.AddSingleton(_ =>
     if (OperatingSystem.IsWindows())
     {
         DataDirectorySecurity.Harden(runtimeOptions.DataDirectory);
+        // Самозащита: убираем у администраторов права на завершение/запись памяти/приостановку собственного процесса службы.
+        ProcessSelfProtectionApplier.Harden();
     }
 
     return new SentinelRuntime(runtimeOptions);
