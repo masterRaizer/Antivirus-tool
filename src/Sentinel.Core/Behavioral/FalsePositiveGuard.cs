@@ -77,6 +77,11 @@ public sealed class FalsePositiveGuard
             return new GuardVerdict(GuardDecision.Protected, 0, "Самозащита: критический системный файл или каталог Sentinel.");
         }
 
+        if (SelfProtection.IsOwnBinaryHash(context.Sha256))
+        {
+            return new GuardVerdict(GuardDecision.Protected, 0, "Исполняемый файл Sentinel (SHA-256 совпадает с установленной версией).");
+        }
+
         if (!string.IsNullOrEmpty(path) && _allowed.IsPathAllowed(path))
         {
             return new GuardVerdict(GuardDecision.Protected, 0, "Путь в пользовательском списке разрешённого (allowed_exclusions.json).");

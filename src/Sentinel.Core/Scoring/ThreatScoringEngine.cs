@@ -54,6 +54,12 @@ public sealed record ScoringInput
     /// <summary>Командная строка запуска содержит обфусцированный вызов интерпретатора.</summary>
     public bool ObfuscatedCommandLine { get; init; }
 
+    /// <summary>
+    /// Однофайловое приложение .NET (apphost с сигнатурой бандла): сжатые сборки дают высокую энтропию, а строки
+    /// AmsiScanBuffer/EtwEventWrite принадлежат самому рантайму .NET — это не упаковщик и не патчинг AMSI/ETW.
+    /// </summary>
+    public bool DotNetSingleFileBundle { get; init; }
+
     /// <summary>В приватной исполняемой памяти процесса найден PE-образ без файла на диске (<c>MEM-REFLECTIVE-PE</c>).</summary>
     public bool MemoryReflectivePe { get; init; }
 
@@ -113,11 +119,16 @@ public static class ThreatScoringEngine
             }
         }
 
+        if (input.DotNetSingleFileBundle)
+        {
+            factors.Add(new ScoreFactor("DOTNET-BUNDLE", 0, "Однофайловое приложение .NET (сигнатура бандла apphost)"));
+        }
+
         if (pe is not null && input.Entropy > HighEntropyThreshold)
         {
-            // Сжатые метаданные IL у .NET-сборок дают высокую энтропию штатно — это не упаковщик.
-            factors.Add(pe.IsManaged
-                ? new ScoreFactor("ENTROPY-MANAGED", 0, "Высокая энтропия .NET-сборки (не упаковщик)")
+            // Сжатые метаданные IL у .NET-сборок и сжатые сборки однофайлового бандла дают высокую энтропию штатно — это не упаковщик.
+            factors.Add(pe.IsManaged || input.DotNetSingleFileBundle
+                ? new ScoreFactor("ENTROPY-MANAGED", 0, "Высокая энтропия .NET-сборки или однофайлового бандла .NET (не упаковщик)")
                 : new ScoreFactor("ENTROPY-NATIVE", 15, $"Высокая энтропия нативного PE ({input.Entropy:F2})"));
         }
 
@@ -192,7 +203,10 @@ public static class ThreatScoringEngine
             factors.Add(new("API-LSASS", 45, "MiniDumpWriteDump вместе с lsass/SeDebugPrivilege — дамп учётных данных"));
         }
 
-        if ((Has("AmsiScanBuffer") || Marker("AmsiScanBuffer") || Has("EtwEventWrite") || Marker("EtwEventWrite")) && Has("VirtualProtect"))
+        // Строки AmsiScanBuffer/EtwEventWrite в однофайловом бандле .NET — из рантайма (coreclr вызывает AMSI для Assembly.Load(byte[])),
+        // поэтому для бандла учитываются только прямые импорты этих функций.
+        var amsiByString = !input.DotNetSingleFileBundle && (Marker("AmsiScanBuffer") || Marker("EtwEventWrite"));
+        if ((Has("AmsiScanBuffer") || Has("EtwEventWrite") || amsiByString) && Has("VirtualProtect"))
         {
             factors.Add(new("API-AMSI-ETW", 40, "Патчинг AMSI/ETW: AmsiScanBuffer/EtwEventWrite + VirtualProtect"));
         }

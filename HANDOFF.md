@@ -166,6 +166,15 @@
   считался от всех известных объектов с потолком 95 %; аудит автозагрузки — один синхронный вызов на 1–3 мин без обновлений. Теперь процент по этапам
   (процессы 0–4 %, автозагрузка 4–12 %, конфигурация 12–15 %, файлы 15–100 %), аудит автозагрузки идёт в фоне с отображением прошедшего времени,
   а свежий (≤ 5 мин) результат фонового аудита службы используется повторно; находки этапа «Процессы» тоже проходят `FalsePositiveGuard`.
+- **Sentinel ловил сам себя** (17 событий «Ждёт решения»: Sentinel.Cli/App/Service.exe, `PROC-FILE-HEURISTIC`, балл 65): однофайловый бандл .NET
+  давал «высокую энтропию нативного PE» (+15) и «патчинг AMSI/ETW» (+40) — строки AmsiScanBuffer/EtwEventWrite и импорт VirtualProtect принадлежат
+  рантайму .NET. `FileAnalyzer` распознаёт сигнатуру бандла apphost (проверено на собственном single-file `sentinel.exe`), `ThreatScoringEngine` для
+  бандла не начисляет энтропию и AMSI/ETW по строкам (прямой импорт AmsiScanBuffer/EtwEventWrite по-прежнему учитывается) — это убирает ложные
+  срабатывания на любые однофайловые .NET-приложения. Плюс доверие по хешу: служба при старте регистрирует SHA-256 своих `Sentinel*.exe`; файл
+  или процесс с таким хешем (например, копия `F:\Sentinel.App.exe`) — не находка (`FalsePositiveGuard` → Protected, диспетчер пропускает).
+- Источник ложных `PROC-PS-BYPASS`/`PROC-CMD-IEX`/BH-02 подтверждён сессией на Katana: обёртка Claude Code
+  `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "...; Invoke-Expression -Command $__claudeCodeScript"` (родитель `claude.exe` → `cmd.exe`);
+  дословно добавлена в регрессионные тесты. Родителю по имени не доверяем (обход через подмену родителя).
 
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`

@@ -215,6 +215,7 @@ public sealed class FileAnalyzer
                 DefinitiveMatch = definitive,
                 Imports = imports,
                 Markers = FindMarkers(content, imports),
+                DotNetSingleFileBundle = IsDotNetSingleFileBundle(content, size),
                 PersistenceBound = context.PersistenceBound,
                 ObfuscatedCommandLine = context.ObfuscatedCommandLine,
             };
@@ -266,6 +267,28 @@ public sealed class FileAnalyzer
             PriorityReason = priority?.Reason,
             Score = score,
         };
+    }
+
+    /// <summary>
+    /// Сигнатура бандла apphost .NET (SHA-256 строки «.net core bundle», bundle_marker.cpp в dotnet/runtime). Перед ней — 8 байт
+    /// смещения заголовка бандла: у настоящего однофайлового приложения оно ненулевое и лежит внутри файла.
+    /// </summary>
+    private static readonly byte[] DotNetBundleSignature =
+    [
+        0x8b, 0x12, 0x02, 0xb9, 0x6a, 0x61, 0x20, 0x38, 0x72, 0x7b, 0x93, 0x02, 0x14, 0xd7, 0xa0, 0x32,
+        0x13, 0xf5, 0xb9, 0xe6, 0xef, 0xae, 0x33, 0x18, 0xee, 0x3b, 0x2d, 0xce, 0x24, 0xb3, 0x6a, 0xae,
+    ];
+
+    internal static bool IsDotNetSingleFileBundle(ReadOnlySpan<byte> content, long fileSize)
+    {
+        var index = content.IndexOf(DotNetBundleSignature);
+        if (index < 8)
+        {
+            return false;
+        }
+
+        var headerOffset = System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(content[(index - 8)..]);
+        return headerOffset > 0 && headerOffset < fileSize;
     }
 
     private static HashSet<string> FindMarkers(byte[] content, IReadOnlySet<string> imports)

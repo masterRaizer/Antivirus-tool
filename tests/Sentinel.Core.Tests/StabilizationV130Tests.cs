@@ -455,11 +455,27 @@ public class AskUserSeverityTests
 /// </summary>
 public class ScriptHostFalsePositiveTests
 {
+    /// <summary>Дословная командная строка обёртки, через которую Claude Code на Katana запускает PowerShell-команды (14:47:36).</summary>
+    private const string ClaudeCodeShellWrapper =
+        @"""C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe""  -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""$__claudeCodeScript = $env:CLAUDE_CODE_SHELL_LAUNCHER_SCRIPT; $env:CLAUDE_CODE_SHELL_LAUNCHER_SCRIPT = $null; Invoke-Expression -Command $__claudeCodeScript""";
+
+    [Fact]
+    public void ClaudeCodeShellWrapper_IsOnlyWeakSignals()
+    {
+        var findings = InterpreterHeuristics.Analyze("powershell.exe", ClaudeCodeShellWrapper);
+
+        Assert.Equal(Severity.Medium, findings.Max(f => f.Severity));
+        Assert.Equal(Severity.Low, Assert.Single(findings, f => f.Id == "PROC-PS-BYPASS").Severity);
+        Assert.Equal(Severity.Medium, Assert.Single(findings, f => f.Id == "PROC-CMD-IEX").Severity);
+        Assert.DoesNotContain(findings, f => f.Id is "PROC-PS-ENCODED" or "PROC-CMD-DOWNLOAD" or "PROC-CMD-BASE64");
+    }
+
     [Theory]
     [InlineData(@"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ""Get-Content a.txt -Encoding UTF8 | Out-File b.txt -Encoding utf8""")]
     [InlineData(@"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ""$cmd = 'Get-Date'; Invoke-Expression $cmd""")]
     [InlineData(@"cmd.exe /d /s /c ""powershell -NoProfile -Command ""& { iex $env:SCRIPT }""""")]
     [InlineData(@"powershell.exe -e")]
+    [InlineData(ClaudeCodeShellWrapper)]
     public void ServiceStyleCommands_AreNotWeaponized(string commandLine)
     {
         var engine = new BehavioralCorrelationEngine();
@@ -593,5 +609,105 @@ public class ScanProgressPhaseTests
         {
             Assert.Contains(bench.Progress, p => p.CurrentItem.Contains("результат фонового аудита службы", StringComparison.Ordinal));
         }
+    }
+}
+
+/// <summary>
+/// Sentinel ловил сам себя (Sentinel.Cli/App/Service.exe, балл 65): однофайловый бандл .NET давал «высокую энтропию нативного PE» (+15)
+/// и «патчинг AMSI/ETW» (+40) — строки AmsiScanBuffer/EtwEventWrite и импорт VirtualProtect принадлежат рантайму .NET.
+/// </summary>
+public class DotNetBundleAndOwnBinaryTests
+{
+    private static readonly byte[] BundleSignature =
+    [
+        0x8b, 0x12, 0x02, 0xb9, 0x6a, 0x61, 0x20, 0x38, 0x72, 0x7b, 0x93, 0x02, 0x14, 0xd7, 0xa0, 0x32,
+        0x13, 0xf5, 0xb9, 0xe6, 0xef, 0xae, 0x33, 0x18, 0xee, 0x3b, 0x2d, 0xce, 0x24, 0xb3, 0x6a, 0xae,
+    ];
+
+    private static Sentinel.Core.Pe.PeInfo NativeExe() => new()
+    {
+        Machine = Sentinel.Core.Pe.PeMachine.Amd64, Is64Bit = true, IsDll = false, Subsystem = Sentinel.Core.Pe.PeSubsystem.WindowsCui,
+        TimeDateStamp = DateTimeOffset.UnixEpoch, EntryPointRva = 0x1000, ImageBase = 0x140000000, SizeOfImage = 0x4000, CheckSum = 0,
+        Characteristics = 0x22, DllCharacteristics = 0,
+        Sections = [new Sentinel.Core.Pe.PeSection(".text", 0x1000, 0x1000, 0x400, 0x1000,
+            Sentinel.Core.Pe.SectionCharacteristics.Code | Sentinel.Core.Pe.SectionCharacteristics.Execute | Sentinel.Core.Pe.SectionCharacteristics.Read, 5)],
+        DataDirectories = Enumerable.Range(0, 16).Select(_ => new Sentinel.Core.Pe.PeDataDirectory(0, 0)).ToArray(),
+        OverlayOffset = 0, OverlaySize = 0, Anomalies = [],
+    };
+
+    private static Sentinel.Core.Scoring.ScoringInput SentinelLikeInput(bool bundle) => new()
+    {
+        Path = @"C:\Program Files\Sentinel\Sentinel.Cli.exe",
+        Pe = NativeExe(),
+        Entropy = 7.81,
+        Imports = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "VirtualProtect", "GetProcAddress", "LoadLibraryExW" },
+        Markers = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "AmsiScanBuffer", "EtwEventWrite" },
+        DotNetSingleFileBundle = bundle,
+    };
+
+    [Fact]
+    public void BundleSignature_IsRecognized_OnlyWithValidHeaderOffset()
+    {
+        var data = new byte[64 * 1024];
+        BundleSignature.CopyTo(data, 4096);
+        BitConverter.GetBytes(50_000L).CopyTo(data, 4096 - 8);
+        Assert.True(FileAnalyzer.IsDotNetSingleFileBundle(data, data.Length));
+
+        BitConverter.GetBytes(0L).CopyTo(data, 4096 - 8); // apphost без бандла: смещение заголовка нулевое
+        Assert.False(FileAnalyzer.IsDotNetSingleFileBundle(data, data.Length));
+        Assert.False(FileAnalyzer.IsDotNetSingleFileBundle(new byte[4096], 4096));
+    }
+
+    [Fact]
+    public void SingleFileDotNetApp_IsNotScoredAsPackedOrAmsiPatcher()
+    {
+        var bundle = Sentinel.Core.Scoring.ThreatScoringEngine.Evaluate(SentinelLikeInput(bundle: true));
+        Assert.Equal(10, bundle.Value); // только «без цифровой подписи»
+        Assert.Null(bundle.Level);
+        Assert.Contains(bundle.Factors, f => f.Code == "DOTNET-BUNDLE");
+        Assert.DoesNotContain(bundle.Factors, f => f.Code is "API-AMSI-ETW" or "ENTROPY-NATIVE");
+
+        var native = Sentinel.Core.Scoring.ThreatScoringEngine.Evaluate(SentinelLikeInput(bundle: false));
+        Assert.Equal(65, native.Value); // то же без сигнатуры бандла — прежний балл, правило работает для нативных файлов
+    }
+
+    [Fact]
+    public void Bundle_WithDirectAmsiImport_IsStillFlagged()
+    {
+        var input = SentinelLikeInput(bundle: true) with
+        {
+            Imports = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "VirtualProtect", "AmsiScanBuffer" },
+        };
+
+        Assert.Contains(Sentinel.Core.Scoring.ThreatScoringEngine.Evaluate(input).Factors, f => f.Code == "API-AMSI-ETW");
+    }
+
+    [Fact]
+    public async Task OwnBinaryHash_IsTrusted_WhereverTheFileLies()
+    {
+        const string hash = "0f0e0d0c0b0a09080706050403020100ffeeddccbbaa99887766554433221100";
+        SelfProtection.RegisterOwnBinaryHashes([hash]);
+
+        Assert.Equal(GuardDecision.Protected, new FalsePositiveGuard().Evaluate(new GuardContext
+        {
+            Path = @"F:\Sentinel.App.exe",
+            Sha256 = hash.ToUpperInvariant(),
+            Score = 65,
+        }).Decision);
+
+        using var b = new DispatcherBench();
+        var scan = new FileScanResult
+        {
+            Path = @"F:\Sentinel.App.exe",
+            Sha256 = hash,
+            Verdict = Verdict.Suspicious,
+            Detections = [new Scanning.Detection("Heuristic.ThreatScore", Severity.Medium, "score", DetectionSource.Heuristic, null, "Балл 65.", [])],
+        };
+        var entry = new ProcessAuditEntry(new ProcessSnapshot { Pid = 18796, Name = "Sentinel.App.exe", ExecutablePath = @"F:\Sentinel.App.exe" },
+            [AuditFinding.Create("PROC-FILE-HEURISTIC", Severity.Medium, "Эвристика", "Синтетика.")], scan);
+
+        Assert.Null(await b.Dispatcher.DispatchFileAsync(scan));
+        Assert.Null(await b.Dispatcher.DispatchProcessAsync(entry));
+        Assert.Empty(b.Raised);
     }
 }

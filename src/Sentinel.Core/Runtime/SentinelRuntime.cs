@@ -48,6 +48,9 @@ public sealed partial class SentinelRuntime : ISentinelBackend, IAsyncDisposable
         _dispatcher.ThreatUpdated += OnThreatUpdated;
         _startedAtUtc = options.TimeProvider.GetUtcNow().UtcDateTime;
         _realtimeEnabled = LoadRealtimeSetting(options.RealtimeEnabledByDefault);
+
+        // Собственные исполняемые файлы по SHA-256: копия Sentinel.App.exe на флешке или в «Загрузках» — не находка.
+        _ = Scanning.SelfProtection.RegisterCurrentInstallationAsync();
     }
 
     public event Action<ScanProgress>? ScanProgressChanged;

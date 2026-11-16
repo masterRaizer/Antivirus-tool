@@ -84,6 +84,61 @@ public static class SelfProtection
             || IsOwnInstallationFile(path);
     }
 
+    private static volatile HashSet<string> _ownBinaryHashes = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// SHA-256 собственных исполняемых файлов Sentinel (считаются при старте рантайма из каталога установки). Файл или процесс
+    /// с таким хешем — это Sentinel, где бы он ни лежал (например, копия Sentinel.App.exe на флешке): доверие по хешу, а не по имени.
+    /// </summary>
+    public static void RegisterOwnBinaryHashes(IEnumerable<string> sha256)
+    {
+        ArgumentNullException.ThrowIfNull(sha256);
+        var next = new HashSet<string>(_ownBinaryHashes, StringComparer.OrdinalIgnoreCase);
+        foreach (var hash in sha256.Where(h => !string.IsNullOrWhiteSpace(h)))
+        {
+            next.Add(hash.Trim());
+        }
+
+        _ownBinaryHashes = next;
+    }
+
+    /// <summary>
+    /// Считает SHA-256 исполняемых файлов Sentinel рядом с текущим образом (Sentinel.App/Service/Cli.exe, sentinel.exe) и регистрирует
+    /// их. Только если текущий процесс — образ Sentinel; хеширование потоковое, сбои чтения пропускаются.
+    /// </summary>
+    public static Task RegisterCurrentInstallationAsync() => CurrentSentinelImagePath is not { } image
+        ? Task.CompletedTask
+        : Task.Run(() =>
+        {
+            var directory = Path.GetDirectoryName(image);
+            if (string.IsNullOrEmpty(directory))
+            {
+                return;
+            }
+
+            var hashes = new List<string>();
+            foreach (var name in OwnImageNames)
+            {
+                try
+                {
+                    var match = Directory.EnumerateFiles(directory, "*.exe")
+                        .FirstOrDefault(f => string.Equals(Path.GetFileName(f), name, PathComparison));
+                    if (match is not null)
+                    {
+                        hashes.Add(Hashing.FileHasher.ComputeSha256(match));
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // файл занят или недоступен — остальные регистрируются
+                }
+            }
+
+            RegisterOwnBinaryHashes(hashes);
+        });
+
+    public static bool IsOwnBinaryHash(string? sha256) => !string.IsNullOrWhiteSpace(sha256) && _ownBinaryHashes.Contains(sha256.Trim());
+
     /// <summary>Имя службы Sentinel (<c>SentinelService</c>, <c>SentinelDrv</c>).</summary>
     public static bool IsOwnServiceName(string? serviceName) =>
         !string.IsNullOrWhiteSpace(serviceName) && OwnServiceNames.Contains(serviceName.Trim(), StringComparer.OrdinalIgnoreCase);

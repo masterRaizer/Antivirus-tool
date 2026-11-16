@@ -76,7 +76,7 @@ public sealed class RealtimeEventDispatcher
     public Task<ThreatEvent?> DispatchFileAsync(FileScanResult result, string source = "realtime", CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(result);
-        if (!IsFlagged(result) || _allowed.Load().IsPathAllowed(result.Path))
+        if (!IsFlagged(result) || _allowed.Load().IsPathAllowed(result.Path) || SelfProtection.IsOwnBinaryHash(result.Sha256))
         {
             return Task.FromResult<ThreatEvent?>(null);
         }
@@ -122,9 +122,10 @@ public sealed class RealtimeEventDispatcher
     {
         ArgumentNullException.ThrowIfNull(entry);
         var process = entry.Process;
-        if (!entry.HasFindings || _allowed.Load().IsProcessAllowed(process.Name, process.ExecutablePath))
+        if (!entry.HasFindings || _allowed.Load().IsProcessAllowed(process.Name, process.ExecutablePath)
+            || SelfProtection.IsOwnBinaryHash(entry.FileScan?.Sha256))
         {
-            return Task.FromResult<ThreatEvent?>(null);
+            return Task.FromResult<ThreatEvent?>(null); // процессы самого Sentinel находками не считаются
         }
 
         var reason = DescribeFindings(entry.Findings);
