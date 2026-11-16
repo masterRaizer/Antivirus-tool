@@ -51,3 +51,10 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 ## 1.1.1 — Безопасный режим и WinRE
 - Сделано: определение Безопасного режима (`GetSystemMetrics(SM_CLEANBOOT)`, `SAFEBOOT_OPTION`) и WinRE (`X:\Windows\System32\winpeshl.ini`, `HKLM\...\Control\MiniNT`); программный рендеринг WPF и сразу автономный режим «Режим восстановления (Автономно)» без ожидания канала; каталог данных по первой доступной для записи папке (`%ProgramData%\Sentinel` → `SentinelData` рядом с exe → `%LocalAppData%\Sentinel` → `%TEMP%\SentinelData`); шаги аудита изолированы (пропуск с причиной в журнале и отчёте); ручной ввод пути в «Выборочной папке»; ключи `SafeBoot\Minimal|Network\SentinelService` в MSI.
 - Не проверено: запуск в настоящем Безопасном режиме и в WinRE (программный рендеринг, отсутствие PowerShell/WMI), старт службы в Безопасном режиме по ключам SafeBoot.
+
+## Этап 7 (v1.2.0) — User-Mode EDR
+### 7/1 NativePersistenceParser (готово)
+- `src/Sentinel.Core/Auditors/Persistence/`: `NativePersistenceParser`, `CommandLineSplitter`, `UnquotedServicePathDetector`, `TaskXmlStreamReader` (FileStream 64 КБ + защищённый XmlReader/XDocument, без ReadAllText), `ScheduledTaskReconciler` (Ghost/Orphan/Hidden), `TaskDirectoryWalker` (пропуск ReparsePoint), `WindowsNativePersistenceSource` (SCM P/Invoke + реестр) и `WindowsScheduledTaskSource` (`[SupportedOSPlatform("windows")]`).
+- Детекты: Unquoted Service Path, ServiceDll в профиле, FailureCommand, IFEO Debugger/SilentProcessExit, SafeBoot (белый список SentinelService/SentinelDrv), AppInit_DLLs, Winlogon, ComHandler, Ghost/Orphan/Hidden задачи.
+- Проверка: build 0/0, 580 тестов (575 passed, 5 Windows-only skipped). Не проверено на Windows: SCM-состояние служб, чтение реестра/TaskCache, обход System32\Tasks.
+### Следующий модуль: 7/2 RansomwareBehaviorShield + CanaryFileGuard
