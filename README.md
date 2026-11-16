@@ -36,7 +36,12 @@ sentinel selftest
 sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan]   # только Windows
 sentinel audit-startup   [--rules <каталог>] [--json] [--no-file-scan]   # только Windows
 sentinel audit-config    [--json]                                        # только Windows
+sentinel family-scan     [--json]                                        # семейства майнеров/загрузчиков, только Windows
+sentinel family-clean    [--confirm] [--block-ioc] [--json]              # плейбук нейтрализации, только Windows
 ```
+
+Семейства CAAService (Pearl/pearlhash) и techias (активатор Office): IOC, техники и плейбук —
+[`docs/THREAT_FAMILIES.md`](docs/THREAT_FAMILIES.md).
 
 Коды возврата: `0` — чисто, `1` — обнаружены угрозы/подозрения, `2` — ошибка.
 

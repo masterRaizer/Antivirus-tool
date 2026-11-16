@@ -18,6 +18,15 @@ public enum RollbackKind
 
     /// <summary>Исключение Defender удалено через MSFT_MpPreference.Remove.</summary>
     DefenderExclusion,
+
+    /// <summary>Разрешающее правило брандмауэра удалено; в копии — строка правила из реестра.</summary>
+    FirewallRule,
+
+    /// <summary>Sentinel добавил правило блокировки IOC; отмена удаляет его.</summary>
+    FirewallBlockRule,
+
+    /// <summary>Удалён пустой каталог вредоноса; отмена создаёт его заново.</summary>
+    EmptyDirectory,
 }
 
 /// <summary>

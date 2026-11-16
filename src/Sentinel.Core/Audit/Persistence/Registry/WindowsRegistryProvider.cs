@@ -10,8 +10,26 @@ namespace Sentinel.Core.Audit.Persistence.Registry;
 /// (<see cref="IRegistryEditor"/>) используется исключительно модулем нейтрализации.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class WindowsRegistryProvider : IRegistryEditor
+public sealed class WindowsRegistryProvider : IRegistryEditor, IRegistryKeyTimestampProvider
 {
+    public DateTime? GetLastWriteTimeUtc(RegistryKeyPath key)
+    {
+        using var k = Open(key);
+        if (k is null)
+        {
+            return null;
+        }
+
+        var status = RegQueryInfoKey(k.Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+            IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out var fileTime);
+        return status == 0 ? DateTime.FromFileTimeUtc(fileTime) : null;
+    }
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int RegQueryInfoKey(Microsoft.Win32.SafeHandles.SafeRegistryHandle hKey, IntPtr lpClass, IntPtr lpcchClass,
+        IntPtr lpReserved, IntPtr lpcSubKeys, IntPtr lpcbMaxSubKeyLen, IntPtr lpcbMaxClassLen, IntPtr lpcValues,
+        IntPtr lpcbMaxValueNameLen, IntPtr lpcbMaxValueLen, IntPtr lpcbSecurityDescriptor, out long lpftLastWriteTime);
+
     public bool KeyExists(RegistryKeyPath key)
     {
         using var k = Open(key);

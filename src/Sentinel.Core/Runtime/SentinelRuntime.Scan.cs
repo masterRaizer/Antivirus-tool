@@ -249,13 +249,14 @@ public sealed partial class SentinelRuntime
         var snapshot = _o.Processes.GetProcesses();
         run.Processes = snapshot;
         run.Total += snapshot.Count;
-        var auditor = new ProcessAuditor(new ProcessAuditorOptions(), _o.Analyzer);
+        var auditor = new ProcessAuditor(new ProcessAuditorOptions { NetworkConnections = _o.NetworkConnections }, _o.Analyzer);
+        var connections = auditor.ReadNetworkConnections();
         var entries = new List<ProcessAuditEntry>(snapshot.Count);
         foreach (var process in snapshot)
         {
             Checkpoint(run, token);
             Update(run, p => p with { CurrentItem = $"PID {process.Pid}: {process.ExecutablePath ?? process.Name}" });
-            var entry = auditor.Audit([process]).Entries[0];
+            var entry = auditor.AuditInContext(process, snapshot, connections);
             entries.Add(entry);
             run.Scanned++;
             if (entry.HasFindings)

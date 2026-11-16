@@ -12,7 +12,28 @@ public sealed record ScheduledTaskInfo(
     string Path,
     bool Enabled,
     IReadOnlyList<ScheduledTaskAction> ExecActions,
-    string? Author = null);
+    string? Author = null)
+{
+    /// <summary>Учётная запись запуска (<c>Principal/UserId</c>): <c>S-1-5-18</c>/<c>SYSTEM</c> — локальная система.</summary>
+    public string? UserId { get; init; }
+
+    /// <summary><c>HighestAvailable</c> — с повышенными правами.</summary>
+    public string? RunLevel { get; init; }
+
+    /// <summary>Есть триггер входа в систему (<c>LogonTrigger</c>).</summary>
+    public bool HasLogonTrigger { get; init; }
+
+    /// <summary>Есть триггер запуска системы (<c>BootTrigger</c>).</summary>
+    public bool HasBootTrigger { get; init; }
+
+    /// <summary>Дата регистрации из <c>RegistrationInfo/Date</c> (если указана).</summary>
+    public DateTime? RegistrationDate { get; init; }
+
+    /// <summary>Выполняется от имени локальной системы (SYSTEM, S-1-5-18, LocalSystem).</summary>
+    public bool RunsAsSystem => UserId is { } u
+        && (u.Equals("S-1-5-18", StringComparison.OrdinalIgnoreCase) || u.EndsWith("SYSTEM", StringComparison.OrdinalIgnoreCase)
+            || u.Equals("LocalSystem", StringComparison.OrdinalIgnoreCase));
+}
 
 /// <summary>Поставщик задач планировщика Windows.</summary>
 public interface ITaskSchedulerProvider
@@ -55,7 +76,19 @@ public static class TaskXmlParser
             }
         }
 
-        return new ScheduledTaskInfo(name, path, enabled, actions, author);
+        var principal = Child(Child(root, "Principals"), "Principal");
+        var triggers = Child(root, "Triggers");
+        var dateText = Child(Child(root, "RegistrationInfo"), "Date")?.Value?.Trim();
+        DateTime? registered = DateTime.TryParse(dateText, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeLocal, out var d) ? d : null;
+        return new ScheduledTaskInfo(name, path, enabled, actions, author)
+        {
+            UserId = Child(principal, "UserId")?.Value?.Trim() ?? Child(principal, "GroupId")?.Value?.Trim(),
+            RunLevel = Child(principal, "RunLevel")?.Value?.Trim(),
+            HasLogonTrigger = triggers is not null && Children(triggers, "LogonTrigger").Any(),
+            HasBootTrigger = triggers is not null && Children(triggers, "BootTrigger").Any(),
+            RegistrationDate = registered,
+        };
     }
 
     private static XElement? Child(XElement? parent, string localName) =>

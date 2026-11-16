@@ -164,3 +164,26 @@ internal sealed partial class RuntimeLogWorker(SentinelRuntime runtime, ILogger<
     [LoggerMessage(Level = LogLevel.Warning, Message = "Находка [{Severity}] {Name} ({Path}): {Reason} → {Status}")]
     private static partial void LogThreat(ILogger logger, string severity, string name, string path, string reason, string status);
 }
+
+/// <summary>
+/// Однократная перепроверка после чистки семейства майнеров/загрузчиков (отметка <c>family-recheck.json</c>): через три минуты
+/// после старта службы, чтобы автозапуск при входе пользователя успел бы сработать, если механизм перезапуска остался.
+/// </summary>
+internal sealed partial class FamilyRecheckWorker(SentinelRuntime runtime, ILogger<FamilyRecheckWorker> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken).ConfigureAwait(false);
+        try
+        {
+            runtime.RunPendingFamilyRecheck();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            LogFailed(logger, ex.Message);
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Перепроверка после чистки семейства не выполнена: {Message}")]
+    private static partial void LogFailed(ILogger logger, string message);
+}

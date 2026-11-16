@@ -2,6 +2,9 @@ using Sentinel.Core.Audit.Config;
 using Sentinel.Core.Audit.Persistence;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Signatures;
+using Sentinel.Core.ThreatFamilies;
+using Sentinel.Core.Trust;
+using System.Runtime.InteropServices;
 
 namespace Sentinel.Core.Audit.Process;
 
@@ -24,6 +27,24 @@ public sealed class ProcessAuditorOptions
     /// Защищённые процессы сканер отсекает сам через <c>CriticalProcessGuard</c> до открытия дескриптора.
     /// </summary>
     public Auditors.Memory.MemoryIntegrityScanner? MemoryScanner { get; init; }
+
+    /// <summary>Таблица TCP-соединений (известные узлы семейств, порты пулов, прослушивание); <c>null</c> — сеть не проверяется.</summary>
+    public INetworkConnectionProvider? NetworkConnections { get; init; }
+
+    /// <summary>Время создания файла (UTC) — для связки «загрузчик создал и запустил майнер». <c>null</c> — время неизвестно.</summary>
+    public Func<string, DateTime?> FileCreationTimeUtc { get; init; } = DefaultCreationTime;
+
+    private static DateTime? DefaultCreationTime(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.GetCreationTimeUtc(path) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
 }
 
 /// <summary>
@@ -54,14 +75,16 @@ public sealed class ProcessAuditor
         ArgumentNullException.ThrowIfNull(processes);
         ArgumentNullException.ThrowIfNull(exclusions);
 
+        var all = processes as IReadOnlyList<ProcessSnapshot> ?? processes.ToList();
+        var context = new AuditContext(all, ReadConnections());
         var prioritized = new List<ProcessAuditEntry>();
         var regular = new List<ProcessSnapshot>();
-        foreach (var p in processes)
+        foreach (var p in all)
         {
             var matched = MatchExclusions(p, exclusions);
             if (matched.Count > 0)
             {
-                prioritized.Add(AuditOne(p, matched));
+                prioritized.Add(AuditOne(p, matched, context));
             }
             else
             {
@@ -72,11 +95,26 @@ public sealed class ProcessAuditor
         var entries = new List<ProcessAuditEntry>(prioritized);
         foreach (var p in regular)
         {
-            entries.Add(AuditOne(p, []));
+            entries.Add(AuditOne(p, [], context));
         }
 
         return new ProcessAuditReport(entries);
     }
+
+    /// <summary>
+    /// Проверка одного процесса с контекстом всего снимка (родитель для связки «загрузчик → майнер» и прослушивания от explorer)
+    /// и заранее прочитанной таблицей TCP — для покадровой проверки в сканировании с прогрессом.
+    /// </summary>
+    public ProcessAuditEntry AuditInContext(ProcessSnapshot process, IReadOnlyList<ProcessSnapshot> snapshot, IReadOnlyList<NetworkConnection> connections)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(connections);
+        return AuditOne(process, [], new AuditContext(snapshot, connections));
+    }
+
+    /// <summary>Таблица TCP из <see cref="ProcessAuditorOptions.NetworkConnections"/> (пусто — источник не задан или недоступен).</summary>
+    public IReadOnlyList<NetworkConnection> ReadNetworkConnections() => ReadConnections();
 
     /// <summary>Исключения, под которые попадает процесс (по образу или по каталогу запуска).</summary>
     public static IReadOnlyList<DefenderExclusion> MatchExclusions(ProcessSnapshot process, IReadOnlyList<DefenderExclusion> exclusions)
@@ -101,7 +139,44 @@ public sealed class ProcessAuditor
         return matched;
     }
 
-    private ProcessAuditEntry AuditOne(ProcessSnapshot p, IReadOnlyList<DefenderExclusion> matched)
+    /// <summary>Снимок всех процессов (поиск родителя) и соединения, сгруппированные по PID.</summary>
+    private sealed class AuditContext(IReadOnlyList<ProcessSnapshot> processes, IReadOnlyList<NetworkConnection> connections)
+    {
+        private readonly Dictionary<int, ProcessSnapshot> _byPid = processes.GroupBy(p => p.Pid).ToDictionary(g => g.Key, g => g.First());
+        private readonly ILookup<int, NetworkConnection> _connections = connections.ToLookup(c => c.Pid);
+
+        public ProcessSnapshot? Parent(ProcessSnapshot child)
+        {
+            if (child.ParentPid <= 0 || !_byPid.TryGetValue(child.ParentPid, out var parent) || parent.Pid == child.Pid)
+            {
+                return null;
+            }
+
+            // Повторно выданный PID: «родитель» запущен позже потомка — это другой процесс.
+            return parent.StartTimeUtc is { } ps && child.StartTimeUtc is { } cs && ps > cs ? null : parent;
+        }
+
+        public IEnumerable<NetworkConnection> ConnectionsOf(int pid) => _connections[pid];
+    }
+
+    private IReadOnlyList<NetworkConnection> ReadConnections()
+    {
+        if (_options.NetworkConnections is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return _options.NetworkConnections.GetConnections();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or ExternalException)
+        {
+            return [];
+        }
+    }
+
+    private ProcessAuditEntry AuditOne(ProcessSnapshot p, IReadOnlyList<DefenderExclusion> matched, AuditContext context)
     {
         var findings = new List<AuditFinding>();
         var priority = matched.Count > 0
@@ -133,6 +208,10 @@ public sealed class ProcessAuditor
         }
 
         CheckResourceUsage(p, findings);
+        if (MinerCommandLineAnalyzer.Analyze(p.CommandLine, p.Pid, p.Name) is { } miner)
+        {
+            findings.Add(miner);
+        }
 
         FileScanResult? scan = null;
         if (_options.AnalyzeExecutable && _fileAnalyzer is not null && !string.IsNullOrWhiteSpace(p.ExecutablePath))
@@ -143,6 +222,11 @@ public sealed class ProcessAuditor
                 AppendFileFindings(p, scan, findings);
             }
         }
+
+        CheckDeceptiveName(p, scan, findings);
+        CheckFamilyIndicators(p, scan, findings);
+        CheckNetwork(p, scan, context, findings);
+        CheckDropperChild(p, context, findings);
 
         Auditors.Memory.MemoryScanResult? memory = null;
         if (_options.MemoryScanner is { } memoryScanner && p.Pid > 0)
@@ -202,6 +286,170 @@ public sealed class ProcessAuditor
                 Evidence.Of("path", p.ExecutablePath)));
         }
     }
+
+    // ---- Семейства майнеров/загрузчиков (CAAService, techias) ------------------
+
+    /// <summary>Имя «под Windows» с подменой символов или неподписанный файл, называющий себя компонентом Microsoft.</summary>
+    private static void CheckDeceptiveName(ProcessSnapshot p, FileScanResult? scan, List<AuditFinding> findings)
+    {
+        if (findings.Any(f => f.Id == "PROC-HOMOGLYPH"))
+        {
+            return;
+        }
+
+        var fileName = p.ExecutablePath is { Length: > 0 } path ? Path.GetFileName(path.Replace('\\', '/')) : p.Name;
+        var userWritable = p.ExecutablePath is not null && PathClassifier.IsUserWritableLocation(p.ExecutablePath);
+        if (DeceptiveNameAnalyzer.Analyze(fileName) is { } deceptive && !DeceptiveNameAnalyzer.IsMicrosoftSigned(scan?.Signature))
+        {
+            findings.Add(AuditFinding.Create("PROC-DECEPTIVE-NAME", userWritable ? Severity.High : Severity.Medium,
+                "Обманчивое имя исполняемого файла",
+                $"Имя '{fileName}': {deceptive.Describe()}. Так маскируют вредоносные файлы под компоненты Windows.",
+                Evidence.Of("pid", p.Pid), Evidence.Of("name", fileName), Evidence.Of("imitates", deceptive.Imitates),
+                Evidence.Of("path", p.ExecutablePath)));
+        }
+
+        if (scan is { Pe.IsPe: true, Signature: { Status: not SignatureStatus.Unsupported } sig }
+            && DeceptiveNameAnalyzer.ClaimsMicrosoftName(fileName) && !DeceptiveNameAnalyzer.IsMicrosoftSigned(sig))
+        {
+            findings.Add(AuditFinding.Create("PROC-FAKE-MICROSOFT", userWritable ? Severity.High : Severity.Medium,
+                "Файл называет себя компонентом Microsoft без подписи Microsoft",
+                $"'{fileName}' назван как компонент Microsoft/Windows, но подписи Microsoft нет (статус {sig.Status}, подписант: {sig.SignerSubject ?? "нет"}).",
+                Evidence.Of("pid", p.Pid), Evidence.Of("path", p.ExecutablePath), Evidence.Of("signature", sig.Status.ToString())));
+        }
+    }
+
+    private static void CheckFamilyIndicators(ProcessSnapshot p, FileScanResult? scan, List<AuditFinding> findings)
+    {
+        var match = ThreatFamilyCatalog.MatchHash(scan?.Sha256);
+        if (match is not null)
+        {
+            findings.Add(AuditFinding.Create("PROC-FAMILY-IOC", Severity.Critical,
+                $"Известный файл семейства: {match.Family.Name}",
+                $"SHA-256 исполняемого файла процесса совпадает с IOC семейства «{match.Family.Name}» ({match.Role}).",
+                Evidence.Of("pid", p.Pid), Evidence.Of("path", p.ExecutablePath), Evidence.Of("sha256", match.Indicator),
+                Evidence.Of("family", match.Family.Id)));
+        }
+    }
+
+    private static void CheckNetwork(ProcessSnapshot p, FileScanResult? scan, AuditContext context, List<AuditFinding> findings)
+    {
+        var userWritable = p.ExecutablePath is not null && PathClassifier.IsUserWritableLocation(p.ExecutablePath);
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var c in context.ConnectionsOf(p.Pid))
+        {
+            if (c.State == TcpConnectionState.Listen)
+            {
+                CheckListener(p, scan, context, c, findings, reported);
+                continue;
+            }
+
+            if (ThreatFamilyCatalog.MatchIp(c.RemoteAddress) is { } ioc && reported.Add("ioc|" + ioc.Indicator))
+            {
+                findings.Add(AuditFinding.Create("PROC-NET-IOC", Severity.Critical,
+                    "Соединение с узлом известного семейства",
+                    $"Процесс '{p.Name}' соединён с {c.RemoteAddress}:{c.RemotePort} — узел семейства «{ioc.Family.Name}».",
+                    Evidence.Of("pid", p.Pid), Evidence.Of("remote", $"{c.RemoteAddress}:{c.RemotePort}"),
+                    Evidence.Of("family", ioc.Family.Id), Evidence.Of("path", p.ExecutablePath)));
+            }
+            else if (c.State == TcpConnectionState.Established && ThreatFamilyCatalog.PoolPorts.Contains(c.RemotePort)
+                && !IsLoopback(c.RemoteAddress) && reported.Add("pool|" + c.RemotePort))
+            {
+                findings.Add(AuditFinding.Create("PROC-NET-POOLPORT", userWritable ? Severity.High : Severity.Medium,
+                    "Соединение на порт майнинг-пула",
+                    $"Процесс '{p.Name}' соединён с {c.RemoteAddress}:{c.RemotePort} — типичный порт stratum-пула.",
+                    Evidence.Of("pid", p.Pid), Evidence.Of("remote", $"{c.RemoteAddress}:{c.RemotePort}"),
+                    Evidence.Of("path", p.ExecutablePath)));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Неподписанный процесс из ProgramData, запущенный проводником (Run-автозапуск), слушает внешний порт — признак бэкдора
+    /// загрузчика (CAAService слушает TCP 24424). Прослушивание только на loopback не учитывается.
+    /// </summary>
+    private static void CheckListener(ProcessSnapshot p, FileScanResult? scan, AuditContext context, NetworkConnection c,
+        List<AuditFinding> findings, HashSet<string> reported)
+    {
+        if (IsLoopback(c.LocalAddress) || p.ExecutablePath is null)
+        {
+            return;
+        }
+
+        var knownBackdoor = ThreatFamilyCatalog.All.FirstOrDefault(f => f.BackdoorPort == c.LocalPort);
+        var inProgramData = PathClassifier.Normalize(p.ExecutablePath).Contains("\\programdata\\", StringComparison.Ordinal);
+        var unsigned = scan?.Signature is { Status: not SignatureStatus.Unsupported and not SignatureStatus.Valid };
+        var fromExplorer = string.Equals(context.Parent(p)?.Name, "explorer.exe", StringComparison.OrdinalIgnoreCase);
+        if (!(inProgramData && (unsigned || knownBackdoor is not null) && (fromExplorer || knownBackdoor is not null)))
+        {
+            return;
+        }
+
+        if (!reported.Add("listen|" + c.LocalPort))
+        {
+            return;
+        }
+
+        findings.Add(AuditFinding.Create("PROC-BACKDOOR-LISTEN", knownBackdoor is not null ? Severity.Critical : Severity.High,
+            "Неподписанный процесс из ProgramData слушает порт",
+            $"'{p.Name}' из {p.ExecutablePath} (родитель: {context.Parent(p)?.Name ?? "неизвестен"}) принимает входящие соединения на TCP {c.LocalPort}"
+                + (knownBackdoor is null ? "." : $" — порт бэкдора семейства «{knownBackdoor.Name}»."),
+            Evidence.Of("pid", p.Pid), Evidence.Of("port", c.LocalPort), Evidence.Of("path", p.ExecutablePath),
+            Evidence.Of("parent", context.Parent(p)?.Name), Evidence.Of("signature", scan?.Signature?.Status.ToString())));
+    }
+
+    /// <summary>
+    /// Связка «загрузчик → майнер»: процесс из каталога с правом записи запущен родителем из того же каталога ProgramData,
+    /// и его exe создан уже после старта родителя (родитель распаковал и запустил файл).
+    /// </summary>
+    private void CheckDropperChild(ProcessSnapshot p, AuditContext context, List<AuditFinding> findings)
+    {
+        var parent = context.Parent(p);
+        if (parent?.ExecutablePath is not { } parentPath || p.ExecutablePath is not { } childPath
+            || !PathClassifier.IsUserWritableLocation(childPath) || !PathClassifier.IsUserWritableLocation(parentPath))
+        {
+            return;
+        }
+
+        var parentRoot = ProgramDataRoot(parentPath);
+        if (parentRoot is null || !string.Equals(parentRoot, ProgramDataRoot(childPath), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var created = _options.FileCreationTimeUtc(childPath);
+        if (created is null || parent.StartTimeUtc is null || created < parent.StartTimeUtc)
+        {
+            return;
+        }
+
+        var miner = findings.Any(f => f.Id is MinerCommandLineAnalyzer.FindingId or "PROC-NET-POOLPORT" or "PROC-NET-IOC");
+        findings.Add(AuditFinding.Create("PROC-DROPPER-CHILD", miner ? Severity.High : Severity.Medium,
+            "Процесс запущен из файла, только что созданного родителем",
+            $"'{p.Name}' запущен процессом '{parent.Name}' (PID {parent.Pid}) из того же каталога {parentRoot}, а файл создан после старта родителя"
+                + " — загрузчик пересоздаёт и запускает нагрузку. При нейтрализации родитель-загрузчик останавливается первым.",
+            Evidence.Of("pid", p.Pid), Evidence.Of("parentPid", parent.Pid), Evidence.Of("parentPath", parentPath),
+            Evidence.Of("path", childPath), Evidence.Of("created", created.Value.ToString("O", System.Globalization.CultureInfo.InvariantCulture))));
+    }
+
+    /// <summary><c>C:\ProgramData\CAAService</c> для любого файла внутри этого каталога (в исходном написании); <c>null</c> — путь не в ProgramData.</summary>
+    internal static string? ProgramDataRoot(string path)
+    {
+        // Индексы ищутся в нормализованной строке той же длины, а срез берётся из исходной — регистр и разделители сохраняются.
+        var norm = PathClassifier.Normalize(path);
+        const string marker = "\\programdata\\";
+        var idx = norm.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0 || norm.Length != path.Length)
+        {
+            return null;
+        }
+
+        var start = idx + marker.Length;
+        var end = norm.IndexOf('\\', start);
+        return end < 0 ? null : path[..end];
+    }
+
+    private static bool IsLoopback(string address) =>
+        address.StartsWith("127.", StringComparison.Ordinal) || address is "::1" || address.StartsWith("::ffff:127.", StringComparison.OrdinalIgnoreCase);
 
     private void CheckResourceUsage(ProcessSnapshot p, List<AuditFinding> findings)
     {

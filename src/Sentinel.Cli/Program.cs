@@ -25,7 +25,7 @@ using Sentinel.Core.Trust;
 
 namespace Sentinel.Cli;
 
-internal static class Program
+internal static partial class Program
 {
     private const int ExitOk = 0;
     private const int ExitDetected = 1;
@@ -86,6 +86,8 @@ internal static class Program
                 "threatdb" => ThreatDb(opts),
                 "scan-usb" => ScanUsb(opts),
                 "behavioral-status" => BehavioralStatus(opts),
+                "family-scan" => FamilyScan(opts, clean: false),
+                "family-clean" => FamilyScan(opts, clean: true),
                 _ => Unknown(args[0]),
             };
         }
@@ -124,6 +126,12 @@ internal static class Program
               sentinel kernel-status [--json]      состояние драйвера ядра SentinelDrv (или профиль User-Mode EDR)
               sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan] [действия] [отчёт]
                                                    аудит автозагрузки и персистентности (только Windows)
+              sentinel family-scan [--json]        поиск семейств майнеров/загрузчиков (CAAService, techias и похожие):
+                                                   корреляция Run + исключений Защитника + задач + правил брандмауэра,
+                                                   снимок улик в %ProgramData%\Sentinel\Evidence; ничего не изменяет
+              sentinel family-clean [--confirm] [--block-ioc] [--json]
+                                                   нейтрализация найденного по плейбуку с манифестом отката;
+                                                   без --confirm — только план (только Windows)
               sentinel audit-config [--rules <каталог>] [--json] [действия] [отчёт]
                                                    аудит конфигурации безопасности (исключения защиты, брандмауэр,
                                                    корневые сертификаты, прокси) с приоритетной глубокой проверкой
@@ -1273,6 +1281,12 @@ internal sealed class CliOptions
     public bool NoFileScan { get; private set; }
     public bool Remediate { get; private set; }
     public bool DryRun { get; private set; }
+
+    /// <summary>Подтверждение разрушительных действий плейбука семейств (<c>family-clean</c>).</summary>
+    public bool Confirm { get; private set; }
+
+    /// <summary>Блокировать IOC брандмауэром и hosts (<c>family-clean</c>).</summary>
+    public bool BlockIoc { get; private set; }
     public bool Overwrite { get; private set; }
     public string? ReportHtml { get; private set; }
     public string? ReportJson { get; private set; }
@@ -1312,6 +1326,12 @@ internal sealed class CliOptions
                     break;
                 case "--dry-run":
                     o.DryRun = true;
+                    break;
+                case "--confirm":
+                    o.Confirm = true;
+                    break;
+                case "--block-ioc":
+                    o.BlockIoc = true;
                     break;
                 case "--overwrite":
                     o.Overwrite = true;

@@ -4,6 +4,7 @@ using Sentinel.Core.Audit.Persistence.Wmi;
 using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Signatures;
+using Sentinel.Core.ThreatFamilies;
 using Sentinel.Core.Trust;
 
 namespace Sentinel.Core.Audit.Persistence;
@@ -20,6 +21,9 @@ public sealed class PersistenceAuditor
     private const string RunOnceKey = @"Software\Microsoft\Windows\CurrentVersion\RunOnce";
     private const string RunKeyWow = @"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run";
     private const string RunOnceKeyWow = @"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce";
+    private const string PoliciesRunKey = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run";
+    private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall";
+    private const string UninstallKeyWow = @"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
     private const string WinlogonKey = @"Software\Microsoft\Windows NT\CurrentVersion\Winlogon";
     private const string IfeoKey = @"Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
     private const string ServicesKey = @"SYSTEM\CurrentControlSet\Services";
@@ -57,6 +61,7 @@ public sealed class PersistenceAuditor
             AuditStepGuard.Run("Реестр: Winlogon", () => AuditWinlogon(entries), skipped);
             AuditStepGuard.Run("Реестр: IFEO", () => AuditIfeo(entries), skipped);
             AuditStepGuard.Run("Службы", () => AuditServices(entries), skipped);
+            AuditStepGuard.Run("Реестр: ключи удаления программ", () => AuditUninstallKeys(entries), skipped);
         }
 
         if (_tasks is not null)
@@ -87,26 +92,173 @@ public sealed class PersistenceAuditor
             (new(RegistryHive.LocalMachine, RunOnceKey), PersistenceKind.RegistryRunOnce),
             (new(RegistryHive.LocalMachine, RunKeyWow), PersistenceKind.RegistryRun),
             (new(RegistryHive.LocalMachine, RunOnceKeyWow), PersistenceKind.RegistryRunOnce),
+            (new(RegistryHive.CurrentUser, RunKeyWow), PersistenceKind.RegistryRun),
+            (new(RegistryHive.CurrentUser, RunOnceKeyWow), PersistenceKind.RegistryRunOnce),
+            (new(RegistryHive.LocalMachine, PoliciesRunKey), PersistenceKind.RegistryRun),
+            (new(RegistryHive.CurrentUser, PoliciesRunKey), PersistenceKind.RegistryRun),
         ];
 
         foreach (var (key, kind) in locations)
         {
-            foreach (var value in _registry!.GetValues(key))
+            var values = _registry!.GetValues(key);
+            if (values.Count == 0)
+            {
+                continue;
+            }
+
+            var timestamp = (_registry as IRegistryKeyTimestampProvider)?.GetLastWriteTimeUtc(key);
+            foreach (var value in values)
             {
                 var findings = new List<AuditFinding>();
                 var scan = AnalyzeTargetFile(value.Value, findings, key.ToString());
+                var resolved = ResolveTarget(value.Value);
+                AddRunFamilyFindings(key, value, resolved, scan, findings);
                 entries.Add(new PersistenceEntry
                 {
                     Kind = kind,
                     Location = key.ToString(),
                     Name = value.Name,
                     Command = value.Value,
-                    ResolvedTarget = ResolveTarget(value.Value),
+                    ResolvedTarget = resolved,
                     Findings = findings,
                     FileScan = scan,
+                    TimestampUtc = timestamp,
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// Run/RunOnce → неподписанный exe в каталоге ProgramData/AppData/Temp, обманчивое имя цели, имя значения и путь известного
+    /// семейства (CAAService, techias), команда «скачать и выполнить».
+    /// </summary>
+    private void AddRunFamilyFindings(RegistryKeyPath key, RegistryValue value, string? resolved, FileScanResult? scan, List<AuditFinding> findings)
+    {
+        var family = ThreatFamilyCatalog.MatchRunValue(value.Name) ?? ThreatFamilyCatalog.MatchPath(resolved) ?? ThreatFamilyCatalog.MatchText(value.Value);
+        if (family is not null)
+        {
+            findings.Add(AuditFinding.Create("PERS-FAMILY-IOC", Severity.High,
+                $"Автозапуск семейства: {family.Family.Name}",
+                $"Значение '{value.Name}' в {key} совпадает с индикатором семейства «{family.Family.Name}» ({family.Role}: {family.Indicator}).",
+                Evidence.Of("key", key.ToString()), Evidence.Of("value", value.Name), Evidence.Of("command", value.Value),
+                Evidence.Of("family", family.Family.Id)));
+        }
+
+        if (DownloadExecHeuristics.Analyze(value.Value) is { Count: > 0 } downloadHits)
+        {
+            findings.Add(AuditFinding.Create("PERS-RUN-DOWNLOAD-EXEC", Severity.High,
+                "Автозапуск скачивает и выполняет код",
+                $"Значение '{value.Name}' в {key}: {string.Join("; ", downloadHits)}.",
+                Evidence.Of("key", key.ToString()), Evidence.Of("value", value.Name), Evidence.Of("command", value.Value)));
+        }
+
+        if (resolved is null || PathClassifier.IsInTrustedDirectory(resolved, _options.TrustedBinaryDirectories)
+            || _options.IsUserAllowed?.Invoke(resolved) == true)
+        {
+            return;
+        }
+
+        var signature = scan?.Signature;
+        var unsigned = scan is { Pe.IsPe: true } && signature is { Status: not SignatureStatus.Unsupported and not SignatureStatus.Valid };
+        if (unsigned && PathClassifier.IsUserWritableLocation(resolved))
+        {
+            var programData = Process.ProcessAuditor.ProgramDataRoot(resolved);
+            findings.Add(AuditFinding.Create("PERS-RUN-USERWRITABLE-UNSIGNED", Severity.Medium,
+                programData is null ? "Автозапуск неподписанного exe из пользовательского каталога" : "Автозапуск неподписанного exe из собственной папки в ProgramData",
+                $"Значение '{value.Name}' запускает неподписанный файл {resolved}"
+                    + (programData is null ? " из каталога с правом записи пользователя." : $" из папки {programData} — так закрепляются загрузчики майнеров (CAAService, WinAIHService)."),
+                Evidence.Of("key", key.ToString()), Evidence.Of("value", value.Name), Evidence.Of("target", resolved),
+                Evidence.Of("folder", programData), Evidence.Of("signature", signature!.Status.ToString())));
+        }
+
+        var fileName = Path.GetFileName(resolved.Replace('\\', '/'));
+        if (!DeceptiveNameAnalyzer.IsMicrosoftSigned(signature) && !TrustedPublishers.IsTrusted(signature))
+        {
+            if (DeceptiveNameAnalyzer.Analyze(fileName) is { } deceptive)
+            {
+                findings.Add(AuditFinding.Create("PERS-DECEPTIVE-NAME", unsigned ? Severity.High : Severity.Medium,
+                    "Автозапуск файла с обманчивым именем",
+                    $"Цель автозапуска '{fileName}': {deceptive.Describe()}.",
+                    Evidence.Of("key", key.ToString()), Evidence.Of("target", resolved), Evidence.Of("imitates", deceptive.Imitates)));
+            }
+            else if (unsigned && DeceptiveNameAnalyzer.ClaimsMicrosoftName(fileName))
+            {
+                findings.Add(AuditFinding.Create("PERS-FAKE-MICROSOFT", Severity.High,
+                    "Автозапуск файла «Microsoft/Windows» без подписи Microsoft",
+                    $"Цель автозапуска '{fileName}' названа как компонент Microsoft/Windows, но подписи Microsoft нет.",
+                    Evidence.Of("key", key.ToString()), Evidence.Of("target", resolved)));
+            }
+        }
+    }
+
+    // ---- Реестр: ключи удаления (носитель заражения) ---------------------------
+
+    /// <summary>
+    /// Ключи <c>Uninstall\{GUID}_is1</c> (Inno Setup) с «GUID», содержащим символы вне 0-9 и A-F: настоящий генератор
+    /// GUID таких не выдаёт — так помечен поддельный установщик «Hiddify 2.5.7» (<c>6L903538-…-G479-BJ779F21A65D_is1</c>).
+    /// </summary>
+    private void AuditUninstallKeys(List<PersistenceEntry> entries)
+    {
+        (RegistryHive Hive, string Key)[] roots =
+        [
+            (RegistryHive.LocalMachine, UninstallKey),
+            (RegistryHive.LocalMachine, UninstallKeyWow),
+            (RegistryHive.CurrentUser, UninstallKey),
+        ];
+
+        foreach (var (hive, root) in roots)
+        {
+            foreach (var sub in _registry!.GetSubKeyNames(new RegistryKeyPath(hive, root)))
+            {
+                if (ForgedInnoSetupGuid(sub) is not { } badChars)
+                {
+                    continue;
+                }
+
+                var key = new RegistryKeyPath(hive, root + "\\" + sub);
+                var displayName = _registry.GetValue(key, "DisplayName")?.Value;
+                var location = _registry.GetValue(key, "InstallLocation")?.Value;
+                var known = ThreatFamilyCatalog.All.FirstOrDefault(f => f.UninstallKeys.Any(k =>
+                    string.Equals(k.Trim('{', '}'), sub.Trim('{', '}'), StringComparison.OrdinalIgnoreCase)));
+                entries.Add(new PersistenceEntry
+                {
+                    Kind = PersistenceKind.UninstallEntry,
+                    Location = key.ToString(),
+                    Name = displayName ?? sub,
+                    Command = _registry.GetValue(key, "UninstallString")?.Value,
+                    ResolvedTarget = location,
+                    Findings =
+                    [
+                        AuditFinding.Create("PERS-UNINSTALL-FORGED-GUID", known is null ? Severity.Medium : Severity.High,
+                            "Поддельный GUID в ключе удаления программы",
+                            $"Ключ '{sub}' ({displayName ?? "без названия"}) содержит в GUID недопустимые символы {badChars} — признак поддельного установщика"
+                                + (known is null ? "." : $", известного носителя семейства «{known.Name}»."),
+                            Evidence.Of("key", key.ToString()), Evidence.Of("displayName", displayName),
+                            Evidence.Of("installLocation", location), Evidence.Of("invalidChars", badChars)),
+                    ],
+                });
+            }
+        }
+    }
+
+    /// <summary>Недопустимые символы GUID ключа <c>{GUID}_is1</c> или <c>null</c>, если это не такой ключ либо GUID корректен.</summary>
+    internal static string? ForgedInnoSetupGuid(string subKey)
+    {
+        if (!subKey.EndsWith("_is1", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var guid = subKey[..^4].Trim('{', '}');
+        var groups = guid.Split('-');
+        if (groups.Length != 5 || groups[0].Length != 8 || groups[1].Length != 4 || groups[2].Length != 4
+            || groups[3].Length != 4 || groups[4].Length != 12 || !groups.All(g => g.All(char.IsAsciiLetterOrDigit)))
+        {
+            return null; // не GUID по форме — у Inno Setup имя ключа может быть произвольным (AppId)
+        }
+
+        var bad = guid.Where(c => c != '-' && !char.IsAsciiHexDigit(c)).Select(char.ToUpperInvariant).Distinct().ToArray();
+        return bad.Length == 0 ? null : string.Join(", ", bad);
     }
 
     // ---- Реестр: Winlogon Shell / Userinit -------------------------------------
@@ -298,6 +450,8 @@ public sealed class PersistenceAuditor
                     findings.AddRange(InterpreterHeuristics.Analyze(FileName(action.Command), command));
                 }
 
+                AddTaskFamilyFindings(task, command, findings);
+
                 if (findings.Count == 0)
                 {
                     continue;
@@ -312,8 +466,66 @@ public sealed class PersistenceAuditor
                     ResolvedTarget = resolved,
                     Findings = findings,
                     FileScan = scan,
+                    TimestampUtc = task.RegistrationDate,
                 });
             }
+        }
+    }
+
+    /// <summary>
+    /// Задача «скачать и выполнить» (<c>irm … | iex</c> и т.п.). Серьёзность растёт с маскировкой: папка <c>\Microsoft\</c>
+    /// (настоящие задачи там запускают exe с подписью Microsoft), запуск от SYSTEM и при входе/загрузке.
+    /// </summary>
+    private static void AddTaskFamilyFindings(ScheduledTaskInfo task, string command, List<AuditFinding> findings)
+    {
+        var family = ThreatFamilyCatalog.MatchTaskPath(task.Path) ?? ThreatFamilyCatalog.MatchText(command);
+        var hits = DownloadExecHeuristics.Analyze(command);
+        if (hits.Count > 0)
+        {
+            var masquerade = task.Path.StartsWith(@"\Microsoft\", StringComparison.OrdinalIgnoreCase);
+            var autostart = task.HasLogonTrigger || task.HasBootTrigger;
+            var aggravating = (masquerade ? 1 : 0) + (task.RunsAsSystem ? 1 : 0) + (autostart ? 1 : 0);
+            var severity = family is not null || aggravating == 3 ? Severity.Critical : aggravating >= 1 ? Severity.High : Severity.Medium;
+            var traits = new List<string>();
+            if (masquerade)
+            {
+                traits.Add("лежит в \\Microsoft\\ (маскировка под системную)");
+            }
+
+            if (task.RunsAsSystem)
+            {
+                traits.Add("выполняется от SYSTEM");
+            }
+
+            if (autostart)
+            {
+                traits.Add(task.HasLogonTrigger ? "запускается при входе" : "запускается при загрузке");
+            }
+
+            findings.Add(AuditFinding.Create("PERS-TASK-DOWNLOAD-EXEC", severity,
+                masquerade ? "Задача-маскировка скачивает и выполняет код" : "Задача скачивает и выполняет код",
+                $"Задача '{task.Path}': {string.Join("; ", hits)}"
+                    + (traits.Count > 0 ? $". Задача {string.Join(", ", traits)}." : ".")
+                    + (family is null ? string.Empty : $" Индикатор семейства «{family.Family.Name}» ({family.Indicator})."),
+                Evidence.Of("task", task.Path), Evidence.Of("command", command), Evidence.Of("user", task.UserId),
+                Evidence.Of("urls", string.Join(" ", DownloadExecHeuristics.Urls(command))), Evidence.Of("family", family?.Family.Id)));
+        }
+        else if (family is not null)
+        {
+            findings.Add(AuditFinding.Create("PERS-FAMILY-IOC", Severity.High,
+                $"Задача семейства: {family.Family.Name}",
+                $"Задача '{task.Path}' совпадает с индикатором семейства «{family.Family.Name}» ({family.Indicator}).",
+                Evidence.Of("task", task.Path), Evidence.Of("command", command), Evidence.Of("family", family.Family.Id)));
+        }
+
+        var leaf = task.Path.TrimEnd('\\');
+        leaf = leaf[(leaf.LastIndexOf('\\') + 1)..];
+        if (DeceptiveNameAnalyzer.Analyze(leaf) is { } deceptive)
+        {
+            findings.Add(AuditFinding.Create("PERS-DECEPTIVE-NAME", Severity.Medium,
+                "Обманчивое имя задачи планировщика",
+                $"Имя задачи '{leaf}': {deceptive.Describe()}.",
+                Evidence.Of("task", task.Path), Evidence.Of("imitates", deceptive.Imitates)));
         }
     }
 

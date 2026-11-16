@@ -4,6 +4,7 @@ using Sentinel.Core.Audit.Process;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Trust;
 using Sentinel.Core.Signatures;
+using Sentinel.Core.ThreatFamilies;
 
 namespace Sentinel.Core.Audit.Config;
 
@@ -67,6 +68,7 @@ public sealed class ConfigIntegrityAuditor
         var findings = new List<ConfigFinding>();
         var exclusions = new List<DefenderExclusion>();
         var skipped = new List<SkippedAuditStep>();
+        var masquerading = new List<FirewallRule>();
         if (_registry is not null || _defender is not null)
         {
             AuditStepGuard.Run("Исключения Defender", () => AuditDefenderExclusions(findings, exclusions), skipped);
@@ -74,7 +76,8 @@ public sealed class ConfigIntegrityAuditor
 
         if (_registry is not null)
         {
-            AuditStepGuard.Run("Правила брандмауэра", () => AuditFirewall(findings), skipped);
+            AuditStepGuard.Run("Политики Defender", () => AuditDefenderPolicies(findings), skipped);
+            AuditStepGuard.Run("Правила брандмауэра", () => AuditFirewall(findings, masquerading), skipped);
             AuditStepGuard.Run("Системный прокси", () => AuditProxy(findings), skipped);
         }
 
@@ -83,7 +86,7 @@ public sealed class ConfigIntegrityAuditor
             AuditStepGuard.Run("Корневые сертификаты", () => AuditRootCertificates(findings), skipped);
         }
 
-        return new ConfigAuditReport(findings) { DefenderExclusions = exclusions, Skipped = skipped };
+        return new ConfigAuditReport(findings) { DefenderExclusions = exclusions, Skipped = skipped, MasqueradingFirewallRules = masquerading };
     }
 
     // ---- Исключения Windows Defender ------------------------------------------
@@ -209,7 +212,7 @@ public sealed class ConfigIntegrityAuditor
 
     // ---- Правила брандмауэра ---------------------------------------------------
 
-    private void AuditFirewall(List<ConfigFinding> findings)
+    private void AuditFirewall(List<ConfigFinding> findings, List<FirewallRule> masquerading)
     {
         var key = new RegistryKeyPath(RegistryHive.LocalMachine, FirewallRulesKey);
         // Одно приложение обычно имеет отдельные правила для TCP и UDP: карточка создаётся один раз на (имя правила, путь программы).
@@ -219,6 +222,13 @@ public sealed class ConfigIntegrityAuditor
             var rule = FirewallRuleParser.Parse(value.Name, value.Value);
             if (!rule.Allow || !rule.Enabled || string.IsNullOrWhiteSpace(rule.AppPath))
             {
+                continue;
+            }
+
+            if (CheckMasquerade(rule) is { } masquerade)
+            {
+                masquerading.Add(rule);
+                findings.Add(masquerade);
                 continue;
             }
 
@@ -254,6 +264,167 @@ public sealed class ConfigIntegrityAuditor
                 Evidence.Of("dir", rule.Direction),
                 Evidence.Of("protocol", rule.Protocol))));
         }
+    }
+
+    // ---- Политики, отключающие Defender ----------------------------------------
+
+    private const string DefenderPolicyRoot = @"SOFTWARE\Policies\Microsoft\Windows Defender";
+    private const string DefenderRoot = @"SOFTWARE\Microsoft\Windows Defender";
+
+    /// <summary>(подключ, значение, «опасное» значение, пояснение). Подключ пустой — сам корень.</summary>
+    private static readonly (string SubKey, string Value, string Bad, string Meaning)[] DefenderSwitches =
+    [
+        ("", "DisableAntiSpyware", "1", "Защитник отключён полностью"),
+        ("", "DisableAntiVirus", "1", "антивирусная защита отключена"),
+        ("", "DisableRoutinelyTakingAction", "1", "Защитник не принимает мер против угроз"),
+        ("Real-Time Protection", "DisableRealtimeMonitoring", "1", "защита в реальном времени отключена"),
+        ("Real-Time Protection", "DisableBehaviorMonitoring", "1", "поведенческий мониторинг отключён"),
+        ("Real-Time Protection", "DisableOnAccessProtection", "1", "проверка при доступе отключена"),
+        ("Real-Time Protection", "DisableIOAVProtection", "1", "проверка скачанных файлов отключена"),
+        ("Real-Time Protection", "DisableScanOnRealtimeEnable", "1", "проверка процессов при включении защиты отключена"),
+        ("Spynet", "SpynetReporting", "0", "облачная защита (MAPS) отключена"),
+        ("Spynet", "SubmitSamplesConsent", "2", "отправка образцов запрещена"),
+        ("Spynet", "DisableBlockAtFirstSeen", "1", "блокировка при первом появлении отключена"),
+    ];
+
+    private void AuditDefenderPolicies(List<ConfigFinding> findings)
+    {
+        foreach (var (root, isPolicy) in new[] { (DefenderPolicyRoot, true), (DefenderRoot, false) })
+        {
+            foreach (var (subKey, valueName, bad, meaning) in DefenderSwitches)
+            {
+                var key = new RegistryKeyPath(RegistryHive.LocalMachine, subKey.Length == 0 ? root : root + "\\" + subKey);
+                var value = _registry!.GetValue(key, valueName)?.Value?.Trim();
+                if (!string.Equals(value, bad, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                findings.Add(new ConfigFinding(ConfigArea.DefenderPolicy, AuditFinding.Create(
+                    "CFG-DEFENDER-POLICY", isPolicy ? Severity.High : Severity.Medium,
+                    isPolicy ? "Политика отключает встроенную защиту" : "Настройка ослабляет встроенную защиту",
+                    $"{key}\\{valueName} = {value}: {meaning}."
+                        + (isPolicy ? " Политику ставит администратор или вредонос; Защитник её не может переопределить." : string.Empty),
+                    Evidence.Of("key", key.ToString()), Evidence.Of("value", valueName), Evidence.Of("data", value))));
+            }
+        }
+
+        // Защита от подделки: 5 — включена, 4 — выключена (меняется только через Безопасность Windows).
+        var tamper = _registry!.GetValue(new RegistryKeyPath(RegistryHive.LocalMachine, DefenderRoot + @"\Features"), "TamperProtection")?.Value?.Trim();
+        if (tamper is "4" or "0")
+        {
+            findings.Add(new ConfigFinding(ConfigArea.DefenderPolicy, AuditFinding.Create(
+                "CFG-DEFENDER-POLICY", Severity.Medium, "Защита от подделки выключена",
+                "TamperProtection выключена: вредонос может менять настройки и исключения Защитника.",
+                Evidence.Of("key", DefenderRoot + @"\Features"), Evidence.Of("value", "TamperProtection"), Evidence.Of("data", tamper))));
+        }
+    }
+
+    // ---- Правила брандмауэра под системными именами ----------------------------
+
+    /// <summary>Имена групп правил Windows (англ. и рус. локализации), которые подделывают вредоносы.</summary>
+    private static readonly string[] SystemRuleNames =
+    [
+        "Network Discovery", "Core Networking", "File and Printer Sharing", "Remote Desktop", "Windows Defender",
+        "Windows Firewall", "Windows Management Instrumentation", "Remote Assistance", "mDNS", "Delivery Optimization",
+        "Cast to Device", "Wi-Fi Direct", "Connected Devices Platform", "Windows Remote Management", "Microsoft",
+        "Windows", "DHCP", "DNS", "Router Solicitation", "SSDP", "UPnP", "LLMNR", "Teredo", "IPHTTPS",
+        "Обнаружение сети", "Основы сетей", "Общий доступ к файлам и принтерам", "Удаленный рабочий стол", "Удалённый рабочий стол",
+        "Брандмауэр Защитника Windows", "Удаленный помощник",
+    ];
+
+    /// <summary>
+    /// Разрешающее правило с именем системного правила Windows («Network Discovery (SSDP-Out)», «Core Networking – Router
+    /// Solicitation»), но программой вне <c>%SystemRoot%</c> и Program Files либо без подписи. Настоящие системные правила
+    /// хранят имя ссылкой на ресурс (<c>@FirewallAPI.dll,-28502</c>) и указывают на svchost/System.
+    /// </summary>
+    private ConfigFinding? CheckMasquerade(FirewallRule rule)
+    {
+        var name = rule.DisplayName ?? rule.Name;
+        if (name.StartsWith('@') || !LooksLikeSystemRuleName(name) || string.IsNullOrWhiteSpace(rule.AppPath)
+            || string.Equals(rule.AppPath, "System", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        string app;
+        try
+        {
+            app = Environment.ExpandEnvironmentVariables(rule.AppPath);
+        }
+        catch (ArgumentException)
+        {
+            app = rule.AppPath;
+        }
+
+        var normalized = PathClassifier.Normalize(app);
+        var inSystemLocation = normalized.Contains(@"\windows\", StringComparison.Ordinal) && normalized.IndexOf(@"\windows\", StringComparison.Ordinal) <= 3
+            || normalized.Contains("%systemroot%", StringComparison.Ordinal)
+            || PathClassifier.IsInTrustedDirectory(app, _options.TrustedBinaryDirectories)
+            || normalized.Contains(@"\program files", StringComparison.Ordinal);
+
+        FileScanResult? scan = null;
+        if (_analyzer is not null && File.Exists(app))
+        {
+            try
+            {
+                scan = _analyzer.Analyze(app);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                scan = null;
+            }
+        }
+
+        var signature = scan?.Signature;
+        var unsigned = signature is { Status: not SignatureStatus.Unsupported and not SignatureStatus.Valid };
+        if (inSystemLocation && !unsigned)
+        {
+            return null;
+        }
+
+        if (_options.IsUserAllowed?.Invoke(app) == true || TrustedPublishers.IsTrusted(signature))
+        {
+            return null;
+        }
+
+        var userWritable = PathClassifier.IsUserWritableLocation(app);
+        var family = ThreatFamilyCatalog.MatchPath(app);
+        var severity = family is not null || userWritable || unsigned ? Severity.High : Severity.Medium;
+        var direction = rule.IsInbound ? "входящий" : "исходящий";
+        return new ConfigFinding(ConfigArea.FirewallRule, AuditFinding.Create(
+            "CFG-FW-MASQUERADE", severity,
+            "Правило брандмауэра под системным именем ведёт на постороннюю программу",
+            $"Правило '{name}' выглядит как системное правило Windows, но разрешает {direction} трафик"
+                + (rule.AllProfiles ? " во всех профилях" : string.Empty)
+                + $" для '{rule.AppPath}'"
+                + (inSystemLocation ? " без действительной подписи." : " вне %SystemRoot% и Program Files.")
+                + (family is null ? string.Empty : $" Программа лежит в каталоге семейства «{family.Family.Name}»."),
+            Evidence.Of("rule", name),
+            Evidence.Of("ruleId", rule.Name),
+            Evidence.Of("app", rule.AppPath),
+            Evidence.Of("dir", rule.Direction),
+            Evidence.Of("profiles", rule.AllProfiles ? "все" : string.Join(",", rule.Profiles)),
+            Evidence.Of("signature", signature?.Status.ToString())));
+    }
+
+    private static bool LooksLikeSystemRuleName(string name)
+    {
+        if (DeceptiveNameAnalyzer.Analyze(name) is not null)
+        {
+            return true;
+        }
+
+        foreach (var system in SystemRuleNames)
+        {
+            if (name.StartsWith(system, StringComparison.OrdinalIgnoreCase)
+                && (name.Length == system.Length || !char.IsLetterOrDigit(name[system.Length])))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

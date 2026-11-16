@@ -30,6 +30,7 @@ public sealed class RemediationEngine
     private readonly RollbackManifestStore _manifest;
     private readonly TimeProvider _time;
     private readonly IProcessContainment _containment;
+    private readonly IFirewallRuleEditor? _firewall;
 
     public RemediationEngine(
         IWhitelistProvider whitelist,
@@ -40,7 +41,8 @@ public sealed class RemediationEngine
         IScheduledTaskEditor? tasks = null,
         IDefenderPreferenceProvider? defender = null,
         TimeProvider? timeProvider = null,
-        IProcessContainment? containment = null)
+        IProcessContainment? containment = null,
+        IFirewallRuleEditor? firewall = null)
     {
         ArgumentNullException.ThrowIfNull(whitelist);
         ArgumentNullException.ThrowIfNull(options);
@@ -54,6 +56,7 @@ public sealed class RemediationEngine
         _manifest = new RollbackManifestStore(options.RollbackManifestPath);
         _time = timeProvider ?? TimeProvider.System;
         _containment = containment ?? NullProcessContainment.Instance;
+        _firewall = firewall;
     }
 
     /// <summary>Изоляция потоков перед завершением (на Windows — <see cref="WindowsProcessContainment"/>).</summary>
@@ -82,7 +85,8 @@ public sealed class RemediationEngine
             RegistryProviderFactory.CreateEditor(),
             new WindowsScheduledTaskEditor(),
             new WindowsDefenderPreferenceProvider(),
-            containment: new WindowsProcessContainment());
+            containment: new WindowsProcessContainment(),
+            firewall: new WindowsFirewallRuleEditor());
     }
 
     // ---- Процессы --------------------------------------------------------------
@@ -690,6 +694,169 @@ public sealed class RemediationEngine
             $"Исключение, заданное политикой, удалено из {key}.") { RollbackId = backup.Id };
     }
 
+    // ---- Брандмауэр, hosts и каталоги (плейбук семейств) -------------------------
+
+    /// <summary>
+    /// Удаляет поддельное разрешающее правило брандмауэра (имя системного правила, программа вредоноса) с резервной копией строки
+    /// правила. Настоящие системные правила (имя ссылкой на ресурс <c>@FirewallAPI.dll,…</c>) не удаляются никогда.
+    /// </summary>
+    public RemediationAction RemoveFirewallRule(FirewallRule rule, string reason)
+    {
+        ArgumentNullException.ThrowIfNull(rule);
+        var label = $"Правило брандмауэра «{rule.DisplayName ?? rule.Name}» ({rule.AppPath})";
+        if ((rule.DisplayName ?? rule.Name).StartsWith('@'))
+        {
+            return new RemediationAction(RemediationActionKind.RemoveFirewallRule, label, RemediationStatus.Blocked,
+                "Встроенное правило Windows (имя из ресурса) не удаляется.");
+        }
+
+        if (rule.AppPath is { Length: > 0 } app && (Scanning.SelfProtection.IsProtectedFile(app) || IsWhitelisted(app, out _)))
+        {
+            return new RemediationAction(RemediationActionKind.RemoveFirewallRule, label, RemediationStatus.Blocked,
+                "Правило относится к доверенному системному файлу или к Sentinel — удаление запрещено.");
+        }
+
+        if (_firewall is null)
+        {
+            return new RemediationAction(RemediationActionKind.RemoveFirewallRule, label, RemediationStatus.Failed, "Редактор правил брандмауэра не настроен.");
+        }
+
+        if (_options.DryRun)
+        {
+            return new RemediationAction(RemediationActionKind.RemoveFirewallRule, label, RemediationStatus.WouldDo, "Будет удалено.");
+        }
+
+        var backup = NewEntry(RollbackKind.FirewallRule, rule.DisplayName ?? rule.Name, rule.Name, reason) with
+        {
+            PreviousExisted = true,
+            PreviousValue = rule.RawValue ?? string.Empty,
+        };
+        _manifest.Append(backup);
+        var result = _firewall.RemoveRule(rule.Name);
+        if (!result.Success)
+        {
+            _manifest.Replace(backup with { UndoneAtUtc = _time.GetUtcNow().UtcDateTime });
+            return new RemediationAction(RemediationActionKind.RemoveFirewallRule, label, RemediationStatus.Failed, result.Error ?? "Не удалось удалить правило.");
+        }
+
+        return new RemediationAction(RemediationActionKind.RemoveFirewallRule, label, RemediationStatus.Done, "Правило удалено.") { RollbackId = backup.Id };
+    }
+
+    /// <summary>Запрещает исходящие соединения на адреса IOC отдельным правилом Sentinel (отмена удаляет правило).</summary>
+    public RemediationAction BlockRemoteAddresses(string ruleId, IReadOnlyList<string> addresses, string reason)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(ruleId);
+        ArgumentNullException.ThrowIfNull(addresses);
+        var valid = addresses.Where(a => System.Net.IPAddress.TryParse(a, out var ip) && !System.Net.IPAddress.IsLoopback(ip))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var label = $"Блокировка исходящих: {string.Join(", ", valid)}";
+        if (valid.Length == 0)
+        {
+            return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.Skipped, "Нет корректных IP-адресов для блокировки.");
+        }
+
+        if (_firewall is null)
+        {
+            return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.Failed, "Редактор правил брандмауэра не настроен.");
+        }
+
+        if (_options.DryRun)
+        {
+            return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.WouldDo, $"Будет добавлено правило «{ruleId}».");
+        }
+
+        var backup = NewEntry(RollbackKind.FirewallBlockRule, ruleId, ruleId, reason) with { PreviousExisted = false, NewValue = string.Join(",", valid) };
+        _manifest.Append(backup);
+        var result = _firewall.AddOutboundBlockRule(ruleId, valid);
+        if (!result.Success)
+        {
+            _manifest.Replace(backup with { UndoneAtUtc = _time.GetUtcNow().UtcDateTime });
+            return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.Failed, result.Error ?? "Не удалось добавить правило.");
+        }
+
+        return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.Done, $"Добавлено правило «{ruleId}».") { RollbackId = backup.Id };
+    }
+
+    /// <summary>Добавляет в hosts записи <c>0.0.0.0 домен</c> для доменов IOC (копия прежнего hosts — в манифесте).</summary>
+    public RemediationAction BlockDomainsInHosts(string hostsPath, IReadOnlyList<string> domains, string reason)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(hostsPath);
+        ArgumentNullException.ThrowIfNull(domains);
+        var valid = domains.Select(d => d.Trim().ToLowerInvariant())
+            .Where(d => d.Length is > 3 and < 254 && d.Contains('.', StringComparison.Ordinal) && d.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-'))
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var label = $"{hostsPath}: {string.Join(", ", valid)}";
+        if (valid.Length == 0)
+        {
+            return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.Skipped, "Нет доменов для блокировки.");
+        }
+
+        var original = File.Exists(hostsPath) ? File.ReadAllText(hostsPath) : string.Empty;
+        var present = HostsFileParser.Parse(original).Select(e => e.Host).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missing = valid.Where(d => !present.Contains(d)).ToArray();
+        if (missing.Length == 0)
+        {
+            return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.Skipped, "Домены уже заблокированы в hosts.");
+        }
+
+        if (_options.DryRun)
+        {
+            return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.WouldDo, $"Будет добавлено записей hosts: {missing.Length}.");
+        }
+
+        var backup = NewEntry(RollbackKind.HostsFile, hostsPath, null, reason) with { PreviousExisted = File.Exists(hostsPath), PreviousValue = original };
+        _manifest.Append(backup);
+        var newline = original.Contains("\r\n", StringComparison.Ordinal) || original.Length == 0 ? "\r\n" : "\n";
+        var sb = new StringBuilder(original);
+        if (original.Length > 0 && !original.EndsWith('\n'))
+        {
+            sb.Append(newline);
+        }
+
+        sb.Append("# Sentinel: блокировка доменов вредоносного семейства").Append(newline);
+        foreach (var domain in missing)
+        {
+            sb.Append("0.0.0.0 ").Append(domain).Append(newline);
+        }
+
+        WriteHosts(hostsPath, sb.ToString());
+        return new RemediationAction(RemediationActionKind.BlockIoc, label, RemediationStatus.Done, $"В hosts добавлено записей: {missing.Length}.") { RollbackId = backup.Id };
+    }
+
+    /// <summary>Удаляет каталог вредоноса, если в нём не осталось файлов (после карантина); пустые подкаталоги удаляются вместе с ним.</summary>
+    public RemediationAction RemoveEmptyDirectory(string path, string reason)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        var label = $"Каталог {path}";
+        if (!Directory.Exists(path))
+        {
+            return new RemediationAction(RemediationActionKind.RemoveDirectory, label, RemediationStatus.Skipped, "Каталог уже отсутствует.");
+        }
+
+        if (Scanning.SelfProtection.IsProtectedFile(Path.Combine(path, "x")) || (new DirectoryInfo(path).Attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            return new RemediationAction(RemediationActionKind.RemoveDirectory, label, RemediationStatus.Blocked,
+                "Каталог защищён (системный, Sentinel или точка повторной обработки) — не удаляется.");
+        }
+
+        var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0, IgnoreInaccessible = false };
+        if (Directory.EnumerateFiles(path, "*", options).Any())
+        {
+            return new RemediationAction(RemediationActionKind.RemoveDirectory, label, RemediationStatus.Skipped,
+                "В каталоге остались файлы — он не удаляется.");
+        }
+
+        if (_options.DryRun)
+        {
+            return new RemediationAction(RemediationActionKind.RemoveDirectory, label, RemediationStatus.WouldDo, "Будет удалён пустой каталог.");
+        }
+
+        var backup = NewEntry(RollbackKind.EmptyDirectory, path, null, reason) with { PreviousExisted = true };
+        _manifest.Append(backup);
+        Directory.Delete(path, recursive: true);
+        return new RemediationAction(RemediationActionKind.RemoveDirectory, label, RemediationStatus.Done, "Пустой каталог удалён.") { RollbackId = backup.Id };
+    }
+
     // ---- Отмена ----------------------------------------------------------------
 
     /// <summary>
@@ -778,6 +945,28 @@ public sealed class RemediationEngine
 
                 var created = _tasks.Create(entry.Target, entry.PreviousValue);
                 return created.Success ? null : created.Error ?? "Не удалось воссоздать задачу.";
+
+            case RollbackKind.FirewallRule:
+                if (_firewall is null || entry.Name is null || entry.PreviousValue is null)
+                {
+                    return "Редактор правил брандмауэра не настроен или в манифесте нет строки правила.";
+                }
+
+                var restored = _firewall.RestoreRule(entry.Name, entry.PreviousValue);
+                return restored.Success ? null : restored.Error ?? "Не удалось воссоздать правило брандмауэра.";
+
+            case RollbackKind.FirewallBlockRule:
+                if (_firewall is null || entry.Name is null)
+                {
+                    return "Редактор правил брандмауэра не настроен.";
+                }
+
+                var removedBlock = _firewall.RemoveRule(entry.Name);
+                return removedBlock.Success ? null : removedBlock.Error ?? "Не удалось удалить правило блокировки.";
+
+            case RollbackKind.EmptyDirectory:
+                Directory.CreateDirectory(entry.Target);
+                return null;
 
             case RollbackKind.DefenderExclusion:
                 if (_defender is null || entry.PreviousValue is null)

@@ -1,0 +1,60 @@
+{
+  // Семейства, найденные на компьютерах пользователя (ноябрь 2026). Только хеши и строковые признаки — образцов в репозитории нет.
+  // Полный разбор (IOC, техники, плейбук) — docs/THREAT_FAMILIES.md.
+  "rules": [
+    {
+      "id": "SNT-FAM-CAA-0001",
+      "name": "Miner_CAAService_Pearl_Hashes",
+      "severity": "critical",
+      "category": "miner",
+      "description": "Майнер/загрузчик CAAService (ботнет Pearl/pearlhash): известные SHA-256 загрузчика CAAServices.exe, GPU-майнера «Microsoft Network Realtime lnspection Service.exe» и конфигурации CAAServices.vdr",
+      "tags": ["miner", "caaservice", "pearl"],
+      "sha256": [
+        "bfd086e44cfe11d63271f2e5959969d435750403a340c675688219db43b62376",
+        "81fe4c33e7e899ca992b21f0aad310f29062df6a4221a5f9e6a07cd1f82b9477",
+        "1a58995232c96501a8c17139db5404527d9ec0b57863ae03605dd477e181ffdf",
+        "4b9f7ae1213d93bc3de0330e84e42b8c29687e693d11de6d39da5c4c0ac4c495"
+      ]
+    },
+    {
+      "id": "SNT-FAM-CAA-0002",
+      "name": "Miner_Pearlhash_Kryptex_Config",
+      "severity": "high",
+      "category": "miner",
+      "description": "Майнер pearlhash (Pearl) с пулом Kryptex или кошельком prl1…: признаки конфигурации/командной строки семейства CAAService",
+      "tags": ["miner", "pearl"],
+      "strings": [
+        { "id": "$algo", "text": "pearlhash", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$pool1", "text": "kryptex.network", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$pool2", "text": "prl-ru.kryptex", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$wallet", "text": "prl1p5hgdn92f0h2zt0qaemc6f8zdx5u28fvkpmvzhaehm6xwqgtez7dsqert43", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$arg", "text": "--algorithm-gpu", "nocase": true, "ascii": true, "wide": true }
+      ],
+      "condition": "$wallet or ($algo and 1 of ($pool*, $arg))"
+    },
+    {
+      "id": "SNT-FAM-TECHIAS-0001",
+      "name": "Loader_OfficeActivator_Techias_Hashes",
+      "severity": "critical",
+      "category": "loader",
+      "description": "Загрузчик из пиратского активатора Office (activate.techias.co.uk): WinAIHService.exe (VersionInfo «WinNetService»)",
+      "tags": ["loader", "techias", "activator"],
+      "sha256": [
+        "613dd576ff9f6b44e958e1f7df34123b1ded45aff7063577af83665d2483a32d"
+      ]
+    },
+    {
+      "id": "SNT-FAM-TECHIAS-0002",
+      "name": "Loader_OfficeActivator_Techias_Url",
+      "severity": "high",
+      "category": "loader",
+      "description": "Скрипт или файл, загружающий код с activate.techias.co.uk (пиратский активатор Office, загрузчик WinAIHService)",
+      "tags": ["loader", "techias", "activator"],
+      "appliesTo": ["executable", "script", "config"],
+      "strings": [
+        { "id": "$url", "text": "activate.techias.co.uk", "nocase": true, "ascii": true, "wide": true }
+      ],
+      "condition": "any of them"
+    }
+  ]
+}

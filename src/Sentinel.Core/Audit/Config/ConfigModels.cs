@@ -9,6 +9,9 @@ public enum ConfigArea
     FirewallRule,
     RootCertificate,
     SystemProxy,
+
+    /// <summary>Политики и настройки, отключающие встроенную защиту.</summary>
+    DefenderPolicy,
 }
 
 /// <summary>Находка аудита конфигурации с указанием области.</summary>
@@ -25,6 +28,9 @@ public sealed record ConfigAuditReport(IReadOnlyList<ConfigFinding> Findings)
     /// <see cref="ExclusionPriorityScanner"/> для приоритетной глубокой проверки файлов и процессов.
     /// </summary>
     public IReadOnlyList<DefenderExclusion> DefenderExclusions { get; init; } = [];
+
+    /// <summary>Разрешающие правила брандмауэра, замаскированные под системные (для плейбука нейтрализации и отката).</summary>
+    public IReadOnlyList<FirewallRule> MasqueradingFirewallRules { get; init; } = [];
 
     /// <summary>Шаги, пропущенные из-за недоступности системной службы (Безопасный режим, WinRE).</summary>
     public IReadOnlyList<SkippedAuditStep> Skipped { get; init; } = [];

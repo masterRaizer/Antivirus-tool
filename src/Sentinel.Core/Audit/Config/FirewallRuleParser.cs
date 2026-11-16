@@ -16,6 +16,14 @@ public sealed record FirewallRule
     public string? RemoteAddress { get; init; }
     public string? DisplayName { get; init; }
 
+    /// <summary>Профили (Domain/Private/Public); пусто — правило действует во всех профилях.</summary>
+    public IReadOnlyList<string> Profiles { get; init; } = [];
+
+    /// <summary>Исходная строка правила из реестра — для манифеста отката.</summary>
+    public string? RawValue { get; init; }
+
+    public bool AllProfiles => Profiles.Count == 0 || Profiles.Count >= 3;
+
     public bool IsInbound => string.Equals(Direction, "In", StringComparison.OrdinalIgnoreCase);
 }
 
@@ -28,6 +36,7 @@ public static class FirewallRuleParser
     {
         ArgumentNullException.ThrowIfNull(valueName);
         var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var profiles = new List<string>();
         if (!string.IsNullOrEmpty(ruleString))
         {
             foreach (var part in ruleString.Split('|', StringSplitOptions.RemoveEmptyEntries))
@@ -40,6 +49,11 @@ public static class FirewallRuleParser
 
                 var key = part[..eq].Trim();
                 var value = part[(eq + 1)..].Trim();
+                if (string.Equals(key, "Profile", StringComparison.OrdinalIgnoreCase))
+                {
+                    profiles.Add(value);
+                }
+
                 fields[key] = value;
             }
         }
@@ -55,6 +69,8 @@ public static class FirewallRuleParser
             LocalPort = fields.GetValueOrDefault("LPort"),
             RemoteAddress = fields.GetValueOrDefault("RA4") ?? fields.GetValueOrDefault("RA6"),
             DisplayName = fields.GetValueOrDefault("Name"),
+            Profiles = profiles,
+            RawValue = ruleString,
         };
     }
 }
