@@ -73,4 +73,11 @@ SDK закреплён в `global.json` (8.0.100, rollForward latestFeature). Д
 - IPC: `behavioral.status`, `behavioral.scanusb` + флаги в SettingsSnapshot/Update; `BackendHub` проброс.
 - CLI: `scan-usb [путь]`, `behavioral-status`. WPF: раздел «Поведенческий щит и USB» (переключатели, проверка USB, статус приманок, лента цепочек), виртуализация списков.
 - Проверка: build 0/0, 632 теста (627 passed, 5 Windows-only skipped).
-### Следующий модуль: 7/6 docs/ARCHITECTURE_V2_KERNEL_SPEC.md, версия 1.2.0, релиз
+### 7/6 Архитектурный документ, версия 1.2.0, релиз (готово)
+- `docs/ARCHITECTURE_V2_KERNEL_SPEC.md`: проект связки Ring 0/Ring 3 (minifilter, коллбэки, FilterCommunicationPort, таймауты/Fail-Open, матрица самозащиты, план IKernelBridge/NullKernelBridge). Без .vcxproj/C++ — решение остаётся кросс-сборочным.
+- Версия продукта 1.2.0 (wixproj, Directory.Build.props, release.yml).
+- Проверка: Release build 0/0, 632 теста (627 passed, 5 Windows-only skipped).
+
+## Этап 7 итог: v1.2.0 — User-Mode EDR без драйвера ядра
+Не входят в v1.2.0 (требуют Ring 0 или остановлены ранее): перехват запуска процессов, сканирование сырой памяти процессов. Весь поведенческий анализ — User-Mode.
+Не проверено на Windows: SCM/реестр/TaskCache нативных источников, поведенческий щит на живом FileSystemWatcher, USB-щит на реальной флешке (атрибуты Hidden/ReparsePoint), WPF-раздел «Поведенческий щит и USB».
