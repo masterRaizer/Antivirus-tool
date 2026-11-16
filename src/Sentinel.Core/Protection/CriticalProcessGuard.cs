@@ -17,6 +17,21 @@ public static class CriticalProcessGuard
         "explorer.exe", "winlogon.exe", "ntoskrnl.exe", "winload.efi", "system",
     };
 
+    private static volatile HashSet<int> _kernelProtected = [];
+
+    /// <summary>
+    /// PID, которые сейчас защищает драйвер ядра (<c>Kernel.KernelProtectionSync</c>). Такие процессы User-Mode тоже не
+    /// трогает — ни приостановкой, ни завершением, ни чтением памяти. Пустой набор — драйвер не загружен.
+    /// </summary>
+    public static IReadOnlyCollection<int> KernelProtectedProcessIds => _kernelProtected;
+
+    /// <summary>Публикует набор PID, переданный драйверу (заменяет предыдущий целиком).</summary>
+    public static void SetKernelProtectedProcessIds(IEnumerable<int> processIds)
+    {
+        ArgumentNullException.ThrowIfNull(processIds);
+        _kernelProtected = [.. processIds];
+    }
+
     /// <summary>
     /// Имя образа совпадает с критическим системным процессом (без учёта каталога). Вместе с отрицательным
     /// <see cref="IsProtectedProcess"/> означает маскировку: системное имя вне системного каталога.
@@ -29,6 +44,12 @@ public static class CriticalProcessGuard
     {
         // Ядро системы и неизвестные низкие PID.
         if (pid is <= 4 and >= 0)
+        {
+            return true;
+        }
+
+        // Процесс под защитой драйвера ядра (Sentinel или ядро ОС, проверенные при синхронизации).
+        if (_kernelProtected.Contains(pid))
         {
             return true;
         }

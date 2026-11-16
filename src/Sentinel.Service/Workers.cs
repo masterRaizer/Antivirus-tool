@@ -48,6 +48,23 @@ internal sealed partial class ProcessStartMonitorWorker(SentinelRuntime runtime,
     private static partial void LogStarted(ILogger logger);
 }
 
+/// <summary>
+/// Драйвер ядра SentinelDrv: при старте — статус в журнал (без драйвера — профиль User-Mode EDR, без ошибок),
+/// при загруженном драйвере — периодическая передача защищаемых PID (служба, приложение, ядро ОС).
+/// </summary>
+internal sealed partial class KernelBridgeWorker(SentinelRuntime runtime, ILogger<KernelBridgeWorker> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var status = runtime.GetKernelStatus();
+        LogStatus(logger, status.Mode, status.Message);
+        await runtime.RunKernelBridgeAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Драйвер ядра [{Mode}]: {Message}")]
+    private static partial void LogStatus(ILogger logger, string mode, string message);
+}
+
 /// <summary>Фоновое автообновление баз угроз каждые 6 часов (если не отключено в «Настройках и базах»).</summary>
 internal sealed class DatabaseUpdateWorker(SentinelRuntime runtime) : BackgroundService
 {

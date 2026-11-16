@@ -85,6 +85,7 @@ public sealed partial class SentinelRuntime : ISentinelBackend, IAsyncDisposable
 
         _dispatcher.ThreatRaised -= OnThreatRaised;
         _dispatcher.ThreatUpdated -= OnThreatUpdated;
+        DisposeKernelBridge();
         _o.Telemetry.Dispose();
         _o.Quarantine.Dispose();
         _scanCts?.Dispose();
@@ -114,6 +115,7 @@ public sealed partial class SentinelRuntime : ISentinelBackend, IAsyncDisposable
             ThreatsTotal = threats.Count,
             PendingDecisions = threats.Count(t => t.Status == ThreatStatus.PendingDecision),
             WatchedDirectories = WatchedDirectories(),
+            KernelDriver = GetKernelStatus().Message,
             Scan = CurrentScan,
         };
     }

@@ -485,3 +485,6 @@ $RECYCLE.BIN/
 
 # Релизные сборки (scripts/publish-windows.ps1)
 /dist/
+
+# Кэш NuGet-пакетов WDK/SDK для сборки драйвера (scripts/build-driver-windows.ps1)
+/driver/.wdk/

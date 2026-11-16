@@ -1,0 +1,54 @@
+;
+; SentinelDrv.inf — драйвер телеметрии и защиты дескрипторов Sentinel (не PnP, служба ядра).
+; Основной способ установки для проверки — scripts/install-driver-testmode.ps1 (sc.exe create ... type= kernel).
+; INF позволяет установить тот же драйвер штатно: правый клик -> "Установить" или
+;   pnputil /add-driver SentinelDrv.inf /install   (после импорта тестового сертификата и bcdedit /set testsigning on).
+; DriverVer подставляется сценарием сборки (scripts/build-driver-windows.ps1).
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderName%
+DriverVer   = 11/16/2026,1.3.0.0
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+SentinelDrv.sys = 1,,
+
+[DefaultInstall.NTamd64]
+CopyFiles = SentinelDrv.Files
+
+[DefaultInstall.NTamd64.Services]
+AddService = SentinelDrv,,SentinelDrv.Service
+
+[DefaultUninstall.NTamd64]
+LegacyUninstall = 1
+DelFiles = SentinelDrv.Files
+
+[DefaultUninstall.NTamd64.Services]
+DelService = SentinelDrv,0x200
+
+[SentinelDrv.Files]
+SentinelDrv.sys
+
+[SentinelDrv.Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDescription%
+ServiceType    = 1    ; SERVICE_KERNEL_DRIVER
+StartType      = 3    ; SERVICE_DEMAND_START — запуск вручную или службой Sentinel
+ErrorControl   = 1    ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\SentinelDrv.sys
+
+[Strings]
+ProviderName       = "Sentinel"
+DiskName           = "Sentinel Driver Disk"
+ServiceName        = "Sentinel Kernel Telemetry Driver"
+ServiceDescription = "Process start telemetry and handle protection for Sentinel (test-signed build)."

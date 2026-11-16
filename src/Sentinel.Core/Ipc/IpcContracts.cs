@@ -109,6 +109,9 @@ public sealed record ServiceStatus
     public int PendingDecisions { get; init; }
     public IReadOnlyList<string> WatchedDirectories { get; init; } = [];
     public ScanProgress Scan { get; init; } = ScanProgress.Idle;
+
+    /// <summary>Состояние драйвера ядра SentinelDrv (или профиль User-Mode EDR без драйвера).</summary>
+    public string KernelDriver { get; init; } = string.Empty;
 }
 
 public sealed record ProcessInfo(int Pid, string Name, string? Path, double CpuPercent, Severity? Severity, string? Remarks);

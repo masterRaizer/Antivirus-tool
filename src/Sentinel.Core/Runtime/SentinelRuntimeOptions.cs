@@ -37,6 +37,14 @@ public sealed class SentinelRuntimeOptions
 
     public IProcessProvider? Processes { get; init; }
 
+    /// <summary>Мост к драйверу ядра SentinelDrv; <c>null</c> — профиль User-Mode EDR без попытки подключения.</summary>
+    public Func<Kernel.IKernelBridge>? KernelBridgeFactory { get; init; }
+
+    /// <summary>Лёгкий поставщик процессов для синхронизации защищаемых PID с драйвером (без замера CPU).</summary>
+    public IProcessProvider? KernelProtectionProcesses { get; init; }
+
+    public TimeSpan KernelSyncInterval { get; init; } = TimeSpan.FromSeconds(10);
+
     /// <summary>Потоковый аудит памяти процессов (только Windows); <c>null</c> — память не проверяется.</summary>
     public Auditors.Memory.MemoryIntegrityScanner? MemoryScanner { get; init; }
 
@@ -93,6 +101,8 @@ public sealed class SentinelRuntimeOptions
         IProcessProvider? processes = null;
         Func<Monitoring.IProcessCreationEventSource>? processStarts = null;
         Auditors.Memory.MemoryIntegrityScanner? memoryScanner = null;
+        Func<Kernel.IKernelBridge>? kernelBridge = null;
+        IProcessProvider? kernelProcesses = null;
         Func<PersistenceAuditReport>? persistence = null;
         Func<ConfigAuditReport>? config = null;
         if (OperatingSystem.IsWindows())
@@ -101,6 +111,8 @@ public sealed class SentinelRuntimeOptions
             processes = ProcessProviderFactory.CreateDefault();
             processStarts = Monitoring.ProcessCreationEventSourceFactory.CreateDefault;
             memoryScanner = new Auditors.Memory.MemoryIntegrityScanner(new Auditors.Memory.WindowsMemoryReader(), new SignatureEngine(rules));
+            kernelBridge = Kernel.KernelBridgeFactory.CreateDefault;
+            kernelProcesses = new WindowsProcessProvider(TimeSpan.Zero);
             // Провайдеры создаются здесь, под проверкой платформы; аудиторы — заново на каждый прогон.
             var registry = RegistryProviderFactory.CreateDefault();
             var tasks = new WindowsTaskSchedulerProvider();
@@ -121,6 +133,8 @@ public sealed class SentinelRuntimeOptions
             Processes = processes,
             ProcessStartSource = processStarts,
             MemoryScanner = memoryScanner,
+            KernelBridgeFactory = kernelBridge,
+            KernelProtectionProcesses = kernelProcesses,
             PersistenceAudit = persistence,
             ConfigAudit = config,
             Telemetry = TelemetryProviderFactory.CreateDefault(),

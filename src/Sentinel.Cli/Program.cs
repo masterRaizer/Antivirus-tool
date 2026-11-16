@@ -77,6 +77,7 @@ internal static class Program
                 "selftest" => SelfTest(opts),
                 "audit-processes" => AuditProcesses(opts),
                 "audit-memory" => AuditMemory(opts),
+                "kernel-status" => KernelStatus(opts),
                 "audit-startup" => AuditStartup(opts),
                 "audit-config" => AuditConfig(opts),
                 "quarantine" => Quarantine(opts),
@@ -120,6 +121,7 @@ internal static class Program
               sentinel audit-memory [PID] [--rules <каталог>] [--json]
                                                    потоковый аудит памяти процессов: RWX-регионы, PE-образы без файла,
                                                    сигнатуры в памяти; без PID — все процессы (только Windows)
+              sentinel kernel-status [--json]      состояние драйвера ядра SentinelDrv (или профиль User-Mode EDR)
               sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan] [действия] [отчёт]
                                                    аудит автозагрузки и персистентности (только Windows)
               sentinel audit-config [--rules <каталог>] [--json] [действия] [отчёт]
@@ -770,6 +772,51 @@ internal static class Program
         return threats > 0 ? ExitDetected : ExitOk;
     }
 
+    /// <summary>
+    /// <c>kernel-status</c> — прямой опрос драйвера <c>\\.\SentinelDrv</c> (<c>IOCTL_SENTINEL_GET_STATUS</c>). Без драйвера
+    /// (или вне Windows) печатает профиль User-Mode EDR и завершается с кодом 0: это штатный режим, а не ошибка.
+    /// </summary>
+    private static int KernelStatus(CliOptions opts)
+    {
+        using var bridge = Sentinel.Core.Kernel.KernelBridgeFactory.CreateDefault();
+        var status = bridge.GetStatus();
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                status.Loaded,
+                status.Mode,
+                status.Message,
+                status.ProtocolVersion,
+                driverVersion = status.DriverVersion?.ToString(),
+                status.ObCallbacksActive,
+                status.ProcessNotifyActive,
+                status.ProtectedPidCount,
+                status.ProcessEventsTotal,
+                status.EventsDropped,
+                status.HandleStripsTotal,
+                status.EventsQueued,
+                devicePath = Sentinel.Core.Kernel.KernelProtocol.DevicePath,
+            }, JsonOptions));
+            return ExitOk;
+        }
+
+        Console.WriteLine($"Режим: {status.Mode}");
+        Console.WriteLine(status.Message);
+        if (status.Loaded)
+        {
+            Console.WriteLine($"  Устройство                : {Sentinel.Core.Kernel.KernelProtocol.DevicePath}");
+            Console.WriteLine($"  Версия драйвера / протокол: {status.DriverVersion} / {status.ProtocolVersion}");
+            Console.WriteLine($"  Защита дескрипторов (Ob)  : {(status.ObCallbacksActive ? "активна" : "не зарегистрирована")}");
+            Console.WriteLine($"  Телеметрия процессов      : {(status.ProcessNotifyActive ? "активна" : "не зарегистрирована")}");
+            Console.WriteLine($"  Защищаемых PID            : {status.ProtectedPidCount}");
+            Console.WriteLine($"  Событий всего / в очереди : {status.ProcessEventsTotal} / {status.EventsQueued} (вытеснено: {status.EventsDropped})");
+            Console.WriteLine($"  Снято опасных прав        : {status.HandleStripsTotal}");
+        }
+
+        return ExitOk;
+    }
+
     private static int AuditStartup(CliOptions opts)
     {
         if (!OperatingSystem.IsWindows())
@@ -1096,6 +1143,7 @@ internal static class Program
             Console.WriteLine($"  Проверено файлов/процессов: {status.FilesChecked} / {status.ProcessesChecked}");
             Console.WriteLine($"  Находок / ждут решения    : {status.ThreatsTotal} / {status.PendingDecisions}");
             Console.WriteLine($"  В карантине               : {status.Quarantined}");
+            Console.WriteLine($"  Драйвер ядра              : {(string.IsNullOrEmpty(status.KernelDriver) ? "нет данных" : status.KernelDriver)}");
             return ExitOk;
         }
         finally

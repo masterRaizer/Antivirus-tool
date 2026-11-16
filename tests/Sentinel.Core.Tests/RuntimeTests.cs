@@ -44,7 +44,7 @@ internal sealed class RuntimeBench : IAsyncDisposable
 
     public string ScanDir => Path.Combine(Tmp.Path, "scan");
 
-    public RuntimeBench(bool withPlatform = true, FileMonitorOptions? monitor = null)
+    public RuntimeBench(bool withPlatform = true, FileMonitorOptions? monitor = null, Func<Kernel.IKernelBridge>? kernelBridge = null)
     {
         var verifier = FakeVerifier.WithStatus(SignatureStatus.NotSigned);
         var whitelist = new SystemWhitelist(verifier, new WhitelistOptions());
@@ -73,6 +73,7 @@ internal sealed class RuntimeBench : IAsyncDisposable
             QuickScanRoots = [new ScanRoot(ScanDir)],
             FullScanRoots = [new ScanRoot(ScanDir)],
             RulesLoaded = 7,
+            KernelBridgeFactory = kernelBridge,
         });
         Runtime.ScanProgressChanged += p => { lock (Progress) { Progress.Add(p); } };
         Runtime.ThreatRaised += t => { lock (Raised) { Raised.Add(t); } };

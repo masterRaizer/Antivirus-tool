@@ -16,13 +16,25 @@ public sealed partial class SentinelRuntime
     /// </summary>
     public async Task RunProcessStartMonitorAsync(CancellationToken cancellationToken)
     {
-        if (_o.ProcessStartSource is null)
+        IProcessCreationEventSource source;
+        var kernel = KernelBridge;
+        if (kernel.IsConnected && kernel.GetStatus().ProcessNotifyActive)
+        {
+            // Телеметрия ядра (PsSetCreateProcessNotifyRoutineEx) с откатом на WMI/опрос при потере драйвера.
+            var fromKernel = new Kernel.KernelProcessCreationEventSource(kernel, _o.ProcessStartSource);
+            fromKernel.Log += message => Log?.Invoke(message);
+            source = fromKernel;
+        }
+        else if (_o.ProcessStartSource is not null)
+        {
+            source = _o.ProcessStartSource();
+        }
+        else
         {
             Log?.Invoke("Мониторинг старта процессов недоступен на этой платформе — новые процессы проверяет периодический аудит.");
             return;
         }
 
-        var source = _o.ProcessStartSource();
         if (OperatingSystem.IsWindows() && source is WindowsProcessCreationEventSource windows)
         {
             windows.Log += message => Log?.Invoke(message);

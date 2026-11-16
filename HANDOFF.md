@@ -16,7 +16,7 @@
 | 5 | Релизы в GitHub Actions: `.github/workflows/release.yml` (windows-latest: тесты, `publish-windows.ps1`, MSI на WiX 5.0.2, GitHub Release с `.msi` и `Sentinel.App.exe`), `installer/Sentinel.Installer/` (вне `Sentinel.sln`), шаблон `allowed_exclusions.json` | Release `v1.0.0` опубликован (run на `main` зелёный: тесты, publish, MSI). |
 | 6 | Версия 1.1.0 / 1.1.1: скоринг угроз (0–100), потоковый `FileAnalyzer`, импорт PE и .NET, режимы Quick/Full/Custom с защитой от ReparsePoint, кэш чистых файлов, самозащита; база угроз `data/threat_hashes.bin` (11 743 SHA-256, MemoryMappedFile) с обновлятором и облачной проверкой; пул проверки; исправления по отчёту 1.0.0; ACL канала для AuthenticatedUsers, автоподключение 2 с, «Запустить службу»; WPF 1.1.0; WiX 1.1.0; Безопасный режим и WinRE (1.1.1) | Готов, слит в `main`. Linux, Release: build 0/0, 538 тестов — 533 passed, 5 skipped (`WindowsFact`). |
 | 7 | Версия 1.2.0: `NativePersistenceParser` (7/1), `RansomwareBehaviorShield` + `CanaryFileGuard` (7/2), `BehavioralCorrelationEngine` + `FalsePositiveGuard` (7/3), `RemovableMediaShield` — USB-щит (7/4), интеграция в Service/CLI/WPF (7/5), спецификация `docs/ARCHITECTURE_V2_KERNEL_SPEC.md` (7/6), DACL-самозащита (`SelfProtection`) и `CriticalProcessGuard` (7/7) | Готов, слит в `main`. Release build 0/0, 632+ теста зелёные. |
-| 8 | Версия 1.3.0 (В работе): написание в Linux-контейнере с компиляцией на `windows-latest` в GitHub Actions и живой проверкой пользователем на ноутбуке с Windows: (8/1) `ProcessStartMonitor` (подписка на события старта процессов через `IProcessCreationEventSource`); (8/2) `MemoryIntegrityScanner` в `ProcessAuditor` (потоковая проверка регионов `MEM_PRIVATE`/`PAGE_EXECUTE_READWRITE` буфером 64 КБ через `IMemoryReader`); (8/3) изоляция потоков в `RemediationEngine` перед карантином (строго под защитой `CriticalProcessGuard`); (8/4) `IKernelBridge` и исходный код драйвера `driver/SentinelDrv` (вне `Sentinel.sln`) со сборкой на `windows-latest` в `.github/workflows/release.yml` | В работе |
+| 8 | Версия 1.3.0 (код готов, 8/1–8/4; ждёт живой проверки драйвера): написание в Linux-контейнере с компиляцией на `windows-latest` в GitHub Actions и живой проверкой пользователем на ноутбуке с Windows: (8/1) `ProcessStartMonitor` (подписка на события старта процессов через `IProcessCreationEventSource`); (8/2) `MemoryIntegrityScanner` в `ProcessAuditor` (потоковая проверка регионов `MEM_PRIVATE`/`PAGE_EXECUTE_READWRITE` буфером 64 КБ через `IMemoryReader`); (8/3) изоляция потоков в `RemediationEngine` перед карантином (строго под защитой `CriticalProcessGuard`); (8/4) `IKernelBridge` и исходный код драйвера `driver/SentinelDrv` (вне `Sentinel.sln`) со сборкой на `windows-latest` в `.github/workflows/release.yml` | Готов в коде; 8/2 проверен на Windows 11, драйвер — на проверке |
 
 ## Следующие шаги (Этап 8 — v1.3.0)
 > **Важное правило для агента:** Все модули этапа 8 пишутся в Linux-контейнере. То, что физически нельзя запустить на Linux (Win32 API, WMI/ETW, WDK драйвер `SentinelDrv.sys`), НЕ является заглушкой: C#-логика закрывается интерфейсами и тестируется на Linux моками (`dotnet test Sentinel.sln`), а компиляция нативных частей проверяется через GitHub Actions (`windows-latest`). Живой запуск на Windows делает пользователь на своём ноутбуке.
@@ -24,7 +24,7 @@
 1. ~~**Модуль 8/1 (`ProcessStartMonitor`)**~~ — **готов** (см. «Этап 8: сделано» ниже).
 2. ~~**Модуль 8/2 (`MemoryIntegrityScanner`)**~~ — **готов** (см. «Этап 8: сделано» ниже).
 3. ~~**Модуль 8/3 (изоляция потоков перед карантином)**~~ — **готов** (см. «Этап 8: сделано» ниже).
-4. **Модуль 8/4 (`IKernelBridge` + `driver/SentinelDrv`)**: реализация `IKernelBridge` (с `NullKernelBridge` / graceful fallback в User-Mode, если драйвер не загружен) по спецификации `docs/ARCHITECTURE_V2_KERNEL_SPEC.md`, создание `driver/SentinelDrv` (вне `Sentinel.sln`) и добавление шага его компиляции и тестовой подписи на `windows-latest` в `.github/workflows/release.yml`.
+4. ~~**Модуль 8/4 (`IKernelBridge` + `driver/SentinelDrv`)**~~ — **готов** (см. «Этап 8: сделано» ниже); версия продукта — **1.3.0**.
 5. После каждого модуля обновлять этот файл.
 
 ## Этап 8: сделано
@@ -88,6 +88,30 @@
 - Интеграционный `[WindowsFact]` `WindowsProcessContainmentIntegrationTests` (PING.EXE: приостановка ≥ 1 потока, повтор без накрутки, возобновление,
   барьер для PID 4 и собственного процесса) выполняется на `windows-latest` в шаге Test.
 
+### 8/4 `IKernelBridge` и драйвер `driver/SentinelDrv` (Linux: build 0/0 Debug, Release и под SDK 9.0.102; 754 теста — 747 passed, 7 skipped `WindowsFact`)
+- Протокол — `docs/ARCHITECTURE_V2_KERNEL_SPEC.md`, раздел 6 (нормативный): устройство `\Device\SentinelDrv` / `\\.\SentinelDrv`,
+  IOCTL `0x8A536000` (статус), `0x8A53A004` (защищаемые PID, только LocalSystem), `0x8A536008` (события); структуры Pack=1:
+  `SENTINEL_STATUS` 48, `SENTINEL_PROTECTED_PIDS` 264, `SENTINEL_EVENT_BATCH` 16, `SENTINEL_PROCESS_EVENT` 1576 байт.
+  Транспорт v1.3.0 — объект устройства + IOCTL (а не `FilterCommunicationPort` из исходного проекта); драйвер ничего не блокирует (Fail-Open).
+- `driver/SentinelDrv/` (вне `Sentinel.sln`, `driver/Directory.Build.props` отсекает настройки .NET): `SentinelDrv.h` (единый источник протокола),
+  `SentinelDrv.c` (WDM: `IoCreateDeviceSecure` с SDDL SYSTEM+Administrators, CREATE/CLOSE/DEVICE_CONTROL с проверкой размеров и `SeTcbPrivilege`,
+  `ObRegisterCallbacks` для процессов и потоков — снятие TERMINATE/VM_WRITE/VM_OPERATION/CREATE_THREAD/SUSPEND_RESUME у посторонних,
+  запросы System/csrss/smss/lsass/services/wininit из System32 не меняются; `PsSetCreateProcessNotifyRoutineEx` → кольцевой буфер на 256 событий;
+  выход процесса снимает его PID с защиты; `DriverUnload` снимает всё в обратном порядке), `SentinelDrv.inf`, `SentinelDrv.vcxproj`
+  (штатный C++-тулсет VS + `/kernel`, `/INTEGRITYCHECK`, `/ENTRY:GsDriverEntry`, `/W4 /WX`).
+  Перед пушем драйвер проверен в контейнере: `clang -fsyntax-only -Wall -Wextra` с заголовками WDK 10.0.26100 из NuGet, все `C_ASSERT` раскладки проходят.
+- CI: на образе `windows-latest` (`windows-2025-vs2026`) установлено только расширение WDK для VS, поэтому `scripts/build-driver-windows.ps1` берёт
+  `Microsoft.Windows.WDK.x64` + `Microsoft.Windows.SDK.CPP` 10.0.26100.6584 из NuGet (кэш `driver/.wdk`), собирает vcxproj через MSBuild, проверяет
+  флаг FORCE_INTEGRITY в PE, создаёт сертификат `CN=Sentinel Test Driver`, подписывает `signtool` и кладёт в `dist/driver/` `SentinelDrv.sys`, `.inf`,
+  `SentinelDrvTest.cer`, `install-driver-testmode.ps1` (+ архив `dist/SentinelDrv-v1.3.0-x64-testsigned.zip`). Каждый прогон выкладывает `dist/`
+  артефактом `Sentinel-v1.3.0-<sha>` (`actions/upload-artifact@v4`); GitHub Release публикуется только по тегу `v*` или вручную.
+- User-Mode (`src/Sentinel.Core/Kernel/`): `KernelProtocol` (кодек, сверка с `SentinelDrv.h`/`.c` в тестах), `IKernelBridge`, `NullKernelBridge`,
+  `WindowsKernelBridge` (`CreateFile` → `SafeFileHandle`, `DeviceIoControl`; ERROR_FILE_NOT_FOUND/PATH_NOT_FOUND/ACCESS_DENIED и потеря драйвера —
+  «Kernel driver not loaded, running in User-Mode EDR profile»), `KernelProtectionSync` (раз в 10 с: свои процессы из каталога установки + csrss/smss/
+  wininit/services/lsass/winlogon из System32; тот же набор — в `CriticalProcessGuard`), `KernelProcessCreationEventSource` (телеметрия ядра для
+  `ProcessStartMonitor` с откатом на WMI/опрос). Служба — `KernelBridgeWorker`; `ServiceStatus.KernelDriver`; CLI — `sentinel kernel-status [--json]`.
+- Версия 1.3.0: `Directory.Build.props`, `Sentinel.Installer.wixproj`, `release.yml`.
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **8/2:** окно 1: `powershell -ExecutionPolicy Bypass -File .\scripts\test-memory-scanner.ps1 -WithPeHeader` (печатает PID);
   окно 2 (администратор): `sentinel.exe audit-memory <PID>` → `MEM-YARA-MATCH` (EICAR-Test-File) и `MEM-REFLECTIVE-PE` (PE (x64)), код выхода 1.
@@ -102,6 +126,24 @@
   затем от администратора `sentinel.exe audit-processes --remediate`: у `svchost.exe` из `C:\Temp` — находка `PROC-IMPERSONATION`, в итоге действия —
   «Перед завершением приостановлено потоков: N в 1 процесс(ах)», процесс завершён. Контроль: настоящие `svchost.exe`/`lsass.exe` не затронуты
   (Диспетчер задач). При запущенной службе тот же запуск должен быть пойман `ProcessStartMonitor` (событие `process-start`, статус «Завершён»).
+- **8/4 — драйвер в режиме Test Signing** (только тестовый ноутбук; драйвер запускается вручную — `start= demand`, при сбое перезагрузка его не поднимет):
+  1. Скачать со страницы прогона GitHub Actions артефакт `Sentinel-v1.3.0-<sha>` → `driver\` (`SentinelDrv.sys`, `SentinelDrvTest.cer`,
+     `install-driver-testmode.ps1`, `SentinelDrv.inf`) и `Sentinel-v1.3.0-setup-win-x64.msi`. Сертификат и драйвер — из одного прогона.
+  2. PowerShell от администратора: `Confirm-SecureBootUEFI` — при `True` отключить Secure Boot в UEFI (иначе testsigning не включится).
+  3. `bcdedit /set testsigning on`, перезагрузка (в углу рабочего стола — «Тестовый режим»).
+  4. `certutil -addstore Root SentinelDrvTest.cer` и `certutil -addstore TrustedPublisher SentinelDrvTest.cer`.
+  5. `copy SentinelDrv.sys C:\Windows\System32\drivers\`, затем `sc create SentinelDrv type= kernel start= demand binPath= System32\drivers\SentinelDrv.sys`
+     и `sc start SentinelDrv` (шаги 4–5 делает `powershell -ExecutionPolicy Bypass -File .\install-driver-testmode.ps1 -Action Install`).
+  6. `sentinel.exe kernel-status` → «Режим: kernel», защита дескрипторов и телеметрия «активна», версия 1.3.0 / протокол 1.
+  7. Установить MSI 1.3.0, `sc start SentinelService`; через ~10 с `sentinel.exe kernel-status` — «Защищаемых PID» ≥ 6, в журнале службы
+     «Драйвер ядра [kernel]: …» и «Драйвер ядра: защищаемых процессов N (…)».
+  8. Защита: запомнить «Снято опасных прав», выполнить `taskkill /F /IM Sentinel.Service.exe` (и попытку завершить службу из Process Explorer) —
+     ожидается «Отказано в доступе», служба жива, счётчик «Снято опасных прав» вырос. `taskkill /F /IM notepad.exe` работает как обычно.
+  9. Телеметрия: запустить `notepad.exe` и `powershell -enc <base64>` — «Событий всего» растёт, по powershell — событие `process-start` с BH-02.
+  10. Fail-Open: `sc stop SentinelDrv` при работающей службе — в журнале «Kernel driver not loaded, running in User-Mode EDR profile», мониторинг
+      старта продолжается через WMI; `sentinel.exe kernel-status` — «Режим: user-mode». Удаление: `install-driver-testmode.ps1 -Action Uninstall`,
+      `bcdedit /set testsigning off`, перезагрузка.
+  11. При BSOD — прислать `C:\Windows\Minidump\*.dmp` (или `MEMORY.DMP`) и вывод `sentinel.exe kernel-status --json` до сбоя.
 - `WinVerifyTrust`, реестровые и сервисные аудиторы, удаление исключений Defender.
 - `Sentinel.App` (WPF) и `Sentinel.Service` (установка MSI, DACL-самозащита, автоподключение Named Pipe, раздел «Поведенческий щит и USB»).
 - Безопасный режим и WinRE (1.1.1).

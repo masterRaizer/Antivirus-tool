@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Версия релиза (например 1.2.0), без префикса v'
+        description: 'Версия релиза (например 1.3.0), без префикса v'
         required: false
-        default: '1.2.0'
+        default: '1.3.0'
 
 permissions:
   contents: write
@@ -33,7 +33,7 @@ jobs:
           } elseif ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.version }}' -ne '') {
             $version = '${{ inputs.version }}'.TrimStart('v')
           } else {
-            $version = '1.2.0'
+            $version = '1.3.0'
           }
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Версия '$version' должна иметь вид X.Y.Z (требование MSI)."
@@ -61,7 +61,39 @@ jobs:
           if (-not $msi) { throw 'Sentinel.msi не найден после сборки установщика.' }
           Copy-Item $msi.FullName "dist/Sentinel-v${{ env.VERSION }}-setup-win-x64.msi"
 
+      # Драйвер не входит в Sentinel.sln: WDK берётся из NuGet (на образе windows-latest установлено только расширение WDK для VS).
+      - name: Cache WDK NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: driver/.wdk
+          key: wdk-nuget-10.0.26100.6584-v1
+
+      - name: Build and test-sign kernel driver (SentinelDrv.sys)
+        shell: pwsh
+        run: pwsh -File ./scripts/build-driver-windows.ps1 -Version ${{ env.VERSION }} -OutDir dist/driver
+
+      # Артефакты каждого прогона (в том числе пушей в main) — для живой проверки на ноутбуке.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sentinel-v${{ env.VERSION }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/
+            !dist/**/*.pdb
+
+      - name: Upload driver symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: SentinelDrv-symbols-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: dist/driver/*.pdb
+
+      # Release публикуется только по тегу v* или вручную (workflow_dispatch); пуш в main выкладывает лишь артефакты.
       - name: Publish GitHub Release
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
@@ -72,3 +104,4 @@ jobs:
           files: |
             dist/Sentinel-v${{ env.VERSION }}-setup-win-x64.msi
             dist/Sentinel.App.exe
+            dist/SentinelDrv-v${{ env.VERSION }}-x64-testsigned.zip
