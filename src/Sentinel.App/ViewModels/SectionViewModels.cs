@@ -311,7 +311,7 @@ public sealed class ScanViewModel : SectionViewModel
                          {
                              nameof(IsActive), nameof(IsIdle), nameof(StateText), nameof(PercentText), nameof(ScannedText), nameof(SpeedText),
                              nameof(ElapsedText), nameof(CurrentItemText), nameof(PauseResumeText), nameof(HasResult), nameof(ResultIsWarning),
-                             nameof(WorkersText), nameof(CacheText),
+                             nameof(WorkersText), nameof(CacheText), nameof(RemainingText),
                          })
                 {
                     Raise(name);
@@ -340,7 +340,7 @@ public sealed class ScanViewModel : SectionViewModel
     public string PercentText => Progress.State == ScanState.Counting ? "…" : $"{Progress.Percent:0} %";
 
     public string ScannedText => Progress.Total > 0
-        ? $"{Progress.Scanned:N0} из {(Progress.EnumerationComplete || !Progress.IsActive ? string.Empty : "≈")}{Progress.Total:N0}"
+        ? $"{Progress.Scanned:N0} из {(Progress.EnumerationComplete || Progress.TotalCounted || !Progress.IsActive ? string.Empty : "≈")}{Progress.Total:N0}"
         : $"{Progress.Scanned:N0}";
 
     public string SpeedText => $"{Progress.ItemsPerSecond:N0} объектов/сек";
@@ -355,6 +355,13 @@ public sealed class ScanViewModel : SectionViewModel
         : $"{Progress.CachedSkipped:N0} по кэшу";
 
     public string ElapsedText => DurationConverter.Format(Progress.ElapsedSeconds);
+
+    /// <summary>Оценка оставшегося времени; пока файлы не подсчитаны — «идёт подсчёт файлов».</summary>
+    public string RemainingText => !Progress.IsActive
+        ? string.Empty
+        : Progress.RemainingSeconds >= 0
+            ? $"осталось ≈ {DurationConverter.Format(Progress.RemainingSeconds)}"
+            : Progress.TotalCounted ? "осталось — оценка…" : "идёт подсчёт файлов…";
 
     public string CurrentItemText => string.IsNullOrEmpty(Progress.CurrentItem) ? "—" : Progress.CurrentItem;
 

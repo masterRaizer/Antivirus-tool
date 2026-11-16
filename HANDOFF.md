@@ -175,6 +175,10 @@
 - Источник ложных `PROC-PS-BYPASS`/`PROC-CMD-IEX`/BH-02 подтверждён сессией на Katana: обёртка Claude Code
   `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "...; Invoke-Expression -Command $__claudeCodeScript"` (родитель `claude.exe` → `cmd.exe`);
   дословно добавлена в регрессионные тесты. Родителю по имени не доверяем (обход через подмену родителя).
+- **Счётчик проверки «рос» вместе с обходом («76 148 из ≈76 412», 95 %), непонятно, сколько осталось:** параллельно с проверкой идёт быстрый
+  подсчёт файлов тем же обходом (метаданные каталогов, те же исключения и пропуск ReparsePoint); когда он закончен, итог окончательный
+  (`ScanProgress.TotalCounted`, знак «≈» снимается) и считается оценка оставшегося времени (`RemainingSeconds`, в приложении — «осталось ≈ …»
+  под «ВРЕМЯ»; пока идёт подсчёт — «идёт подсчёт файлов…»). Разметка `ScanView.xaml` на Windows не проверялась.
 
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`

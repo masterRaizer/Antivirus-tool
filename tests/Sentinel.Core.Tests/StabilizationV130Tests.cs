@@ -711,3 +711,31 @@ public class DotNetBundleAndOwnBinaryTests
         Assert.Empty(b.Raised);
     }
 }
+
+/// <summary>Итог файлов фиксируется заранее (параллельный подсчёт), а не растёт по мере обхода; есть оценка оставшегося времени.</summary>
+public class ScanPreCountTests
+{
+    [Fact]
+    public async Task FilesArePreCounted_TotalIsExact()
+    {
+        await using var bench = new RuntimeBench();
+        for (var i = 0; i < 120; i++)
+        {
+            bench.Drop(Path.Combine($"d{i % 7}", $"f{i}.txt"), System.Text.Encoding.ASCII.GetBytes($"file {i}"));
+        }
+
+        var final = await bench.ScanAsync(new ScanRequest(ScanMode.Custom, bench.ScanDir));
+
+        Assert.Equal(ScanState.Completed, final.State);
+        Assert.Equal(120, final.Total);
+        Assert.True(final.TotalCounted);
+        List<ScanProgress> progress;
+        lock (bench.Progress)
+        {
+            progress = [.. bench.Progress];
+        }
+
+        Assert.Contains(progress, p => p.State == ScanState.Running && p.TotalCounted && p.Total == 120);
+        Assert.All(progress.Where(p => p.TotalCounted), p => Assert.True(p.Total <= 120));
+    }
+}

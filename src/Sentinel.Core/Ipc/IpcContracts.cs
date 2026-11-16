@@ -83,6 +83,12 @@ public sealed record ScanProgress
     /// <summary>Обход каталогов завершён: <see cref="Total"/> окончательный; до этого процент оценочный.</summary>
     public bool EnumerationComplete { get; init; }
 
+    /// <summary>Файлы подсчитаны заранее (быстрый параллельный обход без чтения содержимого): <see cref="Total"/> окончательный.</summary>
+    public bool TotalCounted { get; init; }
+
+    /// <summary>Оценка оставшегося времени в секундах; −1 — пока неизвестно (идёт подсчёт или нет скорости).</summary>
+    public double RemainingSeconds { get; init; } = -1;
+
     public bool IsActive => State is ScanState.Counting or ScanState.Running or ScanState.Paused;
 }
 

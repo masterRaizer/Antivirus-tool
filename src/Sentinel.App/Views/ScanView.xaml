@@ -96,6 +96,8 @@
                         <StackPanel>
                             <TextBlock Style="{StaticResource Label}" Text="ВРЕМЯ" />
                             <TextBlock Margin="0,4,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding ElapsedText}" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,3,0,0" Text="{Binding RemainingText}"
+                                       ToolTip="Файлы подсчитываются заранее быстрым обходом каталогов; оценка — по средней скорости проверки" />
                         </StackPanel>
                     </UniformGrid>
 

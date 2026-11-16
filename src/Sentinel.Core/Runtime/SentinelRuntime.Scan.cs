@@ -433,6 +433,19 @@ public sealed partial class SentinelRuntime
         var found = 0;
         var first = true;
         var excluded = SelfProtection.OwnDirectories(_o.DataDirectory, _o.Quarantine.QuarantineDirectory).ToArray();
+
+        // Подсчёт файлов заранее: тот же обход (те же исключения и пропуск ReparsePoint), но только по метаданным каталогов —
+        // в сотни раз быстрее проверки, поэтому итог фиксируется задолго до конца и видно, сколько осталось.
+        using var countCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var counting = Task.Run(() =>
+        {
+            foreach (var _ in ScanFileEnumerator.Enumerate(roots, enumeration, excluded, countCts.Token))
+            {
+                Interlocked.Increment(ref run.CountedFiles);
+            }
+
+            Volatile.Write(ref run.CountingDoneFlag, 1);
+        }, countCts.Token);
         try
         {
             await pool.RunAsync(Discover(ScanFileEnumerator.Enumerate(roots, enumeration, excluded, token), run), async r =>
@@ -471,6 +484,15 @@ public sealed partial class SentinelRuntime
         }
         finally
         {
+            await countCts.CancelAsync().ConfigureAwait(false);
+            try
+            {
+                await counting.ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or UnauthorizedAccessException)
+            {
+            }
+
             lock (_sync)
             {
                 _activePool = null;
@@ -578,7 +600,9 @@ public sealed partial class SentinelRuntime
             var active = run.Active.Elapsed.TotalSeconds;
             var next = change(_scan);
             var enumerationDone = Volatile.Read(ref run.EnumerationDoneFlag) == 1;
-            var total = Math.Max(run.Total + Interlocked.Read(ref run.DiscoveredCounter), run.Scanned);
+            var counted = Volatile.Read(ref run.CountingDoneFlag) == 1;
+            var filesKnown = Math.Max(Interlocked.Read(ref run.DiscoveredCounter), Interlocked.Read(ref run.CountedFiles));
+            var total = Math.Max(run.Total + filesKnown, run.Scanned);
             var pool = _activePool;
             _scan = next with
             {
@@ -589,7 +613,11 @@ public sealed partial class SentinelRuntime
                 Threats = run.Threats,
                 ElapsedSeconds = run.Wall.Elapsed.TotalSeconds,
                 ItemsPerSecond = active > 0.2 ? run.Scanned / active : 0,
-                Percent = next.State == ScanState.Completed ? 100 : PhasePercent(run, total, enumerationDone),
+                Percent = next.State == ScanState.Completed ? 100 : PhasePercent(run, total, enumerationDone || counted),
+                TotalCounted = counted || enumerationDone,
+                RemainingSeconds = (counted || enumerationDone) && run.FilesPhase && active > 1 && run.Scanned > 0
+                    ? Math.Max(0, (total - run.Scanned) / (run.Scanned / active))
+                    : -1,
                 Workers = pool?.WorkerCount ?? 0,
                 ActiveWorkers = pool?.ActiveWorkers ?? 0,
                 PoolMode = pool is null ? next.PoolMode : pool.Mode == Scanning.Pool.ScanPoolMode.MultiProcess ? "процессы" : "потоки",
@@ -634,6 +662,12 @@ public sealed partial class SentinelRuntime
 
         /// <summary>1 — обход каталогов завершён.</summary>
         public int EnumerationDoneFlag;
+
+        /// <summary>Файлов насчитано параллельным подсчётом (без чтения содержимого).</summary>
+        public long CountedFiles;
+
+        /// <summary>1 — подсчёт файлов завершён: итог окончательный.</summary>
+        public int CountingDoneFlag;
 
         public IReadOnlyList<ProcessSnapshot> Processes { get; set; } = [];
 
