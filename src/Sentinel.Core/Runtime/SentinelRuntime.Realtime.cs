@@ -202,9 +202,12 @@ public sealed partial class SentinelRuntime
             ShadowMode = BehaviorConfig().BehavioralShadowMode,
         });
 
+        var familyDecision = ThreatFamilies.FamilyFindingPolicy.DecisionReason(entry.Findings);
         return guard.Decision switch
         {
             Behavioral.GuardDecision.Protected => null,
+            Behavioral.GuardDecision.Act when familyDecision is not null =>
+                await _dispatcher.DispatchProcessForDecisionAsync(entry, familyDecision, source, cancellationToken).ConfigureAwait(false),
             Behavioral.GuardDecision.LogOnly when signed => null, // слабые признаки у доверенного образа — не событие
             Behavioral.GuardDecision.AskUser =>
                 await _dispatcher.DispatchProcessForDecisionAsync(entry, guard.Reason, source, cancellationToken).ConfigureAwait(false),

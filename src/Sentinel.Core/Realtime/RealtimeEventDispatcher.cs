@@ -225,7 +225,8 @@ public sealed class RealtimeEventDispatcher
             () => entry.ResolvedTarget is { Length: > 0 } target
                 ? AllowPath(target)
                 : (false, "Цель автозапуска не определена — добавить её в исключения нельзя."),
-            cancellationToken);
+            cancellationToken,
+            ThreatFamilies.FamilyFindingPolicy.DecisionReason(entry.Findings));
     }
 
     public Task<ThreatEvent?> DispatchExclusionAsync(

