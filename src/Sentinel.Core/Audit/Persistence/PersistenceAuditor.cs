@@ -401,11 +401,15 @@ public sealed class PersistenceAuditor
             var findings = new List<AuditFinding>();
             var scan = AnalyzeResolvedTarget(resolved, findings, key.ToString());
 
-            if (resolved is not null && !PathClassifier.IsInTrustedDirectory(resolved, _options.TrustedBinaryDirectories)
+            // Отключённая служба (Start=4), чей файл уже удалён, запуститься не может — это след временного инструмента
+            // (драйвер KVRT klupd_*_arkmon в его каталоге Temp и т.п.), а не закрепление. Отключённая с файлом на месте — Low.
+            var disabled = string.Equals(startValue, "4", StringComparison.Ordinal);
+            var staleDisabled = disabled && resolved is not null && !_options.FileExists(resolved);
+            if (resolved is not null && !staleDisabled && !PathClassifier.IsInTrustedDirectory(resolved, _options.TrustedBinaryDirectories)
                 && PathClassifier.IsUserWritableLocation(resolved) && !IsTrustedTarget(resolved, ref scan))
             {
                 findings.Add(AuditFinding.Create("PERS-SERVICE-USERWRITABLE",
-                    autoStart ? Severity.High : Severity.Medium,
+                    disabled ? Severity.Low : autoStart ? Severity.High : Severity.Medium,
                     "Служба из пользовательского каталога",
                     $"Бинарник службы '{name}' расположен в каталоге с правом записи пользователя: {resolved}.",
                     Evidence.Of("service", name), Evidence.Of("image", imagePath),

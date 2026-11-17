@@ -318,7 +318,7 @@ public sealed class FileAnalyzer
             Probe("SeDebugPrivilege");
         }
 
-        if (imports.Contains("VirtualProtect"))
+        if (imports.Contains("VirtualProtect") || imports.Contains("VirtualProtectEx"))
         {
             Probe("AmsiScanBuffer");
             Probe("EtwEventWrite");

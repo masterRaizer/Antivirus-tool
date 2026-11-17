@@ -75,3 +75,30 @@ public class StartupCleanEntriesTests
         Assert.Empty(flaggedOnly.Entries);
     }
 }
+
+/// <summary>1.3.8: отключённая служба с удалённым файлом (драйвер KVRT в Temp с отчёта Katana) — не находка.</summary>
+public class StaleDisabledServiceTests
+{
+    [Fact]
+    public void DisabledServiceWithMissingFile_IsNotFlagged_DisabledWithFile_IsLow()
+    {
+        var reg = new Audit.Persistence.Registry.InMemoryRegistryProvider();
+        void Service(string name, string image, string start)
+        {
+            var key = new Audit.Persistence.Registry.RegistryKeyPath(Audit.Persistence.Registry.RegistryHive.LocalMachine, $@"SYSTEM\CurrentControlSet\Services\{name}");
+            reg.Set(key, "ImagePath", image).Set(key, "Start", start, Audit.Persistence.Registry.RegistryValueKind.Dword);
+        }
+
+        Service("klupd_klmda_arkmon_9BFCB611", @"\??\F:\Windows Transfer\data\logs\kaspersky\Temp\9BFC\klupd_klmda_arkmon.sys", "4");
+        Service("OldTool", @"C:\Users\u\AppData\Local\Temp\tool\drv.sys", "4");
+        Service("Evil", @"C:\Users\u\AppData\Local\Temp\evil\svc.exe", "2");
+        var options = new Audit.Persistence.PersistenceAuditorOptions { FileExists = p => p.Contains("tool", StringComparison.Ordinal) || p.Contains("evil", StringComparison.Ordinal) };
+
+        var report = new Audit.Persistence.PersistenceAuditor(options, reg).Audit();
+        Severity? Of(string name) => report.Entries.FirstOrDefault(e => e.Name == name)?.Findings.FirstOrDefault(f => f.Id == "PERS-SERVICE-USERWRITABLE")?.Severity;
+
+        Assert.Null(Of("klupd_klmda_arkmon_9BFCB611"));
+        Assert.Equal(Severity.Low, Of("OldTool"));
+        Assert.Equal(Severity.High, Of("Evil"));
+    }
+}
