@@ -101,6 +101,27 @@ public sealed class FileAnalyzer
         _options = options ?? new FileAnalyzerOptions();
     }
 
+    /// <summary>Поиск по базе угроз: SHA-256, затем SHA-1 и MD5 (если такие базы установлены).</summary>
+    private (string Kind, string? Family)? LookupThreatDb(string sha256, string? sha1, string? md5)
+    {
+        if (_intel!.TryGetFamily(sha256, out var family))
+        {
+            return ("SHA-256", family);
+        }
+
+        if (sha1 is not null && _intel.TryGetFamily(ThreatHashKind.Sha1, sha1, out family))
+        {
+            return ("SHA-1", family);
+        }
+
+        if (md5 is not null && _intel.TryGetFamily(ThreatHashKind.Md5, md5, out family))
+        {
+            return ("MD5", family);
+        }
+
+        return null;
+    }
+
     private const int MaxCachedResults = 20_000;
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<CacheKey, (FileScanResult Result, long StoredAt)> _resultCache = new();
@@ -176,6 +197,8 @@ public sealed class FileAnalyzer
         // и копия ограниченного окна для сигнатурного поиска. Весь файл в память не загружается.
         byte[] content;
         string sha256;
+        string? md5 = null;
+        string? sha1 = null;
         long size;
         bool truncated;
         double entropy;
@@ -187,6 +210,9 @@ public sealed class FileAnalyzer
             content = new byte[(int)Math.Min(size, maxScan)];
             var counts = new long[256];
             using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            // MD5 и SHA-1 считаются в том же проходе, только если установлены базы с такими хешами (VirusShare, ESET и др.).
+            using var md5Hash = _intel?.HasLegacyHashes == true ? IncrementalHash.CreateHash(HashAlgorithmName.MD5) : null;
+            using var sha1Hash = _intel?.HasLegacyHashes == true ? IncrementalHash.CreateHash(HashAlgorithmName.SHA1) : null;
             var buffer = ArrayPool<byte>.Shared.Rent(StreamBufferSize);
             try
             {
@@ -195,6 +221,8 @@ public sealed class FileAnalyzer
                 while ((read = stream.Read(buffer, 0, StreamBufferSize)) > 0)
                 {
                     sha.AppendData(buffer, 0, read);
+                    md5Hash?.AppendData(buffer, 0, read);
+                    sha1Hash?.AppendData(buffer, 0, read);
                     for (var i = 0; i < read; i++)
                     {
                         counts[buffer[i]]++;
@@ -214,6 +242,8 @@ public sealed class FileAnalyzer
             }
 
             sha256 = Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
+            md5 = md5Hash is null ? null : Convert.ToHexString(md5Hash.GetHashAndReset()).ToLowerInvariant();
+            sha1 = sha1Hash is null ? null : Convert.ToHexString(sha1Hash.GetHashAndReset()).ToLowerInvariant();
             entropy = EntropyCalculator.FromHistogram(counts, size);
             pe = PeParser.Parse(stream);
         }
@@ -253,12 +283,12 @@ public sealed class FileAnalyzer
             }
         }
 
-        if (_intel is not null && _intel.TryGetFamily(sha256, out var family)
-            && !(definitive == "EICAR" && family is not null && family.StartsWith("EICAR", StringComparison.Ordinal)))
+        if (_intel is not null && LookupThreatDb(sha256, sha1, md5) is { } hit
+            && !(definitive == "EICAR" && hit.Family is not null && hit.Family.StartsWith("EICAR", StringComparison.Ordinal)))
         {
-            detections.Add(new Detection($"ThreatDB.{family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
-                $"SHA-256 найден в базе известных угроз ({family ?? "семейство не указано"}).", []));
-            definitive = $"ThreatDB.{family}";
+            detections.Add(new Detection($"ThreatDB.{hit.Family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
+                $"{hit.Kind} найден в базе известных угроз ({hit.Family ?? "семейство не указано"}).", []));
+            definitive = $"ThreatDB.{hit.Family}";
         }
 
         ThreatScore? score = null;

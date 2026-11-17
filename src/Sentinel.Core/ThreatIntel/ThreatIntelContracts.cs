@@ -5,6 +5,21 @@ public interface IThreatHashLookup
 {
     /// <summary>Есть ли хеш (64 hex-символа) в базе; <paramref name="family"/> — семейство угрозы.</summary>
     bool TryGetFamily(string sha256Hex, out string? family);
+
+    /// <summary>Есть ли базы MD5/SHA-1 (тогда анализатор считает и эти хеши в том же проходе по файлу).</summary>
+    bool HasLegacyHashes => false;
+
+    /// <summary>Поиск хеша указанного вида; по умолчанию поддерживается только SHA-256.</summary>
+    bool TryGetFamily(ThreatHashKind kind, string hex, out string? family)
+    {
+        if (kind == ThreatHashKind.Sha256)
+        {
+            return TryGetFamily(hex, out family);
+        }
+
+        family = null;
+        return false;
+    }
 }
 
 /// <summary>Вердикт облачной репутации по хешу файла.</summary>

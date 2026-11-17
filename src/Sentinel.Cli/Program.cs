@@ -341,39 +341,71 @@ internal static partial class Program
             {
                 if (opts.Output is null)
                 {
-                    Console.Error.WriteLine("Укажите файл: sentinel threatdb build --out data/threat_hashes.bin --signature-base <каталог> --eset <каталог>");
+                    Console.Error.WriteLine("Укажите файл: sentinel threatdb build --out data/threat_hashes.bin [--signature-base <каталог>] [--eset <каталог>] "
+                        + "[--malwarebazaar <zip|csv|txt>]… [--virusshare <каталог>]");
                     return ExitError;
                 }
 
                 var entries = new List<ThreatHashEntry>(ThreatDatabaseSources.Eicar());
+                void AddFrom(string label, IEnumerable<ThreatHashEntry> source)
+                {
+                    var before = entries.Count;
+                    entries.AddRange(source);
+                    Console.WriteLine($"  {label}: {entries.Count - before:N0} записей");
+                }
+
                 if (opts.SignatureBaseDir is not null)
                 {
-                    entries.AddRange(ThreatDatabaseSources.FromSignatureBase(opts.SignatureBaseDir));
+                    AddFrom("signature-base", ThreatDatabaseSources.FromSignatureBase(opts.SignatureBaseDir));
                 }
 
                 if (opts.EsetDir is not null)
                 {
-                    entries.AddRange(ThreatDatabaseSources.FromEset(opts.EsetDir));
+                    AddFrom("eset/malware-ioc", ThreatDatabaseSources.FromEset(opts.EsetDir));
                 }
 
+                foreach (var export in opts.MalwareBazaarExports)
+                {
+                    AddFrom("MalwareBazaar " + Path.GetFileName(export), ThreatDatabaseSources.FromMalwareBazaarExport(export));
+                }
+
+                if (opts.VirusShareDir is not null)
+                {
+                    AddFrom("VirusShare", ThreatDatabaseSources.FromVirusShare(opts.VirusShareDir));
+                }
+
+                // Три файла рядом: SHA-256 (основной), SHA-1 и MD5 (для баз, где есть только они).
                 var timestamp = opts.Timestamp ?? DateTimeOffset.UtcNow;
-                var count = ThreatHashDatabaseBuilder.BuildToFile(entries, timestamp, opts.Output);
-                using var db = ThreatHashDatabase.Open(opts.Output);
-                Console.WriteLine($"База собрана: {opts.Output} — {count} SHA-256, семейств: {db.FamilyCount}, метка {timestamp:u}.");
+                var directory = Path.GetDirectoryName(Path.GetFullPath(opts.Output)) ?? ".";
+                foreach (var kind in new[] { ThreatHashKind.Sha256, ThreatHashKind.Sha1, ThreatHashKind.Md5 })
+                {
+                    var path = kind == ThreatHashKind.Sha256 ? opts.Output : Path.Combine(directory, ThreatHashKinds.FileName(kind));
+                    var count = ThreatHashDatabaseBuilder.BuildToFile(entries, timestamp, path, kind);
+                    if (count == 0 && kind != ThreatHashKind.Sha256)
+                    {
+                        File.Delete(path); // пустая база MD5/SHA-1 не нужна: анализатор не станет считать эти хеши
+                        continue;
+                    }
+
+                    using var db = ThreatHashDatabase.Open(path);
+                    Console.WriteLine($"База {ThreatHashKinds.Label(kind)}: {path} — {count:N0} хешей, семейств: {db.FamilyCount}, метка {timestamp:u}.");
+                }
+
                 return ExitOk;
             }
 
             case "info":
             {
                 using var engine = new ThreatIntelligenceEngine(DataDirectory(opts), ThreatIntelligenceEngine.DefaultBundledPath());
-                Console.WriteLine($"Активная база: {engine.ActivePath ?? "нет"}; записей: {engine.Count}; метка: {engine.TimestampUtc:u}");
+                Console.WriteLine($"Активная база: {engine.ActivePath ?? "нет"}; метка: {engine.TimestampUtc:u}");
+                Console.WriteLine($"  SHA-256: {engine.CountOf(ThreatHashKind.Sha256):N0}; SHA-1: {engine.CountOf(ThreatHashKind.Sha1):N0}; MD5: {engine.CountOf(ThreatHashKind.Md5):N0}; всего {engine.TotalCount:N0}");
                 return engine.Count > 0 ? ExitOk : ExitError;
             }
 
             case "lookup" when opts.Argument is not null:
             {
                 using var engine = new ThreatIntelligenceEngine(DataDirectory(opts), ThreatIntelligenceEngine.DefaultBundledPath());
-                if (engine.TryGetFamily(opts.Argument, out var family))
+                if (ThreatHashKinds.Of(opts.Argument) is { } lookupKind && engine.TryGetFamily(lookupKind, opts.Argument, out var family))
                 {
                     Console.WriteLine($"Найден: {family}");
                     return ExitDetected;
@@ -398,7 +430,7 @@ internal static partial class Program
             }
 
             default:
-                Console.Error.WriteLine("Использование: sentinel threatdb build|info|update|lookup <sha256>");
+                Console.Error.WriteLine("Использование: sentinel threatdb build|info|update|lookup <sha256|sha1|md5>");
                 return ExitError;
         }
     }
@@ -1340,6 +1372,14 @@ internal sealed class CliOptions
     public string? Output { get; private set; }
     public string? SignatureBaseDir { get; private set; }
     public string? EsetDir { get; private set; }
+
+    private readonly List<string> _malwareBazaar = [];
+
+    /// <summary>Файлы полной выгрузки MalwareBazaar (<c>threatdb build --malwarebazaar</c>, можно несколько).</summary>
+    public IReadOnlyList<string> MalwareBazaarExports => _malwareBazaar;
+
+    /// <summary>Каталог со списками VirusShare (<c>threatdb build --virusshare</c>).</summary>
+    public string? VirusShareDir { get; private set; }
     public DateTimeOffset? Timestamp { get; private set; }
 
     /// <summary>Второй позиционный аргумент (идентификатор для <c>quarantine restore</c> / <c>rollback undo</c>).</summary>
@@ -1400,6 +1440,12 @@ internal sealed class CliOptions
                     break;
                 case "--signature-base" when i + 1 < args.Length:
                     o.SignatureBaseDir = args[++i];
+                    break;
+                case "--malwarebazaar" when i + 1 < args.Length:
+                    o._malwareBazaar.Add(args[++i]);
+                    break;
+                case "--virusshare" when i + 1 < args.Length:
+                    o.VirusShareDir = args[++i];
                     break;
                 case "--eset" when i + 1 < args.Length:
                     o.EsetDir = args[++i];

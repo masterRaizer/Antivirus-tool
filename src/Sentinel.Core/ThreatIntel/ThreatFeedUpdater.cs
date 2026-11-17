@@ -141,14 +141,12 @@ public sealed class ThreatFeedUpdater : IDisposable
             var added = 0;
             if (hashes.Count > 0)
             {
-                // Накопительное слияние: прежние записи сохраняются, новые добавляются.
-                var merged = _engine.Snapshot().Concat(hashes).ToArray();
-                var temp = Path.Combine(_dataDirectory, ThreatIntelligenceEngine.FileName + ".new");
-                Directory.CreateDirectory(_dataDirectory);
-                var before = _engine.Count;
-                var count = ThreatHashDatabaseBuilder.BuildToFile(merged, now, temp);
-                _engine.ReplaceWith(temp);
-                added = count - before;
+                // Накопительное потоковое слияние по видам хешей: прежние записи сохраняются, новые добавляются,
+                // вся база в память не загружается (на миллионах записей это сотни мегабайт).
+                foreach (var group in hashes.GroupBy(h => ThreatHashKinds.Of(h.Sha256)).Where(g => g.Key is not null))
+                {
+                    added += _engine.Merge(group, now, group.Key!.Value);
+                }
             }
 
             var networkCount = SaveNetworkIndicators(ips, urls);
@@ -160,7 +158,7 @@ public sealed class ThreatFeedUpdater : IDisposable
                 LastAttemptUtc = now,
                 LastSuccessUtc = success ? now : previous.LastSuccessUtc,
                 DatabaseTimestampUtc = _engine.TimestampUtc,
-                HashCount = _engine.Count,
+                HashCount = (int)Math.Min(_engine.TotalCount, int.MaxValue),
                 NetworkIndicatorCount = networkCount,
                 LastStatus = success
                     ? $"Обновлено: источников {okSources} из {statuses.Length}, новых хешей {Math.Max(0, added)}"
@@ -269,17 +267,17 @@ public abstract class ThreatFeedSource
         new GitHubIocSource("Neo23x0/signature-base (IOC)", "Neo23x0", "signature-base", "master",
             path => path.StartsWith("iocs/", StringComparison.Ordinal) && path.EndsWith(".txt", StringComparison.Ordinal),
             (path, text) => path.EndsWith("hash-iocs.txt", StringComparison.Ordinal)
-                ? ThreatFeedParsers.ParseSignatureBaseHashIocs(text)
-                : ThreatFeedParsers.ParseHashList(text, "SigBase." + Path.GetFileNameWithoutExtension(path))),
+                ? ThreatFeedParsers.ParseSignatureBaseHashIocsAllKinds(text)
+                : ThreatFeedParsers.ParseHashListAllKinds(text, "SigBase." + Path.GetFileNameWithoutExtension(path))),
         new GitHubIocSource("Neo23x0/signature-base (YARA, мета-хеши)", "Neo23x0", "signature-base", "master",
             path => path.StartsWith("yara/", StringComparison.Ordinal) && path.EndsWith(".yar", StringComparison.Ordinal),
             (path, text) => ThreatFeedParsers.ParseYaraMetaHashes(text, "SigBase." + Path.GetFileNameWithoutExtension(path))),
         new GitHubIocSource("eset/malware-ioc", "eset", "malware-ioc", "master",
             path => path.Contains('/', StringComparison.Ordinal) && !path.EndsWith(".yar", StringComparison.Ordinal) && !path.EndsWith(".png", StringComparison.Ordinal)
-                && !path.EndsWith(".md5", StringComparison.Ordinal) && !path.EndsWith(".sha1", StringComparison.Ordinal)
-                && (path.EndsWith(".sha256", StringComparison.Ordinal) || path.EndsWith(".txt", StringComparison.Ordinal) || path.EndsWith(".csv", StringComparison.Ordinal)
+                && (path.EndsWith(".sha256", StringComparison.Ordinal) || path.EndsWith(".sha1", StringComparison.Ordinal) || path.EndsWith(".md5", StringComparison.Ordinal)
+                    || path.EndsWith(".txt", StringComparison.Ordinal) || path.EndsWith(".csv", StringComparison.Ordinal)
                     || path.EndsWith(".ioc", StringComparison.Ordinal) || path.EndsWith(".adoc", StringComparison.Ordinal) || path.EndsWith(".json", StringComparison.Ordinal)),
-            (path, text) => ThreatFeedParsers.ParseHashList(text, "ESET." + path[..path.IndexOf('/', StringComparison.Ordinal)])),
+            (path, text) => ThreatFeedParsers.ParseHashListAllKinds(text, "ESET." + path[..path.IndexOf('/', StringComparison.Ordinal)])),
         new TextListSource("abuse.ch MalwareBazaar (публичный список)", "https://bazaar.abuse.ch/export/txt/sha256/recent/",
             text => (ThreatFeedParsers.ParseHashList(text, "MalwareBazaar").ToArray(), [], [])),
         new TextListSource("abuse.ch URLhaus (публичный список)", "https://urlhaus.abuse.ch/downloads/text/",
