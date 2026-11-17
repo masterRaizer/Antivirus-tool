@@ -8,6 +8,30 @@ using Sentinel.Core.Signatures;
 namespace Sentinel.Core.Tests;
 
 /// <summary>Бэкенд-двойник: фиксирует вызовы и позволяет поднимать события вручную.</summary>
+/// <summary>Потокобезопасный список строк для журнала вызовов подставного бэкенда.</summary>
+internal sealed class SyncList : IEnumerable<string>
+{
+    private readonly List<string> _items = [];
+
+    public void Add(string item)
+    {
+        lock (_items)
+        {
+            _items.Add(item);
+        }
+    }
+
+    public IEnumerator<string> GetEnumerator()
+    {
+        lock (_items)
+        {
+            return _items.ToList().GetEnumerator();
+        }
+    }
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 internal sealed class FakeBackend : ISentinelBackend
 {
     public SettingsUpdate? SavedSettings { get; private set; }
@@ -41,7 +65,10 @@ internal sealed class FakeBackend : ISentinelBackend
     public Task<Sentinel.Core.ThreatIntel.DatabaseStatus> UpdateDatabasesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(new Sentinel.Core.ThreatIntel.DatabaseStatus { LastStatus = "Обновление баз выполняется…" });
 
-    public List<string> Calls { get; } = [];
+    /// <summary>Журнал вызовов; сервер выполняет запросы параллельно, поэтому список потокобезопасный.</summary>
+    public SyncList Calls { get; } = new();
+
+    public TimeSpan StartupDelay { get; set; }
 
     public List<ThreatEvent> Threats { get; } = [];
 
@@ -140,10 +167,15 @@ internal sealed class FakeBackend : ISentinelBackend
 
     public Task<OperationResult> UndoRollbackAsync(string id, CancellationToken cancellationToken = default) => Op($"undo:{id}");
 
-    public Task<StartupSnapshot> GetStartupAsync(bool refresh = false, CancellationToken cancellationToken = default)
+    public async Task<StartupSnapshot> GetStartupAsync(bool refresh = false, CancellationToken cancellationToken = default)
     {
         Calls.Add($"startup:{refresh}");
-        return Task.FromResult(new StartupSnapshot(
+        if (StartupDelay > TimeSpan.Zero)
+        {
+            await Task.Delay(StartupDelay, cancellationToken);
+        }
+
+        return await Task.FromResult(new StartupSnapshot(
             [new StartupItem { Key = "k", Category = "Автозапуск", Name = "evil", Flagged = true, NotSigned = true, Severity = Severity.High }],
             DateTime.UnixEpoch));
     }
@@ -291,6 +323,21 @@ public sealed class IpcPipeTests : IAsyncLifetime
             Assert.True(DateTime.UtcNow < deadline, "Условие не выполнено за 10 секунд.");
             await Task.Delay(10);
         }
+    }
+
+    [Fact]
+    public async Task SlowRequest_DoesNotBlockOtherRequestsOfTheSameClient()
+    {
+        // 1.3.8: сводка автозагрузки (1–3 мин) раньше держала все остальные разделы окна пустыми.
+        _backend.StartupDelay = TimeSpan.FromSeconds(5);
+        await using var client = await ConnectAsync();
+        var slow = client.GetStartupAsync(refresh: true);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var status = await client.GetStatusAsync();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"Статус ждал медленный запрос {watch.Elapsed.TotalSeconds:F1} с.");
+        Assert.Equal("4.0", status.Version);
+        Assert.False(slow.IsCompleted);
+        Assert.Single((await slow).Items);
     }
 
     [Fact]

@@ -13,7 +13,8 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ProductVersion Condition="'$(ProductVersion)' == ''">1.3.7</ProductVersion>
     <DistDir Condition="'$(DistDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\dist\'))</DistDir>
-    <DefineConstants>ProductVersion=$(ProductVersion);DistDir=$(DistDir)</DefineConstants>
+    <IconFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\src\Sentinel.App\Assets\sentinel.ico'))</IconFile>
+    <DefineConstants>ProductVersion=$(ProductVersion);DistDir=$(DistDir);IconFile=$(IconFile)</DefineConstants>
   </PropertyGroup>
 
 </Project>

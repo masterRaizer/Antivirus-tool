@@ -40,6 +40,9 @@ public sealed class IpcServerOptions
 /// </summary>
 public sealed class SentinelIpcServer : IAsyncDisposable
 {
+    /// <summary>Сколько запросов одного клиента выполняется одновременно.</summary>
+    public const int MaxConcurrentRequestsPerClient = 8;
+
     private readonly ISentinelBackend _backend;
     private readonly IpcServerOptions _options;
     private readonly ConcurrentDictionary<int, Connection> _connections = new();
@@ -189,6 +192,10 @@ public sealed class SentinelIpcServer : IAsyncDisposable
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
         var writer = connection.PumpAsync(cts.Token);
+        // Запросы одного клиента выполняются параллельно (ответ находит запрос по Id): медленный запрос — сводка автозагрузки
+        // (1–3 мин), обновление баз, проверка флешки — больше не держит остальные разделы окна пустыми.
+        using var slots = new SemaphoreSlim(MaxConcurrentRequestsPerClient);
+        var inflight = new List<Task>();
         try
         {
             while (!cts.IsCancellationRequested)
@@ -204,13 +211,29 @@ public sealed class SentinelIpcServer : IAsyncDisposable
                     throw new IpcProtocolException("Клиент может отправлять только запросы.");
                 }
 
-                // Запросы одного клиента выполняются по очереди: порядок ответов совпадает с порядком запросов.
-                var response = await HandleAsync(message, client, cts.Token).ConfigureAwait(false);
-                if (!connection.Enqueue(response))
+                await slots.WaitAsync(cts.Token).ConfigureAwait(false);
+                inflight.RemoveAll(t => t.IsCompleted);
+                inflight.Add(Task.Run(async () =>
                 {
-                    break;
-                }
+                    try
+                    {
+                        var response = await HandleAsync(message, client, cts.Token).ConfigureAwait(false);
+                        if (!connection.Enqueue(response))
+                        {
+                            connection.Abort();
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                    finally
+                    {
+                        slots.Release();
+                    }
+                }, CancellationToken.None));
             }
+
+            await Task.WhenAll(inflight).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

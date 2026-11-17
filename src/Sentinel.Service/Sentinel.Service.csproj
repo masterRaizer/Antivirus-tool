@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <ApplicationIcon>..\Sentinel.App\Assets\sentinel.ico</ApplicationIcon>
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Sentinel.Service</AssemblyName>
     <RootNamespace>Sentinel.Service</RootNamespace>

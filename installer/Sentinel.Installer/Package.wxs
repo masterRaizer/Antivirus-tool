@@ -12,6 +12,10 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Sentinel is already installed. Uninstall it first." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <!-- Иконка в «Программы и компоненты» и у ярлыков. -->
+    <Icon Id="SentinelIcon" SourceFile="$(IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="SentinelIcon" />
+
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Sentinel">
         <Directory Id="RulesFolder" Name="rules" />
@@ -96,7 +100,8 @@
                   Name="Sentinel"
                   Description="Sentinel - Windows protection and audit"
                   Target="[INSTALLFOLDER]Sentinel.App.exe"
-                  WorkingDirectory="INSTALLFOLDER" />
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="SentinelIcon" />
         <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
         <RegistryValue Root="HKCU" Key="Software\Sentinel\Installer" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>
@@ -106,7 +111,8 @@
                   Name="Sentinel"
                   Description="Sentinel - Windows protection and audit"
                   Target="[INSTALLFOLDER]Sentinel.App.exe"
-                  WorkingDirectory="INSTALLFOLDER" />
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="SentinelIcon" />
         <RegistryValue Root="HKCU" Key="Software\Sentinel\Installer" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
