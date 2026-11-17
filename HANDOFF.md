@@ -269,6 +269,21 @@
   (3) 30 мин обычной работы с открытиями Диспетчера (браузер, игра, индексатор) — без карточек; (4) `GetGuiResources` из сеанса 0 для
   процессов пользователя: в журнале у оконных программ USER-объектов > 0 (иначе −1 и штраф за окна не работает); (5) «Автозагрузка» — текст в строках.
 
+### 1.3.7 — упоминания угроз и копия Windows на другом диске (отчёт полной проверки 1.3.6, 17.11 15:43 UTC, 1:15:51)
+- Настоящие находки изолированы: `C:\Карантин\20261114-WinAIHService\WinAIHService.exe.bin` (SHA-256 `SNT-FAM-TECHIAS-0001`) и
+  `task-Office-Persistent-Activation.xml` — папка с образцами, собранными при прошлой чистке.
+- Ложные: строковые правила семейств `SNT-FAM-CAA-0002` / `SNT-FAM-TECHIAS-0002` сработали на упоминаниях — история Chrome
+  (`History`, `Shortcuts`, `Favicons`, `Network Action Predictor` — «Ошибка: файл занят»), кэш Discord (`Cache_Data\data_3`), журналы
+  Claude Code (`.claude\projects\…jsonl`, `.claude\file-history\…@v2/@v3` — **изолированы, восстановить**).
+  Исправление: `ScanTarget.IsUserDataStore` (кэш и базы профиля Chromium, Firefox, Electron-кэши, Telegram, `.claude`) — строковые правила
+  не применяются к не-PE файлам хранилищ; хеш-правила и PE проверяются везде. `SNT-FAM-CAA-0002` ограничено executable/script/config;
+  имена вида `Path.GetRandomFileName()` (`cneicjnb.gkn`) считаются конфигурацией — `cneicjnb.gkn` и `kyerdwei.xtk` в профиле Chrome
+  по-прежнему находка (происхождение не выяснено: не SQLite — размер 349 109 не кратен странице; оба одинаковые).
+- 94 × `Heuristic.ThreatScore` Low на `H:\Windows` (копия Windows 10 19041): `OfflineWindowsImage` — `X:\Windows\…` с ядром, но не
+  `%SystemRoot%`; эвристика без сигнатуры и хеша для таких файлов не становится находкой (`FileAnalyzerOptions.IsOfflineSystemImage`).
+- `PERS-SERVICE-USERWRITABLE` `klupd_klmda_arkmon_9BFCB611` → `F:\Windows Transfer\…\kaspersky-…\Temp\…\klupd_klmda_arkmon.sys` —
+  след запуска Kaspersky-утилиты с диска F: (служба драйвера анти-руткита осталась в реестре). Оставлено как есть (Medium, решает пользователь).
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`
   показывает RESTART 5000/30000/60000 и сброс 86400; в `service-*.log` — «Восстановление службы: Политика восстановления выставлена…»;

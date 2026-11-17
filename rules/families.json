@@ -23,6 +23,7 @@
       "category": "miner",
       "description": "Майнер pearlhash (Pearl) с пулом Kryptex или кошельком prl1…: признаки конфигурации/командной строки семейства CAAService",
       "tags": ["miner", "pearl"],
+      "appliesTo": ["executable", "script", "config"],
       "strings": [
         { "id": "$algo", "text": "pearlhash", "nocase": true, "ascii": true, "wide": true },
         { "id": "$pool1", "text": "kryptex.network", "nocase": true, "ascii": true, "wide": true },

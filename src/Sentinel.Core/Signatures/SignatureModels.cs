@@ -89,7 +89,20 @@ public sealed class SignatureRule
     /// <summary>Подходит ли правило данному файлу.</summary>
     public bool Applies(ScanTarget? target)
     {
-        if (target is null || (AppliesTo.Count == 0 && ExcludeFileNames.Count == 0))
+        if (target is null)
+        {
+            return true;
+        }
+
+        // Строковые индикаторы (адрес пула, кошелёк, URL загрузчика) в истории браузера, кэше мессенджера или журнале
+        // ассистента — это упоминание угрозы, а не сама угроза: пользователь искал её в интернете или обсуждал.
+        // Хеш-правила и PE-файлы проверяются везде.
+        if (!target.IsPe && Patterns.Count > 0 && ScanTarget.IsUserDataStore(target.Path))
+        {
+            return false;
+        }
+
+        if (AppliesTo.Count == 0 && ExcludeFileNames.Count == 0)
         {
             return true;
         }
@@ -111,6 +124,11 @@ public sealed class SignatureRule
         }
 
         var extension = System.IO.Path.GetExtension(name);
+        if (AppliesTo.Contains("config", StringComparer.OrdinalIgnoreCase) && ScanTarget.IsRandomDropName(name))
+        {
+            return true; // «cneicjnb.gkn»: случайное имя, которым сбрасывают конфигурации и полезную нагрузку
+        }
+
         return AppliesTo.Any(kind => ScanTarget.ExtensionsFor(kind).Contains(extension));
     }
 }
@@ -188,6 +206,73 @@ public sealed record ScanTarget(string Path, bool IsPe)
     {
         ".json", ".conf", ".cfg", ".ini", ".yaml", ".yml", ".toml", ".xml", ".txt", ".config", ".env", ".properties", "",
     };
+
+    /// <summary>Каталоги хранилищ данных браузеров, мессенджеров и ассистентов (кэш, история, сессии, журналы диалогов).</summary>
+    private static readonly string[] DataStoreDirectories =
+    [
+        @"\cache\cache_data\", @"\code cache\", @"\gpucache\", @"\dawncache\", @"\grshadercache\", @"\shadercache\",
+        @"\service worker\cachestorage\", @"\service worker\scriptcache\", @"\indexeddb\", @"\local storage\leveldb\",
+        @"\session storage\",
+        @"\mozilla\firefox\profiles\", @"\cache2\entries\", @"\telegram desktop\tdata\",
+        @"\.claude\projects\", @"\.claude\file-history\", @"\.claude\todos\", @"\.claude\shell-snapshots\",
+    ];
+
+    /// <summary>Базы профиля Chromium (Chrome, Edge, Яндекс, Opera, Brave): история, подсказки адресной строки, значки сайтов.</summary>
+    private static readonly HashSet<string> ChromiumProfileStores = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "History", "History-journal", "Favicons", "Favicons-journal", "Shortcuts", "Shortcuts-journal",
+        "Network Action Predictor", "Network Action Predictor-journal", "Top Sites", "Top Sites-journal", "Visited Links",
+        "Web Data", "Web Data-journal", "Login Data", "Login Data-journal", "Login Data For Account", "Cookies", "Cookies-journal",
+        "Media History", "Media History-journal", "Current Session", "Current Tabs", "Last Session", "Last Tabs", "DIPS",
+        "DIPS-journal", "Affiliation Database", "Preferences", "Secure Preferences", "Bookmarks", "Bookmarks.bak",
+        "Network Persistent State", "TransportSecurity", "Reporting and NEL", "Trust Tokens", "History Provider Cache",
+    };
+
+    /// <summary>
+    /// Файл — хранилище данных пользовательской программы (история и кэш браузера, кэш мессенджера, журнал диалогов
+    /// ассистента), а не исполняемый код и не конфигурация. Строковые индикаторы угроз в таких файлах — упоминания.
+    /// </summary>
+    public static bool IsUserDataStore(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return false;
+        }
+
+        var p = path.Replace('/', '\\');
+        foreach (var dir in DataStoreDirectories)
+        {
+            if (p.Contains(dir, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return p.Contains(@"\User Data\", StringComparison.OrdinalIgnoreCase)
+            && ChromiumProfileStores.Contains(System.IO.Path.GetFileName(p.Replace('\\', '/')));
+    }
+
+    /// <summary>
+    /// Имя вида <c>cneicjnb.gkn</c> — ровно 8 строчных букв или цифр, точка и ещё 3: так выглядит результат
+    /// <c>Path.GetRandomFileName()</c>, которым загрузчики и майнеры называют сброшенные конфигурации и копии.
+    /// </summary>
+    public static bool IsRandomDropName(string fileName)
+    {
+        if (fileName.Length != 12 || fileName[8] != '.')
+        {
+            return false;
+        }
+
+        for (var i = 0; i < fileName.Length; i++)
+        {
+            if (i != 8 && !(char.IsAsciiLetterLower(fileName[i]) || char.IsAsciiDigit(fileName[i])))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     internal static IReadOnlySet<string> ExtensionsFor(string kind) => kind.ToLowerInvariant() switch
     {

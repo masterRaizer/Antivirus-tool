@@ -163,3 +163,38 @@ public class FileAnalyzerTests
         Assert.Equal(before, File.GetLastWriteTimeUtc(path));
     }
 }
+
+/// <summary>Копия Windows на другом диске (отчёт полной проверки на Katana: 94 находки Low из H:\Windows).</summary>
+public class OfflineWindowsImageTests
+{
+    private static bool HasKernel(string path) => path.Equals(@"H:\Windows\System32\ntoskrnl.exe", StringComparison.OrdinalIgnoreCase);
+
+    [Theory]
+    [InlineData(@"H:\Windows\System32\splwow64.exe", true)]
+    [InlineData(@"H:\Windows\SysWOW64\kerberos.dll", true)]
+    [InlineData(@"h:\windows\WinSxS\amd64_x\file.dll", true)]
+    [InlineData(@"C:\Windows\System32\splwow64.exe", false)] // живая система
+    [InlineData(@"E:\Windows\System32\evil.exe", false)]     // папка Windows без ядра — не копия ОС
+    [InlineData(@"H:\Backup\Windows\System32\x.exe", false)] // не в корне диска
+    [InlineData(@"H:\WindowsApps\x.exe", false)]
+    public void RecognisesOnlyAnotherDrivesWindowsDirectory(string path, bool expected) =>
+        Assert.Equal(expected, OfflineWindowsImage.Contains(path, @"C:\Windows", HasKernel));
+
+    [Fact]
+    public void HeuristicOnlyScore_InOfflineImage_IsNotAFinding_ButSignaturesStillAre()
+    {
+        using var tmp = new TempDir();
+        var packedBytes = SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, WritableText = true, TextSize = 0x4000 });
+        var packed = tmp.Write("splwow64.exe", packedBytes);
+        var eicar = tmp.Write("eicar.com", Eicar.CreateTestFileBytes());
+        var analyzer = new FileAnalyzer(new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory)),
+            new UnavailableSignatureVerifier(), null, new FileAnalyzerOptions { IsOfflineSystemImage = _ => true });
+
+        var offline = analyzer.Analyze(packed);
+        Assert.Equal(Verdict.Clean, offline.Verdict);
+        Assert.Empty(offline.Detections);
+        Assert.Equal(45, offline.Score!.Value); // балл посчитан, но находкой не становится
+
+        Assert.Equal(Verdict.Malicious, analyzer.Analyze(eicar).Verdict);
+    }
+}

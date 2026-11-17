@@ -36,6 +36,12 @@ public sealed class FileAnalyzerOptions
 
     /// <summary>Порог балла, с которого неподписанный файл отправляется на облачную проверку хеша.</summary>
     public int CloudLookupScore { get; init; } = 45;
+
+    /// <summary>
+    /// Файл из неработающей копии Windows на другом диске (<see cref="OfflineWindowsImage"/>): эвристика без сигнатуры
+    /// и хеша для него не становится находкой. <c>null</c> — проверка по умолчанию.
+    /// </summary>
+    public Func<string, bool>? IsOfflineSystemImage { get; init; }
 }
 
 /// <summary>
@@ -233,7 +239,11 @@ public sealed class FileAnalyzer
                 }
             }
 
-            if (definitive is null && score.Level is { } level && level >= Severity.Low)
+            // Копия Windows на другом диске: подписи её каталогов живой системе не видны, импорты штатных компонентов
+            // (AMSI, VirtualProtect, отладка) дают балл — без сигнатуры или хеша это не находка.
+            var offlineImage = definitive is null && !signatureValid && detections.Count == 0
+                && (_options.IsOfflineSystemImage ?? OfflineWindowsImage.Contains)(path);
+            if (definitive is null && !offlineImage && score.Level is { } level && level >= Severity.Low)
             {
                 detections.Add(new Detection("Heuristic.ThreatScore", level, "score", DetectionSource.Heuristic, null,
                     $"Балл угрозы {score.Value}/100: {score.Describe()}.", []));

