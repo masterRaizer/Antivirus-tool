@@ -46,6 +46,7 @@ sentinel evasion-watch   [секунды] [--json]                              
 
 Семейства CAAService (Pearl/pearlhash) и techias (активатор Office): IOC, техники и плейбук —
 [`docs/THREAT_FAMILIES.md`](docs/THREAT_FAMILIES.md).
+Как устроены VirusTotal, Касперский и Защитник и чем от них отличается Sentinel — [`docs/AV_LANDSCAPE.md`](docs/AV_LANDSCAPE.md).
 
 Коды возврата: `0` — чисто, `1` — обнаружены угрозы/подозрения, `2` — ошибка.
 
