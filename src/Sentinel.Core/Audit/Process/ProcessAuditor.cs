@@ -28,6 +28,13 @@ public sealed class ProcessAuditorOptions
     /// </summary>
     public Auditors.Memory.MemoryIntegrityScanner? MemoryScanner { get; init; }
 
+    /// <summary>
+    /// Читать ли память процесса (при заданном <see cref="MemoryScanner"/>): <c>null</c> — всегда. Служба передаёт
+    /// <see cref="ProcessAuditor.MemoryScanWorthwhile"/>: чтение памяти каждого нового процесса (каждой вкладки браузера) было заметной
+    /// частью фоновой нагрузки.
+    /// </summary>
+    public Func<ProcessSnapshot, Scanning.FileScanResult?, IReadOnlyList<AuditFinding>, bool>? ShouldScanMemory { get; init; }
+
     /// <summary>Таблица TCP-соединений (известные узлы семейств, порты пулов, прослушивание); <c>null</c> — сеть не проверяется.</summary>
     public INetworkConnectionProvider? NetworkConnections { get; init; }
 
@@ -229,7 +236,7 @@ public sealed class ProcessAuditor
         CheckDropperChild(p, context, findings);
 
         Auditors.Memory.MemoryScanResult? memory = null;
-        if (_options.MemoryScanner is { } memoryScanner && p.Pid > 0)
+        if (_options.MemoryScanner is { } memoryScanner && p.Pid > 0 && (_options.ShouldScanMemory?.Invoke(p, scan, findings) ?? true))
         {
             memory = memoryScanner.Scan(p.Pid, p.Name, p.ExecutablePath);
             findings.AddRange(memory.ToFindings(p.Name, p.ExecutablePath));
@@ -450,6 +457,26 @@ public sealed class ProcessAuditor
 
     private static bool IsLoopback(string address) =>
         address.StartsWith("127.", StringComparison.Ordinal) || address is "::1" || address.StartsWith("::ffff:127.", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Хосты, в которые чаще всего внедряют код (process hollowing, reflective loading) — их память проверяется всегда.</summary>
+    private static readonly HashSet<string> InjectionHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "wscript.exe", "cscript.exe",
+        "svchost.exe", "dllhost.exe", "explorer.exe", "notepad.exe", "msbuild.exe", "installutil.exe", "regasm.exe", "regsvcs.exe",
+        "vbc.exe", "applaunch.exe", "werfault.exe", "conhost.exe",
+    };
+
+    /// <summary>
+    /// Выборочная проверка памяти для фонового аудита: есть находки; файл не проверен или без подписи доверенного издателя; образ
+    /// в каталоге с правом записи пользователя; типичный хост для внедрения кода. Подписанные программы из Program Files без замечаний
+    /// (вкладки браузера, мессенджеры, игры) не читаются при каждом запуске.
+    /// </summary>
+    public static bool MemoryScanWorthwhile(ProcessSnapshot process, Scanning.FileScanResult? scan, IReadOnlyList<AuditFinding> findings) =>
+        findings.Count > 0
+        || scan is null
+        || !Trust.TrustedPublishers.IsTrusted(scan.Signature)
+        || (process.ExecutablePath is { } path && PathClassifier.IsUserWritableLocation(path))
+        || InjectionHosts.Contains(process.Name);
 
     private void CheckResourceUsage(ProcessSnapshot p, List<AuditFinding> findings)
     {

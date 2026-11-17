@@ -260,7 +260,7 @@ public sealed partial class SentinelRuntime
         var results = new ProcessAuditEntry[snapshot.Count];
         var gate = new object();
         await Parallel.ForEachAsync(Enumerable.Range(0, snapshot.Count),
-            new ParallelOptions { MaxDegreeOfParallelism = Scanning.Pool.ScanPoolBase.DefaultWorkerCount(), CancellationToken = token },
+            new ParallelOptions { MaxDegreeOfParallelism = EffectiveWorkerCount, CancellationToken = token },
             (i, ct) =>
             {
                 lock (gate)
@@ -452,7 +452,7 @@ public sealed partial class SentinelRuntime
         // Кэш чистых файлов — для быстрой и полной проверки; выборочная и USB-проверка всегда глубокие.
         var cache = _o.UseVerdictCache && mode is ScanMode.Quick or ScanMode.Full ? OpenVerdictCache() : null;
         await using var pool = _o.ScanPoolFactory?.Invoke(cache) ?? Scanning.Pool.ScanPoolFactory.Create(path => _o.Analyzer.Analyze(path),
-            _o.RulesDirectory ?? SentinelRuntimeOptions.DefaultRulesDirectory(), _o.DataDirectory, cache);
+            _o.RulesDirectory ?? SentinelRuntimeOptions.DefaultRulesDirectory(), _o.DataDirectory, cache, workerCount: EffectiveWorkerCount);
         lock (_sync)
         {
             _activePool = pool;
@@ -541,6 +541,10 @@ public sealed partial class SentinelRuntime
         }
 
         note.Add($"пул: {(pool.Mode == Scanning.Pool.ScanPoolMode.MultiProcess ? "процессы" : "потоки")} × {pool.WorkerCount}");
+        if (pool.WorkerCount <= PowerSaverPolicy.BatteryWorkerCount && PowerSaving)
+        {
+            note.Add("режим ноутбука: от батареи");
+        }
         run.Report.AddArea("Файлы", (int)Math.Min(files, int.MaxValue), found, string.Join("; ", note));
     }
 

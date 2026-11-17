@@ -11,6 +11,8 @@
     <AssemblyName>Sentinel.App</AssemblyName>
     <RootNamespace>Sentinel.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Иконка файла, ярлыков и панели задач (щит с галочкой; исходник рисуется в Assets\sentinel.png). -->
+    <ApplicationIcon>Assets\sentinel.ico</ApplicationIcon>
     <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
   </PropertyGroup>
 
@@ -18,6 +20,11 @@
     <!-- Неявные using Windows Forms конфликтуют с WPF (Application, Button, …): типы трея указываются явно. -->
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\sentinel.ico" />
+    <Resource Include="Assets\sentinel.png" />
   </ItemGroup>
 
   <ItemGroup>

@@ -50,6 +50,16 @@ public sealed class ProcessWorkerLauncher(string executablePath, string rulesDir
         }
 
         var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить рабочий процесс сканирования.");
+        try
+        {
+            // Как «уступать ресурсы» у Касперского: проверка забирает свободный CPU, но не отнимает его у программ пользователя.
+            process.PriorityClass = ProcessPriorityClass.BelowNormal;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or PlatformNotSupportedException)
+        {
+            // приоритет — пожелание: без него проверка работает как раньше
+        }
+
         return new ProcessHandle(process);
     }
 
@@ -199,7 +209,10 @@ public sealed class MultiProcessScanCoordinator : ScanPoolBase
     private async Task<Connection?> TryConnectAsync(CancellationToken cancellationToken)
     {
         var pipeName = $"Sentinel.ScanWorker.{Environment.ProcessId}.{Guid.NewGuid():N}";
-        var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        // Только та же учётная запись (рабочие процессы запускаются от неё же): посторонний процесс не подключится вместо рабочего
+        // и не подсунет «чистый» вердикт; имя канала видно в \\.\pipe\, поэтому одного случайного имени недостаточно.
+        var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         IWorkerProcess? process = null;
         try
         {
@@ -297,9 +310,9 @@ public static class ScanPoolFactory
     /// <c>N = Math.Clamp(Environment.ProcessorCount, 4, 8)</c>, чтобы одиночный <c>Sentinel.App.exe</c> проверял без сбоев.
     /// </summary>
     public static IScanPool Create(Func<string, FileScanResult> analyze, string rulesDirectory, string dataDirectory, ScanVerdictCache? cache,
-        string? allowedExclusionsFile = null, string? baseDirectory = null, IWorkerLauncher? launcherOverride = null)
+        string? allowedExclusionsFile = null, string? baseDirectory = null, IWorkerLauncher? launcherOverride = null, int? workerCount = null)
     {
-        var workers = ScanPoolBase.DefaultWorkerCount();
+        var workers = Math.Max(1, workerCount ?? ScanPoolBase.DefaultWorkerCount());
         var cli = FindCli(baseDirectory);
         if (launcherOverride is not null)
         {

@@ -22,6 +22,15 @@ public sealed class IpcServerOptions
 
     /// <summary>Сколько исходящих сообщений может накопиться у клиента, прежде чем он будет отключён.</summary>
     public int OutboundQueueLimit { get; init; } = 2048;
+
+    /// <summary>
+    /// Определение клиента для самозащиты (<see cref="IpcClientPolicy"/>). <c>null</c> — клиент без ограничений (тесты, Linux);
+    /// служба в Windows передаёт <see cref="WindowsIpcClientIdentifier.Identify"/>.
+    /// </summary>
+    public Func<NamedPipeServerStream, IpcClientIdentity>? IdentifyClient { get; init; }
+
+    /// <summary>Отказ клиенту в ослабляющей команде (для журнала службы).</summary>
+    public Action<string>? OnDenied { get; init; }
 }
 
 /// <summary>
@@ -31,6 +40,9 @@ public sealed class IpcServerOptions
 /// </summary>
 public sealed class SentinelIpcServer : IAsyncDisposable
 {
+    /// <summary>Сколько запросов одного клиента выполняется одновременно.</summary>
+    public const int MaxConcurrentRequestsPerClient = 8;
+
     private readonly ISentinelBackend _backend;
     private readonly IpcServerOptions _options;
     private readonly ConcurrentDictionary<int, Connection> _connections = new();
@@ -168,8 +180,22 @@ public sealed class SentinelIpcServer : IAsyncDisposable
         var id = Interlocked.Increment(ref _nextConnectionId);
         var connection = new Connection(pipe, _options.OutboundQueueLimit);
         _connections[id] = connection;
+        IpcClientIdentity client;
+        try
+        {
+            client = _options.IdentifyClient?.Invoke(pipe) ?? IpcClientIdentity.Unrestricted;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+        {
+            client = new IpcClientIdentity(0, null, false, false); // не удалось определить — только безопасные команды
+        }
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
         var writer = connection.PumpAsync(cts.Token);
+        // Запросы одного клиента выполняются параллельно (ответ находит запрос по Id): медленный запрос — сводка автозагрузки
+        // (1–3 мин), обновление баз, проверка флешки — больше не держит остальные разделы окна пустыми.
+        using var slots = new SemaphoreSlim(MaxConcurrentRequestsPerClient);
+        var inflight = new List<Task>();
         try
         {
             while (!cts.IsCancellationRequested)
@@ -185,13 +211,29 @@ public sealed class SentinelIpcServer : IAsyncDisposable
                     throw new IpcProtocolException("Клиент может отправлять только запросы.");
                 }
 
-                // Запросы одного клиента выполняются по очереди: порядок ответов совпадает с порядком запросов.
-                var response = await HandleAsync(message, cts.Token).ConfigureAwait(false);
-                if (!connection.Enqueue(response))
+                await slots.WaitAsync(cts.Token).ConfigureAwait(false);
+                inflight.RemoveAll(t => t.IsCompleted);
+                inflight.Add(Task.Run(async () =>
                 {
-                    break;
-                }
+                    try
+                    {
+                        var response = await HandleAsync(message, client, cts.Token).ConfigureAwait(false);
+                        if (!connection.Enqueue(response))
+                        {
+                            connection.Abort();
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                    finally
+                    {
+                        slots.Release();
+                    }
+                }, CancellationToken.None));
             }
+
+            await Task.WhenAll(inflight).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -217,8 +259,14 @@ public sealed class SentinelIpcServer : IAsyncDisposable
         }
     }
 
-    private async Task<IpcMessage> HandleAsync(IpcMessage request, CancellationToken token)
+    private async Task<IpcMessage> HandleAsync(IpcMessage request, IpcClientIdentity client, CancellationToken token)
     {
+        if (IpcClientPolicy.Authorize(request, client) is { } denied)
+        {
+            _options.OnDenied?.Invoke($"Канал службы: {request.Type} отклонён — {denied}");
+            return new IpcMessage { Kind = IpcMessageKind.Response, Type = request.Type, Id = request.Id, Error = denied };
+        }
+
         try
         {
             var payload = await IpcRequestRouter.DispatchAsync(_backend, request, token).ConfigureAwait(false);

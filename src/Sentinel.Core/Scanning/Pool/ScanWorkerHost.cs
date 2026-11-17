@@ -59,7 +59,7 @@ public static class ScanWorkerHost
 
         try
         {
-            await using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             await client.ConnectAsync(15_000, linked.Token).ConfigureAwait(false);
             await WorkerProtocol.WriteAsync(client, new WorkerMessage { Type = "hello", ProcessId = Environment.ProcessId }, linked.Token).ConfigureAwait(false);
             while (!linked.IsCancellationRequested)

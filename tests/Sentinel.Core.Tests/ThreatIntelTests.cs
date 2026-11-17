@@ -270,6 +270,103 @@ public class ThreatIntelTests
         Assert.Empty(handler.Requests);
     }
 
+    [Fact]
+    public void Cloud_KnownGoodLookupDisabled_NeverCallsCircl()
+    {
+        using var tmp = new TempDir();
+        var config = SentinelConfigStore.ForDataDirectory(tmp.Path);
+        config.Save(new SentinelConfig { EnableKnownGoodLookup = false });
+        var handler = new FakeHandler(_ => throw new InvalidOperationException("сеть не должна вызываться"));
+        var service = new CloudReputationService(config, new HttpClient(handler));
+        Assert.Equal(CloudReputation.Unknown, service.Lookup(Hash(1)).Reputation);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public void Cloud_Circl_KnownFile_IsKnownGood_UnknownIs404_MaliciousFlagWins()
+    {
+        using var tmp = new TempDir();
+        var config = SentinelConfigStore.ForDataDirectory(tmp.Path);
+        config.Save(new SentinelConfig { EnableKnownGoodLookup = true });
+        var handler = new FakeHandler(r =>
+        {
+            var uri = r.RequestUri!.ToString();
+            Assert.StartsWith("https://hashlookup.circl.lu/lookup/sha256/", uri, StringComparison.Ordinal);
+            if (uri.EndsWith(Hash(1), StringComparison.Ordinal))
+            {
+                return Text("{\"FileName\":\"./Program Files/Tool/tool.exe\",\"hashlookup:trust\":70,\"source\":\"NSRL\"}");
+            }
+
+            if (uri.EndsWith(Hash(2), StringComparison.Ordinal))
+            {
+                return Text("{\"hashlookup:trust\":\"20\"}");
+            }
+
+            if (uri.EndsWith(Hash(3), StringComparison.Ordinal))
+            {
+                return Text("{\"hashlookup:trust\":50,\"KnownMalicious\":\"malware-bazaar\"}");
+            }
+
+            return Text("{\"message\":\"Non existing SHA-256\"}", HttpStatusCode.NotFound);
+        });
+        var service = new CloudReputationService(config, new HttpClient(handler), Path.Combine(tmp.Path, "cloud_cache.json"),
+            new FakeTime(DateTimeOffset.Parse("2026-11-17T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture)));
+
+        var known = service.Lookup(Hash(1));
+        Assert.True(known.KnownGood);
+        Assert.Equal(CloudReputation.Clean, known.Reputation);
+        Assert.Contains("tool.exe", known.Detail, StringComparison.Ordinal);
+
+        var lowTrust = service.Lookup(Hash(2));
+        Assert.False(lowTrust.KnownGood);
+        Assert.Equal(CloudReputation.Unknown, lowTrust.Reputation);
+
+        var flagged = service.Lookup(Hash(3));
+        Assert.Equal(CloudReputation.Malicious, flagged.Reputation);
+        Assert.False(flagged.KnownGood);
+
+        Assert.Equal(CloudReputation.Unknown, service.Lookup(Hash(4)).Reputation);
+
+        // Признак «известная программа» сохраняется в кэше на диске: повторный запрос из нового экземпляра не идёт в сеть.
+        var requests = handler.Requests.Count;
+        var reopened = new CloudReputationService(config, new HttpClient(handler), Path.Combine(tmp.Path, "cloud_cache.json"),
+            new FakeTime(DateTimeOffset.Parse("2026-11-18T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.True(reopened.Lookup(Hash(1)).KnownGood);
+        Assert.Equal(requests, handler.Requests.Count);
+    }
+
+    [Fact]
+    public void Cloud_VirusTotalPartialDetections_DisputeKnownGood()
+    {
+        using var tmp = new TempDir();
+        var config = SentinelConfigStore.ForDataDirectory(tmp.Path);
+        config.Save(new SentinelConfig { KasperskyOpenTipApiKey = "k", VirusTotalApiKey = "v", EnableKnownGoodLookup = true });
+        var handler = new FakeHandler(r => r.RequestUri!.Host switch
+        {
+            "opentip.kaspersky.com" => Text("{\"Zone\":\"Green\"}"),
+            "www.virustotal.com" => Text("{\"data\":{\"attributes\":{\"last_analysis_stats\":{\"malicious\":1}}}}"),
+            _ => throw new InvalidOperationException("CIRCL не нужен: OpenTIP уже ответил"),
+        });
+        var service = new CloudReputationService(config, new HttpClient(handler));
+
+        var result = service.Lookup(Hash(5));
+        Assert.False(result.KnownGood);
+        Assert.True(result.Disputed);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public void Cloud_Combine_MaliciousBeatsKnownGood()
+    {
+        var combined = CloudReputationService.Combine(
+        [
+            new CloudLookupResult(CloudReputation.Clean, "A") { KnownGood = true },
+            new CloudLookupResult(CloudReputation.Malicious, "B", "x"),
+        ]);
+        Assert.Equal("B", combined.Source);
+        Assert.Equal(CloudReputation.Malicious, combined.Reputation);
+    }
+
     private sealed class FakeTime(DateTimeOffset start) : TimeProvider
     {
         private DateTimeOffset _now = start;

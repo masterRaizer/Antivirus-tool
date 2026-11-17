@@ -34,6 +34,15 @@ public sealed record SentinelConfig
     /// <summary>Детектор скрытых майнеров: процессы, которые прячут нагрузку при открытии Диспетчера задач.</summary>
     public bool EnableMonitorEvasionWatch { get; init; } = true;
 
+    /// <summary>
+    /// Проверять подозрительные неизвестные файлы по открытой базе известных программ CIRCL hashlookup (NSRL и др.) —
+    /// аналог «белого облака» KSN. Отправляется только SHA-256; по умолчанию выключено (без согласия сеть не используется).
+    /// </summary>
+    public bool EnableKnownGoodLookup { get; init; }
+
+    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока (как отложенные задачи Касперского).</summary>
+    public bool PowerSaverOnBattery { get; init; } = true;
+
     public bool HasCloudKeys => !string.IsNullOrWhiteSpace(KasperskyOpenTipApiKey) || !string.IsNullOrWhiteSpace(VirusTotalApiKey);
 }
 

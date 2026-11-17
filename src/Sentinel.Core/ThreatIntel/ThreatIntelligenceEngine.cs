@@ -1,50 +1,69 @@
 namespace Sentinel.Core.ThreatIntel;
 
 /// <summary>
-/// Локальная база угроз. Открывает наиболее свежую из двух копий <c>threat_hashes.bin</c>: обновляемую в каталоге данных
-/// и поставляемую с программой (<c>data\threat_hashes.bin</c> рядом с исполняемым файлом). Горячая замена файла при обновлении
-/// не прерывает поиск: читатели ждут не дольше самой подмены.
+/// Локальная база угроз из трёх файлов: <c>threat_hashes.bin</c> (SHA-256), <c>threat_hashes_sha1.bin</c> и
+/// <c>threat_hashes_md5.bin</c> (базы, где есть только эти хеши: VirusShare, ESET <c>*.md5</c>/<c>*.sha1</c>, signature-base).
+/// Для каждого вида открывается наиболее свежая из двух копий: обновляемая в каталоге данных и поставляемая с программой
+/// (<c>data\</c> рядом с исполняемым файлом). Горячая замена файла при обновлении не прерывает поиск.
 /// </summary>
 public sealed class ThreatIntelligenceEngine : IThreatHashLookup, IDisposable
 {
     public const string FileName = "threat_hashes.bin";
 
+    private static readonly ThreatHashKind[] Kinds = [ThreatHashKind.Sha256, ThreatHashKind.Sha1, ThreatHashKind.Md5];
+
     private readonly ReaderWriterLockSlim _lock = new();
-    private readonly string _updatablePath;
-    private readonly string? _bundledPath;
-    private ThreatHashDatabase? _database;
+    private readonly string _dataDirectory;
+    private readonly string? _bundledDirectory;
+    private readonly Dictionary<ThreatHashKind, ThreatHashDatabase?> _databases = [];
 
     public ThreatIntelligenceEngine(string dataDirectory, string? bundledPath = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(dataDirectory);
-        _updatablePath = Path.Combine(Path.GetFullPath(dataDirectory), FileName);
-        _bundledPath = string.IsNullOrWhiteSpace(bundledPath) ? null : Path.GetFullPath(bundledPath);
-        _database = OpenBest();
+        _dataDirectory = Path.GetFullPath(dataDirectory);
+        _bundledDirectory = string.IsNullOrWhiteSpace(bundledPath) ? null : Path.GetDirectoryName(Path.GetFullPath(bundledPath));
+        foreach (var kind in Kinds)
+        {
+            _databases[kind] = OpenBest(kind);
+        }
     }
 
-    /// <summary>Поставляемая база рядом с исполняемым файлом: <c>&lt;каталог программы&gt;\data\threat_hashes.bin</c>.</summary>
     public static string DefaultBundledPath() => Path.Combine(AppContext.BaseDirectory, "data", FileName);
 
-    public string UpdatablePath => _updatablePath;
+    /// <summary>Обновляемая копия базы SHA-256 в каталоге данных.</summary>
+    public string UpdatablePath => UpdatablePathOf(ThreatHashKind.Sha256);
 
-    public int Count => With(d => d?.Count ?? 0);
+    public string UpdatablePathOf(ThreatHashKind kind) => Path.Combine(_dataDirectory, ThreatHashKinds.FileName(kind));
 
-    public DateTimeOffset? TimestampUtc => With(d => d?.TimestampUtc);
+    /// <summary>Записей SHA-256.</summary>
+    public int Count => CountOf(ThreatHashKind.Sha256);
 
-    public string? ActivePath => With(d => d?.Path);
+    /// <summary>Записей всех видов (SHA-256 + SHA-1 + MD5).</summary>
+    public long TotalCount => Kinds.Sum(k => (long)CountOf(k));
 
-    public bool TryGetFamily(string sha256Hex, out string? family)
+    public int CountOf(ThreatHashKind kind) => With(kind, d => d?.Count ?? 0);
+
+    public DateTimeOffset? TimestampUtc => With(ThreatHashKind.Sha256, d => d?.TimestampUtc);
+
+    public string? ActivePath => With(ThreatHashKind.Sha256, d => d?.Path);
+
+    /// <summary>Есть ли базы MD5/SHA-1: только тогда анализатор считает эти хеши (лишняя работа без базы не нужна).</summary>
+    public bool HasLegacyHashes => CountOf(ThreatHashKind.Md5) > 0 || CountOf(ThreatHashKind.Sha1) > 0;
+
+    public bool TryGetFamily(string sha256Hex, out string? family) => TryGetFamily(ThreatHashKind.Sha256, sha256Hex, out family);
+
+    public bool TryGetFamily(ThreatHashKind kind, string hex, out string? family)
     {
         _lock.EnterReadLock();
         try
         {
-            if (_database is null)
+            if (_databases.GetValueOrDefault(kind) is not { } database)
             {
                 family = null;
                 return false;
             }
 
-            return _database.TryGetFamily(sha256Hex, out family);
+            return database.TryGetFamily(hex, out family);
         }
         finally
         {
@@ -52,29 +71,20 @@ public sealed class ThreatIntelligenceEngine : IThreatHashLookup, IDisposable
         }
     }
 
-    /// <summary>Все записи активной базы (для слияния с новыми данными).</summary>
-    public IReadOnlyList<ThreatHashEntry> Snapshot()
-    {
-        _lock.EnterReadLock();
-        try
-        {
-            return _database is null ? [] : [.. _database.Enumerate()];
-        }
-        finally
-        {
-            _lock.ExitReadLock();
-        }
-    }
+    /// <summary>Все записи SHA-256 (для тестов и отладки; при обновлении используется потоковое слияние <see cref="Merge"/>).</summary>
+    public IReadOnlyList<ThreatHashEntry> Snapshot() => With(ThreatHashKind.Sha256, d => d is null ? [] : (IReadOnlyList<ThreatHashEntry>)[.. d.Enumerate()]);
 
-    /// <summary>Повторно выбирает самую свежую базу (например, после ручной замены файла).</summary>
     public void Reload()
     {
         _lock.EnterWriteLock();
         try
         {
-            var old = _database;
-            _database = OpenBest();
-            old?.Dispose();
+            foreach (var kind in Kinds)
+            {
+                var old = _databases.GetValueOrDefault(kind);
+                _databases[kind] = OpenBest(kind);
+                old?.Dispose();
+            }
         }
         finally
         {
@@ -82,28 +92,64 @@ public sealed class ThreatIntelligenceEngine : IThreatHashLookup, IDisposable
         }
     }
 
-    /// <summary>Заменяет обновляемую базу готовым файлом: старое отображение закрывается, файл перемещается, база открывается заново.</summary>
-    public void ReplaceWith(string newFile)
+    public void ReplaceWith(string newFile) => ReplaceWith(newFile, ThreatHashKind.Sha256);
+
+    /// <summary>Подмена базы вида <paramref name="kind"/> новым файлом (проверяется до подмены).</summary>
+    public void ReplaceWith(string newFile, ThreatHashKind kind)
     {
         ArgumentException.ThrowIfNullOrEmpty(newFile);
-        using (ThreatHashDatabase.Open(newFile))
+        using (var check = ThreatHashDatabase.Open(newFile))
         {
             // проверка целостности до замены: повреждённый файл не должен вытеснить рабочую базу
+            if (check.Kind != kind)
+            {
+                throw new InvalidDataException($"Файл содержит хеши {ThreatHashKinds.Label(check.Kind)}, ожидались {ThreatHashKinds.Label(kind)}.");
+            }
         }
 
         _lock.EnterWriteLock();
         try
         {
-            _database?.Dispose();
-            _database = null;
-            Directory.CreateDirectory(Path.GetDirectoryName(_updatablePath)!);
-            File.Move(newFile, _updatablePath, overwrite: true);
-            _database = OpenBest();
+            _databases.GetValueOrDefault(kind)?.Dispose();
+            _databases[kind] = null;
+            Directory.CreateDirectory(_dataDirectory);
+            File.Move(newFile, UpdatablePathOf(kind), overwrite: true);
+            _databases[kind] = OpenBest(kind);
         }
         finally
         {
             _lock.ExitWriteLock();
         }
+    }
+
+    /// <summary>
+    /// Добавить записи в базу их вида потоковым слиянием (вся база в память не загружается). Записи других видов пропускаются.
+    /// Возвращает число новых хешей.
+    /// </summary>
+    public int Merge(IEnumerable<ThreatHashEntry> additions, DateTimeOffset timestamp, ThreatHashKind kind = ThreatHashKind.Sha256)
+    {
+        ArgumentNullException.ThrowIfNull(additions);
+        var list = additions.Where(e => ThreatHashKinds.Of(e.Sha256) == kind).ToList();
+        var before = CountOf(kind);
+        if (list.Count == 0)
+        {
+            return 0;
+        }
+
+        Directory.CreateDirectory(_dataDirectory);
+        var temp = UpdatablePathOf(kind) + ".new";
+        _lock.EnterReadLock();
+        try
+        {
+            ThreatHashDatabaseBuilder.MergeToFile(_databases.GetValueOrDefault(kind), list, timestamp, temp, kind);
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+
+        ReplaceWith(temp, kind);
+        return Math.Max(0, CountOf(kind) - before);
     }
 
     public void Dispose()
@@ -111,8 +157,11 @@ public sealed class ThreatIntelligenceEngine : IThreatHashLookup, IDisposable
         _lock.EnterWriteLock();
         try
         {
-            _database?.Dispose();
-            _database = null;
+            foreach (var kind in Kinds)
+            {
+                _databases.GetValueOrDefault(kind)?.Dispose();
+                _databases[kind] = null;
+            }
         }
         finally
         {
@@ -122,12 +171,12 @@ public sealed class ThreatIntelligenceEngine : IThreatHashLookup, IDisposable
         _lock.Dispose();
     }
 
-    private T With<T>(Func<ThreatHashDatabase?, T> read)
+    private T With<T>(ThreatHashKind kind, Func<ThreatHashDatabase?, T> read)
     {
         _lock.EnterReadLock();
         try
         {
-            return read(_database);
+            return read(_databases.GetValueOrDefault(kind));
         }
         finally
         {
@@ -135,15 +184,23 @@ public sealed class ThreatIntelligenceEngine : IThreatHashLookup, IDisposable
         }
     }
 
-    private ThreatHashDatabase? OpenBest()
+    private ThreatHashDatabase? OpenBest(ThreatHashKind kind)
     {
         ThreatHashDatabase? best = null;
-        foreach (var path in new[] { _updatablePath, _bundledPath }.Where(p => p is not null && File.Exists(p)))
+        var bundled = _bundledDirectory is null ? null : Path.Combine(_bundledDirectory, ThreatHashKinds.FileName(kind));
+        foreach (var path in new[] { UpdatablePathOf(kind), bundled }.Where(p => p is not null && File.Exists(p)))
         {
             try
             {
                 var candidate = ThreatHashDatabase.Open(path!);
-                if (best is null || candidate.TimestampUtc > best.TimestampUtc)
+                if (candidate.Kind != kind)
+                {
+                    candidate.Dispose();
+                    continue;
+                }
+
+                if (best is null || candidate.TimestampUtc > best.TimestampUtc
+                    || (candidate.TimestampUtc == best.TimestampUtc && candidate.Count > best.Count))
                 {
                     best?.Dispose();
                     best = candidate;

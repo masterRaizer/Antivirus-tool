@@ -634,6 +634,8 @@ public sealed class StartupViewModel : SectionViewModel
                 EnableUsbShield = settings.EnableUsbShield,
                 BehavioralShadowMode = settings.BehavioralShadowMode,
                 EnableMonitorEvasionWatch = settings.EnableMonitorEvasionWatch,
+                EnableKnownGoodLookup = settings.EnableKnownGoodLookup,
+                PowerSaverOnBattery = settings.PowerSaverOnBattery,
                 AllowedPaths = [.. settings.AllowedPaths, item.Target],
                 AllowedProcesses = settings.AllowedProcesses,
                 AllowedHashes = settings.AllowedHashes,

@@ -46,6 +46,12 @@ sentinel evasion-watch   [секунды] [--json]                              
 
 Семейства CAAService (Pearl/pearlhash) и techias (активатор Office): IOC, техники и плейбук —
 [`docs/THREAT_FAMILIES.md`](docs/THREAT_FAMILIES.md).
+Как устроены VirusTotal, Касперский и Защитник и чем от них отличается Sentinel — [`docs/AV_LANDSCAPE.md`](docs/AV_LANDSCAPE.md).
+
+База вирусных хешей (SHA-256, SHA-1, MD5) собирается в релизе из открытых источников — abuse.ch MalwareBazaar (полная выгрузка),
+VirusShare, eset/malware-ioc, Neo23x0/signature-base — скриптом `scripts/build-threat-db.ps1`; локально:
+`sentinel threatdb build --out data/threat_hashes.bin --malwarebazaar full.zip --virusshare <каталог> --eset <каталог> --signature-base <каталог>`.
+Для выгрузки MalwareBazaar в GitHub Actions может понадобиться бесплатный ключ abuse.ch в секрете репозитория `ABUSECH_AUTH_KEY`.
 
 Коды возврата: `0` — чисто, `1` — обнаружены угрозы/подозрения, `2` — ошибка.
 

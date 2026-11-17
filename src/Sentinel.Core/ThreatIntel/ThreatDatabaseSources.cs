@@ -6,7 +6,7 @@ namespace Sentinel.Core.ThreatIntel;
 /// </summary>
 public static class ThreatDatabaseSources
 {
-    private static readonly string[] EsetExtensions = [".sha256", ".txt", ".csv", ".ioc", ".adoc", ".md", ".json", ".misp", ".xml"];
+    private static readonly string[] EsetExtensions = [".sha256", ".sha1", ".md5", ".txt", ".csv", ".ioc", ".adoc", ".md", ".json", ".misp", ".xml"];
 
     /// <summary><c>iocs/*.txt</c> (в т.ч. <c>hash-iocs.txt</c>) и мета-хеши правил <c>yara/*.yar</c>.</summary>
     public static IEnumerable<ThreatHashEntry> FromSignatureBase(string root)
@@ -18,8 +18,8 @@ public static class ThreatDatabaseSources
             {
                 var text = File.ReadAllText(file);
                 var entries = Path.GetFileName(file).Equals("hash-iocs.txt", StringComparison.OrdinalIgnoreCase)
-                    ? ThreatFeedParsers.ParseSignatureBaseHashIocs(text)
-                    : ThreatFeedParsers.ParseHashList(text, "SigBase." + Path.GetFileNameWithoutExtension(file));
+                    ? ThreatFeedParsers.ParseSignatureBaseHashIocsAllKinds(text)
+                    : ThreatFeedParsers.ParseHashListAllKinds(text, "SigBase." + Path.GetFileNameWithoutExtension(file));
                 foreach (var e in entries)
                 {
                     yield return e;
@@ -53,10 +53,82 @@ public static class ThreatDatabaseSources
                     continue;
                 }
 
-                foreach (var e in ThreatFeedParsers.ParseHashList(File.ReadAllText(file), family))
+                foreach (var e in ThreatFeedParsers.ParseHashListAllKinds(File.ReadAllText(file), family))
                 {
                     yield return e;
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Полная выгрузка MalwareBazaar: zip (<c>full.csv</c> или <c>full_sha256.txt</c> внутри), CSV или TXT. Читается потоком —
+    /// выгрузка содержит около миллиона записей.
+    /// </summary>
+    public static IEnumerable<ThreatHashEntry> FromMalwareBazaarExport(string path)
+    {
+        if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            using var zip = System.IO.Compression.ZipFile.OpenRead(path);
+            foreach (var entry in zip.Entries.Where(e => e.Length > 0).OrderBy(e => e.FullName, StringComparer.Ordinal))
+            {
+                using var reader = new StreamReader(entry.Open());
+                foreach (var e in ParseMalwareBazaarText(reader, entry.FullName))
+                {
+                    yield return e;
+                }
+            }
+
+            yield break;
+        }
+
+        using var file = new StreamReader(path);
+        foreach (var e in ParseMalwareBazaarText(file, path))
+        {
+            yield return e;
+        }
+    }
+
+    /// <summary>Каталог со списками VirusShare (<c>VirusShare_*.md5</c>, можно в zip).</summary>
+    public static IEnumerable<ThreatHashEntry> FromVirusShare(string directory)
+    {
+        foreach (var file in Directory.EnumerateFiles(directory, "VirusShare_*").Order(StringComparer.Ordinal))
+        {
+            if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                using var zip = System.IO.Compression.ZipFile.OpenRead(file);
+                foreach (var entry in zip.Entries.Where(e => e.Length > 0))
+                {
+                    using var reader = new StreamReader(entry.Open());
+                    foreach (var e in ThreatFeedParsers.ParseVirusShareList(reader))
+                    {
+                        yield return e;
+                    }
+                }
+
+                continue;
+            }
+
+            using var text = new StreamReader(file);
+            foreach (var e in ThreatFeedParsers.ParseVirusShareList(text))
+            {
+                yield return e;
+            }
+        }
+    }
+
+    private static IEnumerable<ThreatHashEntry> ParseMalwareBazaarText(TextReader reader, string name) =>
+        name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)
+            ? ThreatFeedParsers.ParseMalwareBazaarCsv(reader)
+            : ParseLines(reader);
+
+    private static IEnumerable<ThreatHashEntry> ParseLines(TextReader reader)
+    {
+        while (reader.ReadLine() is { } line)
+        {
+            if (line.Length > 0 && line[0] != '#' && ThreatFeedParsers.TryNormalizeSha256(line, out var hash))
+            {
+                yield return new ThreatHashEntry(hash, "MalwareBazaar");
             }
         }
     }

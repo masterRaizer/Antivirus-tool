@@ -290,9 +290,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             await target.RefreshAsync();
         }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or IpcRemoteException)
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or IpcRemoteException or TimeoutException
+            or OperationCanceledException or System.Text.Json.JsonException or NotSupportedException or UnauthorizedAccessException
+            or ArgumentException or KeyNotFoundException)
         {
-            Notify(ex.Message, true);
+            // Раньше таймаут или ошибка разбора ответа молча оставляли раздел пустым: теперь видно, что случилось.
+            Notify($"Раздел не загрузился: {ex.Message}. Нажмите «Обновить» или проверьте, что служба Sentinel запущена.", true);
         }
     }
 

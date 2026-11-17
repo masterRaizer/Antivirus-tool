@@ -42,6 +42,20 @@ public sealed class FileAnalyzerOptions
     /// и хеша для него не становится находкой. <c>null</c> — проверка по умолчанию.
     /// </summary>
     public Func<string, bool>? IsOfflineSystemImage { get; init; }
+
+    /// <summary>
+    /// Сколько помнить результат проверки неизменившегося файла (тот же путь, размер, время изменения и создания).
+    /// Фоновый аудит службы каждые 5 мин заново проверял хеш и подпись сотен файлов служб, драйверов и задач — отсюда периодические
+    /// скачки нагрузки и шум вентиляторов. <see cref="TimeSpan.Zero"/> — без кэша (по умолчанию; служба включает 30 мин).
+    /// Приоритетная проверка (файлы под исключениями Защитника) не кэшируется никогда.
+    /// </summary>
+    public TimeSpan ResultCacheDuration { get; init; } = TimeSpan.Zero;
+
+    /// <summary>
+    /// «Поколение» внешних данных, от которых зависит вердикт (список разрешённого, базы угроз): при его изменении кэш результатов
+    /// не используется. <c>null</c> — кэш живёт только по времени.
+    /// </summary>
+    public Func<long>? CacheGeneration { get; init; }
 }
 
 /// <summary>
@@ -87,6 +101,36 @@ public sealed class FileAnalyzer
         _options = options ?? new FileAnalyzerOptions();
     }
 
+    /// <summary>Поиск по базе угроз: SHA-256, затем SHA-1 и MD5 (если такие базы установлены).</summary>
+    private (string Kind, string? Family)? LookupThreatDb(string sha256, string? sha1, string? md5)
+    {
+        if (_intel!.TryGetFamily(sha256, out var family))
+        {
+            return ("SHA-256", family);
+        }
+
+        if (sha1 is not null && _intel.TryGetFamily(ThreatHashKind.Sha1, sha1, out family))
+        {
+            return ("SHA-1", family);
+        }
+
+        if (md5 is not null && _intel.TryGetFamily(ThreatHashKind.Md5, md5, out family))
+        {
+            return ("MD5", family);
+        }
+
+        return null;
+    }
+
+    private const int MaxCachedResults = 20_000;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<CacheKey, (FileScanResult Result, long StoredAt)> _resultCache = new();
+
+    private readonly record struct CacheKey(string Path, long Length, long LastWriteTicks, long CreationTicks, ScoreContext Context, long Generation);
+
+    /// <summary>Сбросить кэш результатов: после обновления баз угроз или изменения списка разрешённого.</summary>
+    public void ClearResultCache() => _resultCache.Clear();
+
     /// <summary>Белый список, с которым работает анализатор (его же обязаны использовать карантин и нейтрализация).</summary>
     public IWhitelistProvider? Whitelist => _whitelist;
 
@@ -103,7 +147,39 @@ public sealed class FileAnalyzer
         ArgumentException.ThrowIfNullOrEmpty(path);
         try
         {
-            return AnalyzeCore(Path.GetFullPath(path), priority, context ?? ScoreContext.None);
+            var full = Path.GetFullPath(path);
+            var ctx = context ?? ScoreContext.None;
+            if (priority is not null || _options.ResultCacheDuration <= TimeSpan.Zero)
+            {
+                return AnalyzeCore(full, priority, ctx);
+            }
+
+            var info = new FileInfo(full);
+            if (!info.Exists)
+            {
+                return AnalyzeCore(full, priority, ctx);
+            }
+
+            var key = new CacheKey(full.ToUpperInvariant(), info.Length, info.LastWriteTimeUtc.Ticks, info.CreationTimeUtc.Ticks, ctx,
+                _options.CacheGeneration?.Invoke() ?? 0);
+            var now = Environment.TickCount64;
+            if (_resultCache.TryGetValue(key, out var cached) && now - cached.StoredAt < (long)_options.ResultCacheDuration.TotalMilliseconds)
+            {
+                return cached.Result;
+            }
+
+            var result = AnalyzeCore(full, priority, ctx);
+            if (result.Verdict != Verdict.Error)
+            {
+                if (_resultCache.Count >= MaxCachedResults)
+                {
+                    _resultCache.Clear(); // простая защита от разрастания: кэш наполнится заново за один аудит
+                }
+
+                _resultCache[key] = (result, now);
+            }
+
+            return result;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -121,6 +197,8 @@ public sealed class FileAnalyzer
         // и копия ограниченного окна для сигнатурного поиска. Весь файл в память не загружается.
         byte[] content;
         string sha256;
+        string? md5 = null;
+        string? sha1 = null;
         long size;
         bool truncated;
         double entropy;
@@ -132,6 +210,9 @@ public sealed class FileAnalyzer
             content = new byte[(int)Math.Min(size, maxScan)];
             var counts = new long[256];
             using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            // MD5 и SHA-1 считаются в том же проходе, только если установлены базы с такими хешами (VirusShare, ESET и др.).
+            using var md5Hash = _intel?.HasLegacyHashes == true ? IncrementalHash.CreateHash(HashAlgorithmName.MD5) : null;
+            using var sha1Hash = _intel?.HasLegacyHashes == true ? IncrementalHash.CreateHash(HashAlgorithmName.SHA1) : null;
             var buffer = ArrayPool<byte>.Shared.Rent(StreamBufferSize);
             try
             {
@@ -140,6 +221,8 @@ public sealed class FileAnalyzer
                 while ((read = stream.Read(buffer, 0, StreamBufferSize)) > 0)
                 {
                     sha.AppendData(buffer, 0, read);
+                    md5Hash?.AppendData(buffer, 0, read);
+                    sha1Hash?.AppendData(buffer, 0, read);
                     for (var i = 0; i < read; i++)
                     {
                         counts[buffer[i]]++;
@@ -159,6 +242,8 @@ public sealed class FileAnalyzer
             }
 
             sha256 = Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
+            md5 = md5Hash is null ? null : Convert.ToHexString(md5Hash.GetHashAndReset()).ToLowerInvariant();
+            sha1 = sha1Hash is null ? null : Convert.ToHexString(sha1Hash.GetHashAndReset()).ToLowerInvariant();
             entropy = EntropyCalculator.FromHistogram(counts, size);
             pe = PeParser.Parse(stream);
         }
@@ -198,12 +283,12 @@ public sealed class FileAnalyzer
             }
         }
 
-        if (_intel is not null && _intel.TryGetFamily(sha256, out var family)
-            && !(definitive == "EICAR" && family is not null && family.StartsWith("EICAR", StringComparison.Ordinal)))
+        if (_intel is not null && LookupThreatDb(sha256, sha1, md5) is { } hit
+            && !(definitive == "EICAR" && hit.Family is not null && hit.Family.StartsWith("EICAR", StringComparison.Ordinal)))
         {
-            detections.Add(new Detection($"ThreatDB.{family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
-                $"SHA-256 найден в базе известных угроз ({family ?? "семейство не указано"}).", []));
-            definitive = $"ThreatDB.{family}";
+            detections.Add(new Detection($"ThreatDB.{hit.Family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
+                $"{hit.Kind} найден в базе известных угроз ({hit.Family ?? "семейство не указано"}).", []));
+            definitive = $"ThreatDB.{hit.Family}";
         }
 
         ThreatScore? score = null;
@@ -228,6 +313,7 @@ public sealed class FileAnalyzer
             score = ThreatScoringEngine.Evaluate(input);
 
             // Облако: только хеш и только для неподписанных файлов с подозрительным баллом.
+            var knownGood = false;
             if (_cloud is not null && !signatureValid && !microsoftTrusted && score.Value >= _options.CloudLookupScore && definitive is null)
             {
                 var cloud = _cloud.Lookup(sha256);
@@ -237,13 +323,18 @@ public sealed class FileAnalyzer
                     detections.Add(new Detection($"Cloud.{cloud.Source}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
                         $"Облачная репутация ({cloud.Source}): хеш признан вредоносным. {cloud.Detail}".Trim(), []));
                 }
+                else
+                {
+                    // «Белое облако» (зелёная зона OpenTIP, база известных программ CIRCL/NSRL): один лишь балл не находка.
+                    knownGood = cloud.KnownGood && !cloud.Disputed;
+                }
             }
 
             // Копия Windows на другом диске: подписи её каталогов живой системе не видны, импорты штатных компонентов
             // (AMSI, VirtualProtect, отладка) дают балл — без сигнатуры или хеша это не находка.
             var offlineImage = definitive is null && !signatureValid && detections.Count == 0
                 && (_options.IsOfflineSystemImage ?? OfflineWindowsImage.Contains)(path);
-            if (definitive is null && !offlineImage && score.Level is { } level && level >= Severity.Low)
+            if (definitive is null && !offlineImage && !knownGood && score.Level is { } level && level >= Severity.Low)
             {
                 detections.Add(new Detection("Heuristic.ThreatScore", level, "score", DetectionSource.Heuristic, null,
                     $"Балл угрозы {score.Value}/100: {score.Describe()}.", []));
@@ -318,7 +409,7 @@ public sealed class FileAnalyzer
             Probe("SeDebugPrivilege");
         }
 
-        if (imports.Contains("VirtualProtect"))
+        if (imports.Contains("VirtualProtect") || imports.Contains("VirtualProtectEx"))
         {
             Probe("AmsiScanBuffer");
             Probe("EtwEventWrite");

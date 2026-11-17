@@ -162,6 +162,12 @@ public sealed record SettingsSnapshot
     /// <summary>Детектор скрытых майнеров, прячущихся от Диспетчера задач.</summary>
     public bool EnableMonitorEvasionWatch { get; init; } = true;
 
+    /// <summary>Проверка неизвестных файлов по базе известных программ CIRCL hashlookup (только хеш).</summary>
+    public bool EnableKnownGoodLookup { get; init; }
+
+    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока.</summary>
+    public bool PowerSaverOnBattery { get; init; } = true;
+
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];
 
     public IReadOnlyList<string> AllowedProcesses { get; init; } = [];
@@ -194,6 +200,12 @@ public sealed record SettingsUpdate
 
     /// <summary>Детектор скрытых майнеров, прячущихся от Диспетчера задач.</summary>
     public bool EnableMonitorEvasionWatch { get; init; } = true;
+
+    /// <summary>Проверка неизвестных файлов по базе известных программ CIRCL hashlookup (только хеш).</summary>
+    public bool EnableKnownGoodLookup { get; init; }
+
+    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока.</summary>
+    public bool PowerSaverOnBattery { get; init; } = true;
 
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];
 

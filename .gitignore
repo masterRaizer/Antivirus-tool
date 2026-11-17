@@ -488,3 +488,7 @@ $RECYCLE.BIN/
 
 # Кэш NuGet-пакетов WDK/SDK для сборки драйвера (scripts/build-driver-windows.ps1)
 /driver/.wdk/
+
+# Большие базы MD5/SHA-1 собираются только в CI (scripts/build-threat-db.ps1)
+data/threat_hashes_md5.bin
+data/threat_hashes_sha1.bin

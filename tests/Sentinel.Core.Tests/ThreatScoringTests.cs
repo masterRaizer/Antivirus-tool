@@ -8,7 +8,7 @@ namespace Sentinel.Core.Tests;
 
 public class ThreatScoringTests
 {
-    private static PeInfo Pe(bool dll = false, bool managed = false, bool wx = false, string sectionName = ".text")
+    internal static PeInfo Pe(bool dll = false, bool managed = false, bool wx = false, string sectionName = ".text")
     {
         var flags = SectionCharacteristics.Code | SectionCharacteristics.Execute | SectionCharacteristics.Read;
         if (wx)
@@ -138,5 +138,33 @@ public class ThreatScoringTests
         var bytes = SyntheticArtifacts.BuildPe(new() { Managed = true });
         using var ms = new MemoryStream(bytes);
         Assert.True(PeParser.Parse(ms).Info!.IsManaged);
+    }
+}
+
+/// <summary>1.3.8: импорт EtwEventWrite — обычная трассировка (rtscom.dll на копии Windows с отчёта Katana), а не патчинг ETW.</summary>
+public class EtwImportIsNotPatchingTests
+{
+    private static HashSet<string> Names(params string[] n) => new HashSet<string>(n, StringComparer.OrdinalIgnoreCase);
+
+    private static ScoringInput Dll(IReadOnlySet<string> imports, IReadOnlySet<string> markers) => new()
+    {
+        Path = @"H:\Program Files\Common Files\microsoft shared\ink\rtscom.dll",
+        Pe = ThreatScoringTests.Pe(dll: true),
+        Imports = imports,
+        Markers = markers,
+    };
+
+    [Fact]
+    public void ImportedEtwEventWrite_WithVirtualProtect_IsNotAmsiEtwPatching()
+    {
+        var score = ThreatScoringEngine.Evaluate(Dll(Names("EtwEventWrite", "VirtualProtect", "GetProcAddress"), Names("EtwEventWrite")));
+        Assert.DoesNotContain(score.Factors, f => f.Code == "API-AMSI-ETW");
+    }
+
+    [Fact]
+    public void DynamicallyResolvedEtwEventWrite_WithVirtualProtect_IsPatching()
+    {
+        var score = ThreatScoringEngine.Evaluate(Dll(Names("VirtualProtect", "GetProcAddress"), Names("EtwEventWrite")));
+        Assert.Contains(score.Factors, f => f.Code == "API-AMSI-ETW");
     }
 }

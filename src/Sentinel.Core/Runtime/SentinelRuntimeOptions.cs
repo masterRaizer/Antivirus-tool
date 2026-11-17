@@ -91,6 +91,9 @@ public sealed class SentinelRuntimeOptions
     public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan ProcessAuditInterval { get; init; } = TimeSpan.FromSeconds(15);
     public TimeSpan ConfigAuditInterval { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Источник питания для режима ноутбука (<see cref="SentinelConfig.PowerSaverOnBattery"/>).</summary>
+    public IPowerSource Power { get; init; } = SystemPowerSource.Instance;
     public DispatcherOptions Dispatcher { get; init; } = new();
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 

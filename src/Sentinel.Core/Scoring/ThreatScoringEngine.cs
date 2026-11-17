@@ -205,8 +205,11 @@ public static class ThreatScoringEngine
 
         // Строки AmsiScanBuffer/EtwEventWrite в однофайловом бандле .NET — из рантайма (coreclr вызывает AMSI для Assembly.Load(byte[])),
         // поэтому для бандла учитываются только прямые импорты этих функций.
-        var amsiByString = !input.DotNetSingleFileBundle && (Marker("AmsiScanBuffer") || Marker("EtwEventWrite"));
-        if ((Has("AmsiScanBuffer") || Has("EtwEventWrite") || amsiByString) && Has("VirtualProtect"))
+        // ETW: импорт EtwEventWrite — обычная трассировка (так делает почти любая системная библиотека Windows, например rtscom.dll);
+        // признак патчинга — только динамическое получение адреса: строка есть, а в таблице импорта функции нет, и есть GetProcAddress.
+        var amsi = Has("AmsiScanBuffer") || (!input.DotNetSingleFileBundle && Marker("AmsiScanBuffer"));
+        var etwDynamic = !input.DotNetSingleFileBundle && Marker("EtwEventWrite") && !Has("EtwEventWrite") && Has("GetProcAddress");
+        if ((amsi || etwDynamic) && Has("VirtualProtect"))
         {
             factors.Add(new("API-AMSI-ETW", 40, "Патчинг AMSI/ETW: AmsiScanBuffer/EtwEventWrite + VirtualProtect"));
         }

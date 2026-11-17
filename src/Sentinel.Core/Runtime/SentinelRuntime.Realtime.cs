@@ -113,7 +113,8 @@ public sealed partial class SentinelRuntime
 
                 try
                 {
-                    if (_auditRequested || lastConfig is null || _o.TimeProvider.GetElapsedTime(lastConfig.Value) >= _o.ConfigAuditInterval)
+                    // От батареи (режим ноутбука) плановый аудит реже; внеочередной после изменения hosts/задач — сразу.
+                    if (_auditRequested || lastConfig is null || _o.TimeProvider.GetElapsedTime(lastConfig.Value) >= EffectiveConfigAuditInterval)
                     {
                         _auditRequested = false;
                         lastConfig = _o.TimeProvider.GetTimestamp();
@@ -159,7 +160,8 @@ public sealed partial class SentinelRuntime
             return 0;
         }
 
-        var report = new ProcessAuditor(new ProcessAuditorOptions { MemoryScanner = _o.MemoryScanner }, _o.Analyzer).Audit(fresh, exclusions);
+        var report = new ProcessAuditor(new ProcessAuditorOptions { MemoryScanner = _o.MemoryScanner, ShouldScanMemory = ProcessAuditor.MemoryScanWorthwhile },
+            _o.Analyzer).Audit(fresh, exclusions);
         Interlocked.Add(ref _processesChecked, fresh.Count);
         foreach (var entry in report.Entries)
         {

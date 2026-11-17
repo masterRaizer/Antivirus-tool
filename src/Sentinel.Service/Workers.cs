@@ -122,10 +122,13 @@ internal sealed partial class IpcServerWorker(SentinelRuntime runtime, ServiceOp
     {
         await Task.Yield();
         // Вне Windows (отладка) канал доступен только текущему пользователю; в службе — интерактивным пользователям.
+        // Самозащита канала: ослабляющие защиту команды — только от окна Sentinel из каталога программы или с правами администратора.
         var server = new SentinelIpcServer(runtime, new IpcServerOptions
         {
             PipeName = options.PipeName,
             AllowInteractiveUsers = OperatingSystem.IsWindows(),
+            IdentifyClient = OperatingSystem.IsWindows() ? WindowsIpcClientIdentifier.Identify : null,
+            OnDenied = message => LogFault(logger, message),
         });
         await using (server.ConfigureAwait(false))
         {

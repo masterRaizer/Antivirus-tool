@@ -61,6 +61,8 @@ public sealed partial class SentinelRuntime
             EnableUsbShield = config.EnableUsbShield,
             BehavioralShadowMode = config.BehavioralShadowMode,
             EnableMonitorEvasionWatch = config.EnableMonitorEvasionWatch,
+            EnableKnownGoodLookup = config.EnableKnownGoodLookup,
+            PowerSaverOnBattery = config.PowerSaverOnBattery,
             AllowedPaths = allowed.Paths,
             AllowedProcesses = allowed.Processes,
             AllowedHashes = allowed.Hashes,
@@ -96,6 +98,8 @@ public sealed partial class SentinelRuntime
                 EnableUsbShield = update.EnableUsbShield,
                 BehavioralShadowMode = update.BehavioralShadowMode,
                 EnableMonitorEvasionWatch = update.EnableMonitorEvasionWatch,
+                EnableKnownGoodLookup = update.EnableKnownGoodLookup,
+                PowerSaverOnBattery = update.PowerSaverOnBattery,
             });
 
             _allowed.Replace(new AllowedExclusions
@@ -190,6 +194,15 @@ public sealed partial class SentinelRuntime
             return _updateTask is { IsCompleted: false } ? status with { LastStatus = "Обновление баз выполняется…" } : status;
         }
     }
+
+    /// <summary>Режим ноутбука включён в настройках и компьютер сейчас работает от батареи.</summary>
+    public bool PowerSaving => _o.Power.OnBattery && LoadConfigSafe().PowerSaverOnBattery;
+
+    /// <summary>Интервал планового аудита конфигурации с учётом режима ноутбука.</summary>
+    internal TimeSpan EffectiveConfigAuditInterval => PowerSaverPolicy.ConfigAuditInterval(_o.ConfigAuditInterval, PowerSaving);
+
+    /// <summary>Число рабочих процессов/потоков проверки с учётом режима ноутбука.</summary>
+    internal int EffectiveWorkerCount => PowerSaverPolicy.WorkerCount(Scanning.Pool.ScanPoolBase.DefaultWorkerCount(), PowerSaving);
 
     private SentinelConfig LoadConfigSafe()
     {
