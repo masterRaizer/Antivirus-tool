@@ -54,6 +54,23 @@ internal sealed partial class ProcessStartMonitorWorker(SentinelRuntime runtime,
 }
 
 /// <summary>
+/// Детектор скрытых майнеров: раз в секунду замер нагрузки всех процессов (<c>NtQuerySystemInformation</c>, без открытия
+/// дескрипторов); процессы, которые прячут нагрузку при открытии Диспетчера задач, идут в общий маршрут решений.
+/// </summary>
+internal sealed partial class MonitorEvasionWorker(SentinelRuntime runtime, ILogger<MonitorEvasionWorker> logger) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        LogStarted(logger);
+        await runtime.RunMonitorEvasionWatchAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Детектор скрытых майнеров запущен.")]
+    private static partial void LogStarted(ILogger logger);
+}
+
+/// <summary>
 /// Драйвер ядра SentinelDrv: при старте — статус в журнал (без драйвера — профиль User-Mode EDR, без ошибок),
 /// при загруженном драйвере — периодическая передача защищаемых PID (служба, приложение, ядро ОС).
 /// </summary>

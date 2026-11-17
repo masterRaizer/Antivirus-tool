@@ -30,102 +30,138 @@
             <TextBlock Text="{Binding Note}" TextWrapping="Wrap" />
         </Border>
 
-        <DataGrid Grid.Row="3" ItemsSource="{Binding View}" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
-            <DataGrid.GroupStyle>
-                <GroupStyle>
-                    <GroupStyle.ContainerStyle>
-                        <Style TargetType="GroupItem">
+        <!-- Список, а не DataGrid: DataGrid с группировкой (GroupStyle + Expander) на Windows рисовал пустые заголовки и ячейки
+             (1.3.3: строки и группы есть, текста нет). Колонки задаются одной сеткой в заголовке и в каждой строке. -->
+        <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                CornerRadius="10" ClipToBounds="True">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,14,0">
+                    <Grid TextElement.Foreground="{StaticResource MutedBrush}" TextElement.FontSize="11" TextElement.FontWeight="SemiBold">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="3*" />
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="250" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Margin="12,9" Foreground="{StaticResource MutedBrush}" Text="Тип" />
+                        <TextBlock Grid.Column="1" Margin="12,9" Foreground="{StaticResource MutedBrush}" Text="Запись" />
+                        <TextBlock Grid.Column="2" Margin="12,9" Foreground="{StaticResource MutedBrush}" Text="Команда и подпись" />
+                        <TextBlock Grid.Column="3" Margin="12,9" Foreground="{StaticResource MutedBrush}" Text="Оценка и замечания" />
+                        <TextBlock Grid.Column="4" Margin="12,9" Foreground="{StaticResource MutedBrush}" Text="Действие" />
+                    </Grid>
+                </Border>
+
+                <ListBox Grid.Row="1" ItemsSource="{Binding View}" Background="Transparent" BorderThickness="0"
+                         Foreground="{StaticResource TextBrush}" AutomationProperties.Name="Записи автозагрузки"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                         VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.ScrollUnit="Pixel">
+                    <ListBox.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.ContainerStyle>
+                                <Style TargetType="GroupItem">
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="GroupItem">
+                                                <Expander IsExpanded="{Binding Name, Converter={StaticResource GroupExpanded}, Mode=OneTime}"
+                                                          Foreground="{StaticResource TextBrush}" Background="Transparent" Margin="0,2,0,2">
+                                                    <Expander.Header>
+                                                        <TextBlock Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" Margin="6,6,0,6">
+                                                            <Run Text="{Binding Name, Converter={StaticResource GroupTitle}, Mode=OneWay}" />
+                                                            <Run Text="{Binding ItemCount, Mode=OneWay, StringFormat=({0})}" Foreground="{StaticResource MutedBrush}" />
+                                                        </TextBlock>
+                                                    </Expander.Header>
+                                                    <ItemsPresenter />
+                                                </Expander>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </GroupStyle.ContainerStyle>
+                        </GroupStyle>
+                    </ListBox.GroupStyle>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Focusable" Value="False" />
                             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             <Setter Property="Template">
                                 <Setter.Value>
-                                    <ControlTemplate TargetType="GroupItem">
-                                        <Expander IsExpanded="{Binding Name, Converter={StaticResource GroupExpanded}, Mode=OneTime}"
-                                                  Foreground="{StaticResource TextBrush}" Margin="0,2,0,2">
-                                            <Expander.Header>
-                                                <TextBlock Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" Margin="6,6,0,6">
-                                                    <Run Text="{Binding Name, Converter={StaticResource GroupTitle}, Mode=OneWay}" />
-                                                    <Run Text="{Binding ItemCount, Mode=OneWay, StringFormat=({0})}" Foreground="{StaticResource MutedBrush}" />
-                                                </TextBlock>
-                                            </Expander.Header>
-                                            <ItemsPresenter />
-                                        </Expander>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <ContentPresenter HorizontalAlignment="Stretch" />
                                     </ControlTemplate>
                                 </Setter.Value>
                             </Setter>
                         </Style>
-                    </GroupStyle.ContainerStyle>
-                </GroupStyle>
-            </DataGrid.GroupStyle>
-            <DataGrid.RowStyle>
-                <Style TargetType="DataGridRow" BasedOn="{StaticResource GridRow}">
-                    <Setter Property="Background" Value="{Binding Converter={StaticResource StartupRowBrush}}" />
-                </Style>
-            </DataGrid.RowStyle>
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Тип" Binding="{Binding Category}" Width="150" />
-                <DataGridTemplateColumn Header="Запись" Width="2*">
-                    <DataGridTemplateColumn.CellTemplate>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="{Binding Name}" ToolTip="{Binding Name}" />
-                                <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Text="{Binding Location}" ToolTip="{Binding Location}" />
-                            </StackPanel>
+                            <Border Background="{Binding Converter={StaticResource StartupRowBrush}}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1"
+                                    TextElement.Foreground="{StaticResource TextBrush}" TextElement.FontSize="12.5">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="3*" />
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="250" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Margin="12,8" VerticalAlignment="Center" Foreground="{StaticResource TextBrush}" TextWrapping="Wrap"
+                                               Text="{Binding Category}" />
+                                    <StackPanel Grid.Column="1" Margin="12,8" VerticalAlignment="Center">
+                                        <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextTrimming="CharacterEllipsis"
+                                                   Text="{Binding Name}" ToolTip="{Binding Name}" />
+                                        <TextBlock Style="{StaticResource Muted}" FontSize="11.5" TextTrimming="CharacterEllipsis"
+                                                   Text="{Binding Location}" ToolTip="{Binding Location}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Margin="12,8" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource Mono}" FontSize="11.5" TextTrimming="CharacterEllipsis"
+                                                   Text="{Binding Command, Converter={StaticResource Dash}}" ToolTip="{Binding Command}" />
+                                        <TextBlock FontSize="11.5" Text="{Binding SignatureStatus}" ToolTip="{Binding SignatureStatus}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                                    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding NotSigned}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource WarnBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <!-- Оценка есть у каждой записи: уровень находки, «Норма», «Без подписи» или «Разрешено». -->
+                                    <StackPanel Grid.Column="3" Margin="12,8" VerticalAlignment="Center">
+                                        <Border Style="{StaticResource Pill}" Background="{Binding Severity, Converter={StaticResource SeverityBrush}, ConverterParameter=soft}">
+                                            <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Assessment}"
+                                                       Foreground="{Binding Severity, Converter={StaticResource SeverityBrush}}" />
+                                        </Border>
+                                        <TextBlock Margin="0,4,0,0" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource TextBrush}"
+                                                   Text="{Binding Remarks}" ToolTip="{Binding Remarks}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4" Margin="12,8" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button AutomationProperties.Name="Удалить с откатом" Style="{StaticResource SmallButton}" Content="Удалить с откатом"
+                                                ToolTip="Вернуть запись к эталону, отключить службу или удалить элемент; резервная копия — в разделе «Карантин и откат»"
+                                                Visibility="{Binding CanClean, Converter={StaticResource BoolToVis}}"
+                                                Command="{Binding DataContext.CleanCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}" />
+                                        <Button AutomationProperties.Name="В исключения" AutomationProperties.AutomationId="AllowButton" Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="В исключения"
+                                                ToolTip="Доверять целевому файлу: добавить его путь в allowed_exclusions.json"
+                                                Visibility="{Binding Target, Converter={StaticResource BoolToVis}}"
+                                                Command="{Binding DataContext.AllowCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
                         </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Команда и подпись" Width="3*">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource Mono}" FontSize="11.5" Text="{Binding Command, Converter={StaticResource Dash}}" ToolTip="{Binding Command}" />
-                                <TextBlock FontSize="11.5" Text="{Binding SignatureStatus}" ToolTip="{Binding SignatureStatus}">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-                                            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding NotSigned}" Value="True">
-                                                    <Setter Property="Foreground" Value="{StaticResource WarnBrush}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </StackPanel>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Оценка и замечания" Width="2*">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <!-- Оценка есть у каждой записи: уровень находки, «Норма», «Без подписи» или «Разрешено». -->
-                            <StackPanel>
-                                <Border Style="{StaticResource Pill}" Background="{Binding Severity, Converter={StaticResource SeverityBrush}, ConverterParameter=soft}">
-                                    <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Assessment}"
-                                               Foreground="{Binding Severity, Converter={StaticResource SeverityBrush}}" />
-                                </Border>
-                                <TextBlock Margin="0,4,0,0" FontSize="12" TextWrapping="Wrap" Text="{Binding Remarks}" ToolTip="{Binding Remarks}" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Действие" Width="250">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <StackPanel Orientation="Horizontal">
-                                <Button AutomationProperties.Name="Удалить с откатом" Style="{StaticResource SmallButton}" Content="Удалить с откатом"
-                                        ToolTip="Вернуть запись к эталону, отключить службу или удалить элемент; резервная копия — в разделе «Карантин и откат»"
-                                        Visibility="{Binding CanClean, Converter={StaticResource BoolToVis}}"
-                                        Command="{Binding DataContext.CleanCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
-                                <Button AutomationProperties.Name="В исключения" AutomationProperties.AutomationId="AllowButton" Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="В исключения"
-                                        ToolTip="Доверять целевому файлу: добавить его путь в allowed_exclusions.json"
-                                        Visibility="{Binding Target, Converter={StaticResource BoolToVis}}"
-                                        Command="{Binding DataContext.AllowCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-            </DataGrid.Columns>
-        </DataGrid>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
     </Grid>
 </UserControl>

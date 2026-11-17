@@ -14,6 +14,7 @@ public sealed class BehavioralViewModel : SectionViewModel
     private bool _canary = true;
     private bool _usb = true;
     private bool _shadow;
+    private bool _evasion = true;
     private bool _applying;
     private string _usbPath = string.Empty;
     private string _statusLine = "Загрузка состояния…";
@@ -42,6 +43,14 @@ public sealed class BehavioralViewModel : SectionViewModel
 
     public bool ShadowMode { get => _shadow; set => Toggle(ref _shadow, value); }
 
+    /// <summary>Детектор скрытых майнеров, прячущихся от Диспетчера задач.</summary>
+    public bool EvasionWatch { get => _evasion; set => Toggle(ref _evasion, value); }
+
+    private string _evasionLine = "Детектор скрытых майнеров: нет данных.";
+
+    /// <summary>Состояние детектора: замеры, открытия мониторинга, находки.</summary>
+    public string EvasionLine { get => _evasionLine; private set => Set(ref _evasionLine, value); }
+
     public string UsbPath { get => _usbPath; set => Set(ref _usbPath, value); }
 
     public string StatusLine { get => _statusLine; private set => Set(ref _statusLine, value); }
@@ -57,6 +66,7 @@ public sealed class BehavioralViewModel : SectionViewModel
             CanaryFiles = _settings.EnableCanaryFiles;
             UsbShield = _settings.EnableUsbShield;
             ShadowMode = _settings.BehavioralShadowMode;
+            EvasionWatch = _settings.EnableMonitorEvasionWatch;
             _applying = false;
 
             var status = await Hub.GetBehavioralStatusAsync();
@@ -67,6 +77,7 @@ public sealed class BehavioralViewModel : SectionViewModel
             }
 
             StatusLine = $"Приманок: {status.CanaryCount}; вмешательств: {status.CanaryTampered}; теневой режим: {(status.ShadowMode ? "вкл" : "выкл")}.";
+            EvasionLine = status.EvasionWatch is { } evasion ? evasion.Describe() : "Детектор скрытых майнеров недоступен в этом режиме.";
         }
         finally
         {
@@ -112,6 +123,7 @@ public sealed class BehavioralViewModel : SectionViewModel
             EnableCanaryFiles = CanaryFiles,
             EnableUsbShield = UsbShield,
             BehavioralShadowMode = ShadowMode,
+            EnableMonitorEvasionWatch = EvasionWatch,
             AllowedPaths = _settings.AllowedPaths,
             AllowedProcesses = _settings.AllowedProcesses,
             AllowedHashes = _settings.AllowedHashes,

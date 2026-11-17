@@ -14,7 +14,11 @@ public sealed record BehavioralStatus(
     bool ShadowMode,
     int CanaryCount,
     int CanaryTampered,
-    IReadOnlyList<string> RecentChains);
+    IReadOnlyList<string> RecentChains)
+{
+    /// <summary>Детектор скрытых майнеров, прячущихся от Диспетчера задач.</summary>
+    public MonitorEvasionStatus? EvasionWatch { get; init; }
+}
 
 /// <summary>Поведенческий щит, файлы-приманки и USB-щит рантайма (User-Mode, без чтения чужой памяти).</summary>
 public sealed partial class SentinelRuntime
@@ -30,7 +34,8 @@ public sealed partial class SentinelRuntime
     {
         try
         {
-            return _o.Services?.Config.Load() ?? new SentinelConfig();
+            // Тот же файл, что читают и пишут «Настройки» (в автономном режиме — sentinel_config.json каталога данных).
+            return ConfigStore.Load();
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
         {
@@ -117,7 +122,10 @@ public sealed partial class SentinelRuntime
                 config.BehavioralShadowMode,
                 _canary.Count,
                 Volatile.Read(ref _canaryTampered),
-                _recentChains.ToArray());
+                _recentChains.ToArray())
+            {
+                EvasionWatch = GetMonitorEvasionStatus(),
+            };
         }
     }
 

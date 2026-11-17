@@ -247,6 +247,28 @@
   (`"pools"`, `donate-level`, `rig-id`, `--coin`, `--url`, `--user`). Голые домены в фильтрах ABP/uBlock/hosts/DNR — не находка (тесты `PoolRules_DoNotFire_OnBlocklists`).
 - **На проверку:** после установки 1.3.6 восстановить 8 файлов AdBlock кнопкой «Восстановить»; повторная полная проверка не должна их трогать.
 
+### 1.3.6 — детектор скрытых майнеров (уклонение от Диспетчера задач)
+- `src/Sentinel.Core/Monitoring/Evasion/`: `WindowsProcessActivitySampler` (`NtQuerySystemInformation` 5 и 8, без дескрипторов процессов),
+  `MonitorEvasionDetector` (чистая логика: базовая нагрузка 30 с → реакция ≤ 12 с → возврат ≤ 90 с; `HideAndResume`,
+  `HiddenWhileMonitorOpen`, `ExitOnMonitor`; память циклов по имени образа на сутки; скрытая нагрузка «занятость − DPC − прерывания −
+  видимые процессы»), `MonitorEvasionPolicy` (баллы, окна −25, носители внедрения, потолок 45 для доверенных системных),
+  `WindowsEvasionProcessInspector` (путь, PEB, `GetGuiResources`), `MonitorEvasionWatcher` (CriticalProcessGuard → разрешённое → анализ
+  образа и памяти → FalsePositiveGuard → диспетчер; повторный цикл решает висящую карточку; образ получает обнаружение `SNT-BEH-EVASION`
+  и уходит в карантин после завершения). Описание — `docs/MONITOR_EVASION.md`.
+- Служба: `MonitorEvasionWorker` → `SentinelRuntime.RunMonitorEvasionWatchAsync`; переключатель `EnableMonitorEvasionWatch` (конфиг,
+  настройки, IPC, карточка «Скрытые майнеры» в «Поведенческом щите»); `BehavioralStatus.EvasionWatch`; CLI `evasion-watch`,
+  `behavioral-status`. Стенд `scripts/test-monitor-evasion.ps1`.
+- Попутно: «Настройки и базы» и «В исключения» в «Автозагрузке» больше не сбрасывают переключатели поведенческого щита (теневой режим);
+  поведенческий щит в автономном режиме читает тот же `sentinel_config.json`, что и «Настройки».
+- «Автозагрузка и службы»: DataGrid с группировкой рисовал пустые заголовки и ячейки (скриншот 1.3.3) — заменён на ListBox с сеткой колонок.
+- Отчёт полной проверки 1.3.3 (Katana, 32 мин, 521 075 объектов): 8 × `SNT-MINER-0002` — AdBlock (abp и dnr), исправлено выше;
+  94 × `Heuristic.ThreatScore` Low — Microsoft-файлы офлайн-копии Windows 10 19041 на `H:\Windows` (каталожная подпись не видна живой
+  системе → «NotSigned» +10 и «AMSI/ETW» +40); действий не было. **Открыто:** распознавать офлайн-установки Windows и не шуметь Low-находками.
+- **На проверку (Windows):** (1) `sentinel evasion-watch 300` + `scripts/test-monitor-evasion.ps1`: после закрытия Диспетчера — находка
+  `HideAndResume` с баллом ≥ 70; (2) со службой: первый цикл — карточка «ждёт решения», второй — завершение `svc-evasion-test.exe` и карантин;
+  (3) 30 мин обычной работы с открытиями Диспетчера (браузер, игра, индексатор) — без карточек; (4) `GetGuiResources` из сеанса 0 для
+  процессов пользователя: в журнале у оконных программ USER-объектов > 0 (иначе −1 и штраф за окна не работает); (5) «Автозагрузка» — текст в строках.
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`
   показывает RESTART 5000/30000/60000 и сброс 86400; в `service-*.log` — «Восстановление службы: Политика восстановления выставлена…»;

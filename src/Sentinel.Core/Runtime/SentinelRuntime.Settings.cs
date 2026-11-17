@@ -60,6 +60,7 @@ public sealed partial class SentinelRuntime
             EnableCanaryFiles = config.EnableCanaryFiles,
             EnableUsbShield = config.EnableUsbShield,
             BehavioralShadowMode = config.BehavioralShadowMode,
+            EnableMonitorEvasionWatch = config.EnableMonitorEvasionWatch,
             AllowedPaths = allowed.Paths,
             AllowedProcesses = allowed.Processes,
             AllowedHashes = allowed.Hashes,
@@ -94,6 +95,7 @@ public sealed partial class SentinelRuntime
                 EnableCanaryFiles = update.EnableCanaryFiles,
                 EnableUsbShield = update.EnableUsbShield,
                 BehavioralShadowMode = update.BehavioralShadowMode,
+                EnableMonitorEvasionWatch = update.EnableMonitorEvasionWatch,
             });
 
             _allowed.Replace(new AllowedExclusions

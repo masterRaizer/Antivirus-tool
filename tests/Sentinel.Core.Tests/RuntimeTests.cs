@@ -609,6 +609,22 @@ public class RealtimeInfrastructureTests
 public class RuntimeSettingsTests
 {
     [Fact]
+    public async Task MonitorEvasionSwitch_IsSaved_AndOtherBehaviorSwitchesAreKept()
+    {
+        await using var b = new RuntimeBench();
+        await b.Runtime.SaveSettingsAsync(new SettingsUpdate { BehavioralShadowMode = true, EnableMonitorEvasionWatch = false });
+        var settings = await b.Runtime.GetSettingsAsync();
+        Assert.False(settings.EnableMonitorEvasionWatch);
+        Assert.True(settings.BehavioralShadowMode);
+
+        var status = b.Runtime.GetBehavioralStatus().EvasionWatch;
+        Assert.NotNull(status);
+        Assert.False(status.Enabled);
+        Assert.False(status.Running); // на Linux без замера активности детектор не запускается
+        Assert.Equal("Детектор скрытых майнеров выключен.", status.Describe());
+    }
+
+    [Fact]
     public async Task SaveSettings_WritesConfigAndAllowList_KeysAreNeverReturned()
     {
         await using var b = new RuntimeBench();

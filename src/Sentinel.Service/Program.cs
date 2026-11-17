@@ -55,6 +55,7 @@ builder.Services.AddHostedService<ServiceRecoveryWorker>();
 builder.Services.AddHostedService<KernelBridgeWorker>();
 builder.Services.AddHostedService<IpcServerWorker>();
 builder.Services.AddHostedService<ProcessStartMonitorWorker>();
+builder.Services.AddHostedService<MonitorEvasionWorker>();
 builder.Services.AddHostedService<TelemetryWorker>();
 builder.Services.AddHostedService<FileMonitorWorker>();
 builder.Services.AddHostedService<PeriodicAuditWorker>();

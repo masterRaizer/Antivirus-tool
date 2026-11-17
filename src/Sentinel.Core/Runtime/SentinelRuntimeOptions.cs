@@ -56,6 +56,12 @@ public sealed class SentinelRuntimeOptions
 
     /// <summary>Фабрика источника событий старта процессов (WMI/опрос); <c>null</c> — мониторинг старта недоступен.</summary>
     public Func<Monitoring.IProcessCreationEventSource>? ProcessStartSource { get; init; }
+
+    /// <summary>Фабрика замера активности процессов для детектора скрытых майнеров; <c>null</c> — детектор недоступен.</summary>
+    public Func<Monitoring.Evasion.IProcessActivitySampler>? ActivitySampler { get; init; }
+
+    /// <summary>Сведения о процессе для находок детектора скрытых майнеров (путь, командная строка, окна).</summary>
+    public Monitoring.Evasion.IEvasionProcessInspector? EvasionInspector { get; init; }
     public Func<PersistenceAuditReport>? PersistenceAudit { get; init; }
 
     /// <summary>Таблица TCP-соединений для аудита процессов (узлы семейств, порты пулов, прослушивание).</summary>
@@ -112,6 +118,8 @@ public sealed class SentinelRuntimeOptions
         RemediationEngine? engine = null;
         IProcessProvider? processes = null;
         Func<Monitoring.IProcessCreationEventSource>? processStarts = null;
+        Func<Monitoring.Evasion.IProcessActivitySampler>? activitySampler = null;
+        Monitoring.Evasion.IEvasionProcessInspector? evasionInspector = null;
         Auditors.Memory.MemoryIntegrityScanner? memoryScanner = null;
         Func<Kernel.IKernelBridge>? kernelBridge = null;
         IProcessProvider? kernelProcesses = null;
@@ -125,6 +133,8 @@ public sealed class SentinelRuntimeOptions
             engine = RemediationEngine.CreateDefault(whitelist, RemediationOptions.CreateDefault(data));
             processes = ProcessProviderFactory.CreateDefault();
             processStarts = Monitoring.ProcessCreationEventSourceFactory.CreateDefault;
+            activitySampler = ActivitySamplerFactory();
+            evasionInspector = new Monitoring.Evasion.WindowsEvasionProcessInspector();
             memoryScanner = new Auditors.Memory.MemoryIntegrityScanner(new Auditors.Memory.WindowsMemoryReader(), new SignatureEngine(rules));
             kernelBridge = Kernel.KernelBridgeFactory.CreateDefault;
             kernelProcesses = new WindowsProcessProvider(TimeSpan.Zero);
@@ -149,6 +159,8 @@ public sealed class SentinelRuntimeOptions
             Engine = engine,
             Processes = processes,
             ProcessStartSource = processStarts,
+            ActivitySampler = activitySampler,
+            EvasionInspector = evasionInspector,
             MemoryScanner = memoryScanner,
             KernelBridgeFactory = kernelBridge,
             KernelProtectionProcesses = kernelProcesses,
@@ -165,6 +177,10 @@ public sealed class SentinelRuntimeOptions
             RulesDirectory = rulesDirectory ?? DefaultRulesDirectory(),
         };
     }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static Func<Monitoring.Evasion.IProcessActivitySampler> ActivitySamplerFactory() =>
+        () => new Monitoring.Evasion.WindowsProcessActivitySampler();
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static Func<ThreatFamilies.FamilyVerificationProbe> FamilyProbeFactory(FileAnalyzer analyzer, Func<string, bool>? isUserAllowed) =>

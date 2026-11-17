@@ -11,11 +11,12 @@
 
         <StackPanel>
             <TextBlock Style="{StaticResource H1}" Text="Поведенческий щит и USB" />
-            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,14" Text="{Binding StatusLine}" />
+            <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,2" Text="{Binding StatusLine}" />
+            <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,14" TextWrapping="Wrap" Text="{Binding EvasionLine}" />
         </StackPanel>
 
         <!-- Переключатели -->
-        <UniformGrid Grid.Row="1" Columns="4" Margin="-6,0,-6,0">
+        <UniformGrid Grid.Row="1" Columns="5" Margin="-6,0,-6,0">
             <Border Style="{StaticResource Card}" Margin="6" Padding="16">
                 <StackPanel>
                     <TextBlock Style="{StaticResource H2}" Text="Анти-шифровальщик" />
@@ -42,6 +43,15 @@
                     <TextBlock Style="{StaticResource H2}" Text="Теневой режим" />
                     <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10" TextWrapping="Wrap" Text="Только журнал и запрос решения, без авто-действий." />
                     <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding ShadowMode, Mode=TwoWay}" Content="Включён" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Margin="6" Padding="16">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H2}" Text="Скрытые майнеры" />
+                    <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10" TextWrapping="Wrap"
+                               Text="Ловит процессы, которые прячут нагрузку, когда открыт Диспетчер задач." />
+                    <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding EvasionWatch, Mode=TwoWay}" Content="Включён"
+                              AutomationProperties.Name="Детектор скрытых майнеров" />
                 </StackPanel>
             </Border>
         </UniformGrid>

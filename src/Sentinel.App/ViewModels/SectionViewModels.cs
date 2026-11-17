@@ -629,6 +629,11 @@ public sealed class StartupViewModel : SectionViewModel
             var result = await Hub.SaveSettingsAsync(new SettingsUpdate
             {
                 AutoUpdateDatabases = settings.AutoUpdateDatabases,
+                EnableRansomwareShield = settings.EnableRansomwareShield,
+                EnableCanaryFiles = settings.EnableCanaryFiles,
+                EnableUsbShield = settings.EnableUsbShield,
+                BehavioralShadowMode = settings.BehavioralShadowMode,
+                EnableMonitorEvasionWatch = settings.EnableMonitorEvasionWatch,
                 AllowedPaths = [.. settings.AllowedPaths, item.Target],
                 AllowedProcesses = settings.AllowedProcesses,
                 AllowedHashes = settings.AllowedHashes,

@@ -86,6 +86,7 @@ internal static partial class Program
                 "threatdb" => ThreatDb(opts),
                 "scan-usb" => ScanUsb(opts),
                 "behavioral-status" => BehavioralStatus(opts),
+                "evasion-watch" => EvasionWatch(opts),
                 "service-scan" => ServiceScan(opts),
                 "family-scan" => FamilyScan(opts, clean: false),
                 "family-clean" => FamilyScan(opts, clean: true),
@@ -114,6 +115,9 @@ internal static partial class Program
             Использование:
               sentinel scan-usb [путь]        проверка съёмных носителей USB-щитом
               sentinel behavioral-status     состояние поведенческого щита
+              sentinel evasion-watch [секунды] [--json]
+                                             живой прогон детектора скрытых майнеров (прячутся от Диспетчера задач);
+                                             только наблюдение, по умолчанию 180 с (только Windows)
               sentinel service-scan quick|full|custom <путь> [--wait] [--json]
                                              проверка силами службы (как кнопка в окне); --wait — ждать итога
               sentinel scan <путь> [--rules <каталог>] [--json] [--no-recurse] [--max-size <МБ>] [действия] [отчёт]
@@ -312,6 +316,7 @@ internal static partial class Program
                 config.EnableCanaryFiles,
                 config.EnableUsbShield,
                 config.BehavioralShadowMode,
+                config.EnableMonitorEvasionWatch,
             }, JsonOptions));
             return ExitOk;
         }
@@ -321,6 +326,7 @@ internal static partial class Program
         Console.WriteLine($"  Файлы-приманки    : {OnOff(config.EnableCanaryFiles)}");
         Console.WriteLine($"  USB-щит           : {OnOff(config.EnableUsbShield)}");
         Console.WriteLine($"  Теневой режим     : {OnOff(config.BehavioralShadowMode)}");
+        Console.WriteLine($"  Скрытые майнеры   : {OnOff(config.EnableMonitorEvasionWatch)} (прячутся от Диспетчера задач)");
         Console.WriteLine($"  Каталог данных    : {DataDirectory(opts)}");
         return ExitOk;
 

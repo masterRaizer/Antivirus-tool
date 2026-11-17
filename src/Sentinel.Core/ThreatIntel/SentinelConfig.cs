@@ -31,6 +31,9 @@ public sealed record SentinelConfig
     /// <summary>Теневой аудит поведения: активные действия не выполняются автоматически, только запрос решения.</summary>
     public bool BehavioralShadowMode { get; init; }
 
+    /// <summary>Детектор скрытых майнеров: процессы, которые прячут нагрузку при открытии Диспетчера задач.</summary>
+    public bool EnableMonitorEvasionWatch { get; init; } = true;
+
     public bool HasCloudKeys => !string.IsNullOrWhiteSpace(KasperskyOpenTipApiKey) || !string.IsNullOrWhiteSpace(VirusTotalApiKey);
 }
 

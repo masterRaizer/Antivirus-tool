@@ -224,8 +224,15 @@ public sealed class SettingsViewModel : SectionViewModel
         IsBusy = true;
         try
         {
+            // Переключатели поведенческого щита живут в своём разделе: сохраняем их текущие значения, а не значения по умолчанию.
+            var current = await Hub.GetSettingsAsync();
             var result = await Hub.SaveSettingsAsync(new SettingsUpdate
             {
+                EnableRansomwareShield = current.EnableRansomwareShield,
+                EnableCanaryFiles = current.EnableCanaryFiles,
+                EnableUsbShield = current.EnableUsbShield,
+                BehavioralShadowMode = current.BehavioralShadowMode,
+                EnableMonitorEvasionWatch = current.EnableMonitorEvasionWatch,
                 KasperskyOpenTipApiKey = KeyUpdate(KasperskyKey, ClearKaspersky),
                 VirusTotalApiKey = KeyUpdate(VirusTotalKey, ClearVirusTotal),
                 AbuseChAuthKey = KeyUpdate(AbuseChKey, ClearAbuseCh),

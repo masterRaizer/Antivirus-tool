@@ -159,6 +159,9 @@ public sealed record SettingsSnapshot
 
     public bool BehavioralShadowMode { get; init; }
 
+    /// <summary>Детектор скрытых майнеров, прячущихся от Диспетчера задач.</summary>
+    public bool EnableMonitorEvasionWatch { get; init; } = true;
+
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];
 
     public IReadOnlyList<string> AllowedProcesses { get; init; } = [];
@@ -188,6 +191,9 @@ public sealed record SettingsUpdate
     public bool EnableUsbShield { get; init; } = true;
 
     public bool BehavioralShadowMode { get; init; }
+
+    /// <summary>Детектор скрытых майнеров, прячущихся от Диспетчера задач.</summary>
+    public bool EnableMonitorEvasionWatch { get; init; } = true;
 
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];
 

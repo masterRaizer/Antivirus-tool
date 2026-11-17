@@ -39,7 +39,10 @@ sentinel audit-config    [--json]                                        # то�
 sentinel service-scan    quick|full|custom <путь> [--wait] [--json]      # проверка силами службы (как кнопка в окне)
 sentinel family-scan     [--json]                                        # семейства майнеров/загрузчиков, только Windows
 sentinel family-clean    [--confirm] [--block-ioc] [--json]              # плейбук нейтрализации, только Windows
+sentinel evasion-watch   [секунды] [--json]                              # детектор скрытых майнеров вживую, только наблюдение
 ```
+
+Детектор скрытых майнеров, которые прячут нагрузку при открытии Диспетчера задач, — [`docs/MONITOR_EVASION.md`](docs/MONITOR_EVASION.md).
 
 Семейства CAAService (Pearl/pearlhash) и techias (активатор Office): IOC, техники и плейбук —
 [`docs/THREAT_FAMILIES.md`](docs/THREAT_FAMILIES.md).
@@ -116,6 +119,7 @@ sentinel rollback list   | rollback undo <id>
 
 - `FileSystemWatcher` по профилям пользователей, `ProgramData`, временным каталогам, задачам планировщика и `hosts`
   с дебаунсом и отсевом системного шума;
+- детектор скрытых майнеров: раз в секунду нагрузка всех процессов, ловятся те, кто прячется от Диспетчера задач;
 - аудит новых процессов каждые 15 секунд; автозагрузка и исключения конфигурации — каждые 5 минут
   и сразу после изменения `hosts` или задач;
 - встроенный IPC-сервер на именованном канале `\\.\pipe\Sentinel.Service.v1` (JSON с префиксом длины).

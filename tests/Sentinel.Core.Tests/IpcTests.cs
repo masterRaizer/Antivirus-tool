@@ -30,7 +30,10 @@ internal sealed class FakeBackend : ISentinelBackend
     }
 
     public Task<Sentinel.Core.Runtime.BehavioralStatus> GetBehavioralStatusAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(new Sentinel.Core.Runtime.BehavioralStatus(true, true, true, false, 4, 0, ["BH-02 test"]));
+        Task.FromResult(new Sentinel.Core.Runtime.BehavioralStatus(true, true, true, false, 4, 0, ["BH-02 test"])
+        {
+            EvasionWatch = new Sentinel.Core.Runtime.MonitorEvasionStatus(true, true, 120, 2, 1, 0, "Taskmgr.exe", ["svc.exe (PID 5): ждёт решения"]),
+        });
 
     public Task<IReadOnlyList<Sentinel.Core.Protection.UsbFinding>> ScanRemovableAsync(string? pathOrDrive, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Sentinel.Core.Protection.UsbFinding>>([new Sentinel.Core.Protection.UsbFinding("Autorun", Sentinel.Core.Signatures.Severity.High, pathOrDrive ?? "E:\\", "autorun")]);
@@ -318,6 +321,9 @@ public sealed class IpcPipeTests : IAsyncLifetime
         var findings = await client.ScanRemovableAsync(@"E:\");
         Assert.Equal(4, status.CanaryCount);
         Assert.Equal("BH-02 test", Assert.Single(status.RecentChains));
+        Assert.Equal(120, status.EvasionWatch?.Samples);
+        Assert.Equal("Taskmgr.exe", status.EvasionWatch?.OpenMonitor);
+        Assert.Contains("находок 1", status.EvasionWatch!.Describe(), StringComparison.Ordinal);
         var finding = Assert.Single(findings);
         Assert.Equal("Autorun", finding.Kind);
         Assert.Equal(@"E:\", finding.Path);
