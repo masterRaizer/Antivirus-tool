@@ -419,7 +419,7 @@ public sealed partial class SentinelRuntime
             return cached;
         }
 
-        var audit = Task.Run(() => _o.PersistenceAudit!(), token);
+        var audit = RunPersistenceAuditSharedAsync();
         var started = _o.TimeProvider.GetTimestamp();
         while (!audit.IsCompleted)
         {
@@ -436,9 +436,7 @@ public sealed partial class SentinelRuntime
             Update(run, p => p with { CurrentItem = $"{surface} — идёт аудит, {elapsed.TotalSeconds:0} с (обычно 1–3 мин)" }, force: true);
         }
 
-        var report = await audit.ConfigureAwait(false);
-        StorePersistence(report);
-        return report;
+        return await audit.ConfigureAwait(false);
     }
 
     private async Task ScanFilesAsync(IReadOnlyList<ScanRoot> roots, ScanMode mode, ScanRun run, CancellationToken token)

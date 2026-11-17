@@ -13,6 +13,7 @@ public sealed partial class SentinelRuntime
     private IReadOnlyList<DefenderExclusion> _knownExclusions = [];
     private volatile bool _auditRequested = true;
     private (Audit.Persistence.PersistenceAuditReport Report, long Timestamp)? _persistenceCache;
+    private Task<Audit.Persistence.PersistenceAuditReport>? _persistenceInFlight;
 
     /// <summary>
     /// Цикл файлового монитора: изменённые файлы (после дебаунса и отсева шума) анализируются,
@@ -186,7 +187,8 @@ public sealed partial class SentinelRuntime
         return guard.Decision switch
         {
             Behavioral.GuardDecision.Protected => null,
-            Behavioral.GuardDecision.LogOnly when signed => null, // слабые признаки у доверенного образа — не событие
+            // Слабые признаки у образа с действительной подписью (любого издателя: Termius, установщики Electron/NSIS) — не событие.
+            Behavioral.GuardDecision.LogOnly when signed || HasValidSignature(entry) => null,
             Behavioral.GuardDecision.AskUser =>
                 await _dispatcher.DispatchProcessForDecisionAsync(entry, guard.Reason, source, cancellationToken).ConfigureAwait(false),
             _ => await _dispatcher.DispatchProcessAsync(entry, source, cancellationToken).ConfigureAwait(false),
@@ -198,8 +200,10 @@ public sealed partial class SentinelRuntime
     {
         var (guard, signed) = EvaluateProcessGuard(entry);
         return guard.Decision is Behavioral.GuardDecision.Protected
-            || (guard.Decision is Behavioral.GuardDecision.LogOnly && signed);
+            || (guard.Decision is Behavioral.GuardDecision.LogOnly && (signed || HasValidSignature(entry)));
     }
+
+    private static bool HasValidSignature(ProcessAuditEntry entry) => entry.FileScan?.Signature is { IsValid: true };
 
     private (Behavioral.GuardVerdict Guard, bool Signed) EvaluateProcessGuard(ProcessAuditEntry entry)
     {
@@ -224,6 +228,30 @@ public sealed partial class SentinelRuntime
         });
 
         return (guard, signed);
+    }
+
+    /// <summary>
+    /// Один аудит автозагрузки на всех: если фоновый аудит службы уже идёт (например, сразу после старта), проверка ждёт его,
+    /// а не запускает второй такой же обход служб, драйверов и задач (на Katana два параллельных обхода дали 100 с вместо 20).
+    /// </summary>
+    private Task<Audit.Persistence.PersistenceAuditReport> RunPersistenceAuditSharedAsync()
+    {
+        lock (_sync)
+        {
+            if (_persistenceInFlight is { IsCompleted: false } running)
+            {
+                return running;
+            }
+
+            var audit = Task.Run(() =>
+            {
+                var report = _o.PersistenceAudit!();
+                StorePersistence(report);
+                return report;
+            });
+            _persistenceInFlight = audit;
+            return audit;
+        }
     }
 
     private void StorePersistence(Audit.Persistence.PersistenceAuditReport report)
@@ -256,8 +284,7 @@ public sealed partial class SentinelRuntime
     {
         if (_o.PersistenceAudit is not null)
         {
-            var persistence = _o.PersistenceAudit();
-            StorePersistence(persistence);
+            var persistence = await RunPersistenceAuditSharedAsync().ConfigureAwait(false);
             foreach (var entry in persistence.Flagged)
             {
                 await _dispatcher.DispatchPersistenceAsync(entry, "realtime", cancellationToken).ConfigureAwait(false);

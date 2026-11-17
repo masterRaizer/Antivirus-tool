@@ -34,7 +34,7 @@ public sealed class PersistenceAuditor
     /// Результат анализа цели за прогон: сотни служб указывают на svchost.exe, задачи — на rundll32/powershell, поэтому
     /// каждый файл хешируется и проверяется один раз.
     /// </summary>
-    private readonly Dictionary<string, FileScanResult> _scanMemo = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, FileScanResult> _scanMemo = new(StringComparer.OrdinalIgnoreCase);
 
     public PersistenceAuditor(
         PersistenceAuditorOptions? options = null,
@@ -231,7 +231,9 @@ public sealed class PersistenceAuditor
     private void AuditServices(List<PersistenceEntry> entries)
     {
         var root = new RegistryKeyPath(RegistryHive.LocalMachine, ServicesKey);
-        foreach (var name in _registry!.GetSubKeyNames(root))
+        var names = _registry!.GetSubKeyNames(root);
+        Prefetch(names.Select(n => ResolveServiceImagePath(_registry.GetValue(new RegistryKeyPath(RegistryHive.LocalMachine, ServicesKey + "\\" + n), "ImagePath")?.Value)));
+        foreach (var name in names)
         {
             var key = new RegistryKeyPath(RegistryHive.LocalMachine, ServicesKey + "\\" + name);
             var imagePath = _registry.GetValue(key, "ImagePath")?.Value;
@@ -281,7 +283,9 @@ public sealed class PersistenceAuditor
 
     private void AuditScheduledTasks(List<PersistenceEntry> entries)
     {
-        foreach (var task in _tasks!.GetTasks())
+        var tasks = _tasks!.GetTasks();
+        Prefetch(tasks.SelectMany(t => t.ExecActions).Select(a => ResolveServiceImagePath(a.Command) ?? ResolveTarget(a.Command)));
+        foreach (var task in tasks)
         {
             foreach (var action in task.ExecActions)
             {
@@ -677,15 +681,36 @@ public sealed class PersistenceAuditor
         return TrustedPublishers.IsTrusted(signature);
     }
 
-    private FileScanResult AnalyzeCached(string full)
+    private FileScanResult AnalyzeCached(string full) =>
+        _scanMemo.GetOrAdd(full, path => _analyzer!.Analyze(path, null, new ScoreContext(PersistenceBound: true)));
+
+    /// <summary>
+    /// Параллельный предварительный анализ целей (сотни драйверов и служб: хеш и проверка подписи по каталогу — основное время
+    /// этапа). Дальше обход идёт по-прежнему последовательно и берёт готовые результаты из кэша.
+    /// </summary>
+    private void Prefetch(IEnumerable<string?> targets)
     {
-        if (!_scanMemo.TryGetValue(full, out var scan))
+        if (!_options.AnalyzeTargets || _analyzer is null)
         {
-            scan = _analyzer!.Analyze(full, null, new ScoreContext(PersistenceBound: true));
-            _scanMemo[full] = scan;
+            return;
         }
 
-        return scan;
+        var files = targets.Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => Environment.ExpandEnvironmentVariables(t!))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(t => !_scanMemo.ContainsKey(t) && File.Exists(t))
+            .ToList();
+        Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8) }, file =>
+        {
+            try
+            {
+                AnalyzeCached(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                // Ошибка останется ошибкой и при последовательном обходе — там она и обрабатывается.
+            }
+        });
     }
 
     private FileScanResult? AnalyzeTargetFile(string? command, List<AuditFinding> findings, string context) =>
