@@ -124,6 +124,8 @@ public sealed class BehavioralViewModel : SectionViewModel
             EnableUsbShield = UsbShield,
             BehavioralShadowMode = ShadowMode,
             EnableMonitorEvasionWatch = EvasionWatch,
+            EnableKnownGoodLookup = _settings.EnableKnownGoodLookup,
+            PowerSaverOnBattery = _settings.PowerSaverOnBattery,
             AllowedPaths = _settings.AllowedPaths,
             AllowedProcesses = _settings.AllowedProcesses,
             AllowedHashes = _settings.AllowedHashes,

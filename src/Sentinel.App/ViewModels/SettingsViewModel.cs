@@ -26,6 +26,8 @@ public sealed class SettingsViewModel : SectionViewModel
     private string _newValue = string.Empty;
     private AllowedEntry? _selected;
     private bool _autoUpdate = true;
+    private bool _knownGoodLookup;
+    private bool _powerSaver = true;
     private bool _hasKaspersky;
     private bool _hasVirusTotal;
     private bool _hasAbuseCh;
@@ -99,6 +101,20 @@ public sealed class SettingsViewModel : SectionViewModel
         set => Set(ref _autoUpdate, value);
     }
 
+    /// <summary>Проверка неизвестных файлов по базе известных программ CIRCL hashlookup (отправляется только хеш).</summary>
+    public bool EnableKnownGoodLookup
+    {
+        get => _knownGoodLookup;
+        set => Set(ref _knownGoodLookup, value);
+    }
+
+    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока.</summary>
+    public bool PowerSaverOnBattery
+    {
+        get => _powerSaver;
+        set => Set(ref _powerSaver, value);
+    }
+
     /// <summary>Новые значения ключей из полей пароля; пустое — оставить прежний.</summary>
     public string KasperskyKey { get; set; } = string.Empty;
 
@@ -144,7 +160,7 @@ public sealed class SettingsViewModel : SectionViewModel
     }
 
     public string DatabaseSummary => Database.HashCount > 0
-        ? string.Format(CultureInfo.CurrentCulture, "{0:N0} SHA-256 известных угроз", Database.HashCount)
+        ? string.Format(CultureInfo.CurrentCulture, "{0:N0} хешей известных угроз (SHA-256, SHA-1, MD5)", Database.HashCount)
         : "База угроз не загружена";
 
     public string DatabaseDetail
@@ -198,6 +214,8 @@ public sealed class SettingsViewModel : SectionViewModel
         }
 
         AutoUpdateDatabases = snapshot.AutoUpdateDatabases;
+        EnableKnownGoodLookup = snapshot.EnableKnownGoodLookup;
+        PowerSaverOnBattery = snapshot.PowerSaverOnBattery;
         _hasKaspersky = snapshot.HasKasperskyOpenTipApiKey;
         _hasVirusTotal = snapshot.HasVirusTotalApiKey;
         _hasAbuseCh = snapshot.HasAbuseChAuthKey;
@@ -237,6 +255,8 @@ public sealed class SettingsViewModel : SectionViewModel
                 VirusTotalApiKey = KeyUpdate(VirusTotalKey, ClearVirusTotal),
                 AbuseChAuthKey = KeyUpdate(AbuseChKey, ClearAbuseCh),
                 AutoUpdateDatabases = AutoUpdateDatabases,
+                EnableKnownGoodLookup = EnableKnownGoodLookup,
+                PowerSaverOnBattery = PowerSaverOnBattery,
                 AllowedPaths = Allowed.Where(a => a.Kind == "Путь").Select(a => a.Value).ToArray(),
                 AllowedProcesses = Allowed.Where(a => a.Kind == "Процесс").Select(a => a.Value).ToArray(),
                 AllowedHashes = Allowed.Where(a => a.Kind == "SHA-256").Select(a => a.Value).ToArray(),

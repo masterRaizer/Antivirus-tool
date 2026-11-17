@@ -313,6 +313,7 @@ public sealed class FileAnalyzer
             score = ThreatScoringEngine.Evaluate(input);
 
             // Облако: только хеш и только для неподписанных файлов с подозрительным баллом.
+            var knownGood = false;
             if (_cloud is not null && !signatureValid && !microsoftTrusted && score.Value >= _options.CloudLookupScore && definitive is null)
             {
                 var cloud = _cloud.Lookup(sha256);
@@ -322,13 +323,18 @@ public sealed class FileAnalyzer
                     detections.Add(new Detection($"Cloud.{cloud.Source}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
                         $"Облачная репутация ({cloud.Source}): хеш признан вредоносным. {cloud.Detail}".Trim(), []));
                 }
+                else
+                {
+                    // «Белое облако» (зелёная зона OpenTIP, база известных программ CIRCL/NSRL): один лишь балл не находка.
+                    knownGood = cloud.KnownGood && !cloud.Disputed;
+                }
             }
 
             // Копия Windows на другом диске: подписи её каталогов живой системе не видны, импорты штатных компонентов
             // (AMSI, VirtualProtect, отладка) дают балл — без сигнатуры или хеша это не находка.
             var offlineImage = definitive is null && !signatureValid && detections.Count == 0
                 && (_options.IsOfflineSystemImage ?? OfflineWindowsImage.Contains)(path);
-            if (definitive is null && !offlineImage && score.Level is { } level && level >= Severity.Low)
+            if (definitive is null && !offlineImage && !knownGood && score.Level is { } level && level >= Severity.Low)
             {
                 detections.Add(new Detection("Heuristic.ThreatScore", level, "score", DetectionSource.Heuristic, null,
                     $"Балл угрозы {score.Value}/100: {score.Describe()}.", []));

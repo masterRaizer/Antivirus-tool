@@ -3,6 +3,7 @@ using Sentinel.Core.Hashing;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Signatures;
 using Sentinel.Core.Testing;
+using Sentinel.Core.ThreatIntel;
 using Sentinel.Core.Trust;
 
 namespace Sentinel.Core.Tests;
@@ -34,6 +35,40 @@ public class FileAnalyzerTests
         Assert.Equal(Verdict.Clean, r.Verdict);
         Assert.False(r.Pe!.IsPe);
         Assert.Null(r.Signature);
+    }
+
+    private sealed class FixedCloud(CloudLookupResult result) : ICloudReputationProvider
+    {
+        public int Calls { get; private set; }
+
+        public CloudLookupResult Lookup(string sha256Hex)
+        {
+            Calls++;
+            return result;
+        }
+    }
+
+    [Fact]
+    public void KnownGoodCloudAnswer_SuppressesHeuristicOnly_DisputedDoesNot()
+    {
+        using var tmp = new TempDir();
+        var bytes = SyntheticArtifacts.BuildPe(new() { HighEntropyText = true, WritableText = true, TextSize = 0x4000 });
+        var path = tmp.Write("packed.exe", bytes);
+        FileAnalyzer With(ICloudReputationProvider cloud) =>
+            new(new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory)), new UnavailableSignatureVerifier(), null, new FileAnalyzerOptions(), null, cloud);
+
+        var good = new FixedCloud(new CloudLookupResult(CloudReputation.Clean, "CIRCL hashlookup", "доверие 70") { KnownGood = true });
+        var known = With(good).Analyze(path);
+        Assert.Equal(1, good.Calls);
+        Assert.Equal(Verdict.Clean, known.Verdict);
+        Assert.DoesNotContain(known.Detections, d => d.Name == "Heuristic.ThreatScore");
+        Assert.Equal(45, known.Score!.Value); // балл остаётся в отчёте, но не превращается в находку
+
+        var disputed = With(new FixedCloud(new CloudLookupResult(CloudReputation.Clean, "x") { KnownGood = true, Disputed = true })).Analyze(path);
+        Assert.Contains(disputed.Detections, d => d.Name == "Heuristic.ThreatScore");
+
+        var malicious = With(new FixedCloud(new CloudLookupResult(CloudReputation.Malicious, "CIRCL hashlookup", "x"))).Analyze(path);
+        Assert.Equal(Verdict.Malicious, malicious.Verdict);
     }
 
     [Fact]

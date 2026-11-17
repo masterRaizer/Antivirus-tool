@@ -310,9 +310,9 @@ public static class ScanPoolFactory
     /// <c>N = Math.Clamp(Environment.ProcessorCount, 4, 8)</c>, чтобы одиночный <c>Sentinel.App.exe</c> проверял без сбоев.
     /// </summary>
     public static IScanPool Create(Func<string, FileScanResult> analyze, string rulesDirectory, string dataDirectory, ScanVerdictCache? cache,
-        string? allowedExclusionsFile = null, string? baseDirectory = null, IWorkerLauncher? launcherOverride = null)
+        string? allowedExclusionsFile = null, string? baseDirectory = null, IWorkerLauncher? launcherOverride = null, int? workerCount = null)
     {
-        var workers = ScanPoolBase.DefaultWorkerCount();
+        var workers = Math.Max(1, workerCount ?? ScanPoolBase.DefaultWorkerCount());
         var cli = FindCli(baseDirectory);
         if (launcherOverride is not null)
         {

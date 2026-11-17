@@ -1,6 +1,6 @@
 # HANDOFF — Sentinel
 
-Обновлено: 2026-11-16 (UTC). Ведёт `repo-scout`; правила — скиллы `sentinel-stage-flow` и `av-core-engineer`.
+Обновлено: 2026-11-17 (UTC). Ведёт `repo-scout`; правила — скиллы `sentinel-stage-flow` и `av-core-engineer`.
 
 ## Ветка и коммит
 - Основная ветка: `main` — включает этапы 1–8 (релиз `v1.3.0`: `ProcessStartMonitor`, `MemoryIntegrityScanner`, `IProcessContainment`, драйвер `SentinelDrv`), скиллы `.claude/skills/` и актуальную документацию.
@@ -304,6 +304,25 @@
 - Справка `docs/AV_LANDSCAPE.md`: устройство VirusTotal, Касперского, Защитника, ESET; сравнение с Sentinel; план; учебный план.
 - Не слиты в main: `claude/funny-cray-ckg20j` (правка SKILL.md — по правилам проекта меняется только с согласия пользователя);
   содержимое `claude/sentinel-stage-3-quarantine-dfzize` уже есть в main другими коммитами.
+
+### 1.3.9 — большие открытые базы хешей (SHA-256, SHA-1, MD5), «белое облако», режим ноутбука
+- Базы вендоров (Kaspersky, ESET, Защитник) закрыты лицензией и не копируются; вместо них — все крупные открытые базы.
+  База угроз теперь из трёх файлов: `threat_hashes.bin` (SHA-256), `threat_hashes_sha1.bin`, `threat_hashes_md5.bin`
+  (формат v2: длина хеша в заголовке; файлы v1 читаются как раньше). MD5/SHA-1 файла считаются, только если такие базы есть.
+- Источники сборки в релизе (`scripts/build-threat-db.ps1`, шаг workflow перед publish): полная выгрузка abuse.ch MalwareBazaar
+  (CSV с семействами; при отказе — полный список SHA-256), последние 50 списков VirusShare (MD5), eset/malware-ioc и
+  Neo23x0/signature-base (все три вида хешей). Недоступный источник — предупреждение, релиз не падает; остаётся база из репозитория.
+  Для MalwareBazaar может понадобиться бесплатный ключ abuse.ch: секрет репозитория `ABUSECH_AUTH_KEY`.
+- CLI: `threatdb build --out data/threat_hashes.bin [--signature-base dir] [--eset dir] [--malwarebazaar file]… [--virusshare dir]`,
+  `threatdb info` (по видам), `threatdb lookup <sha256|sha1|md5>`. Обновление баз службой — потоковое слияние без загрузки базы в память.
+- «Белое облако» (как KSN): переключатель «Проверять подозрительные файлы по базе известных программ» (`EnableKnownGoodLookup`,
+  по умолчанию выключен) — SHA-256 неподписанного файла с баллом ≥ 45 сверяется с CIRCL hashlookup (NSRL, пакеты дистрибутивов).
+  Известная программа (доверие ≥ 50, зелёная зона OpenTIP) — эвристический балл не находка; `KnownMalicious` у CIRCL — находка.
+  Если VirusTotal видит хотя бы один движок с детектом или OpenTIP даёт жёлтую/оранжевую зону, «чистоте» не доверяем.
+- Режим ноутбука (`PowerSaverOnBattery`, по умолчанию включён): от батареи (`GetSystemPowerStatus`) плановый аудит автозагрузки
+  раз в 30 мин вместо 5, проверка файлов и процессов — в 2 потока; защита в реальном времени, аудит новых процессов и внеочередной
+  аудит после изменения hosts/задач не откладываются. В отчёте проверки — пометка «режим ноутбука: от батареи».
+- Тесты Linux: 1031 всего, 1024 passed, 7 skipped (`WindowsFact`).
 
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`

@@ -107,7 +107,26 @@
                             <TextBlock Style="{StaticResource Label}" Text="ABUSE.CH AUTH-KEY" />
                             <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap" Text="{Binding AbuseChState}" />
                             <PasswordBox x:Name="AbuseChBox" Margin="0,4,0,4" PasswordChanged="OnAbuseChChanged" />
-                            <CheckBox Content="Удалить ключ" Foreground="{StaticResource MutedBrush}" IsChecked="{Binding ClearAbuseCh, Mode=TwoWay}" />
+                            <CheckBox Content="Удалить ключ" Foreground="{StaticResource MutedBrush}" IsChecked="{Binding ClearAbuseCh, Mode=TwoWay}" Margin="0,0,0,12" />
+
+                            <TextBlock Style="{StaticResource Label}" Text="БАЗА ИЗВЕСТНЫХ ПРОГРАММ (CIRCL / NSRL)" />
+                            <CheckBox Style="{StaticResource Switch}" Margin="0,6,0,4" IsChecked="{Binding EnableKnownGoodLookup, Mode=TwoWay}"
+                                      AutomationProperties.Name="Проверять по базе известных программ"
+                                      Content="Проверять подозрительные файлы по базе известных программ" />
+                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap"
+                                       Text="Как «белое облако» KSN: если хеш неподписанного файла есть в открытой базе CIRCL hashlookup (NSRL и дистрибутивы программ), эвристика его не помечает; если база отмечает хеш как вредоносный — это находка. Ключ не нужен, отправляется только SHA-256." />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Режим ноутбука -->
+                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource H2}" Text="Режим ноутбука" />
+                            <CheckBox Style="{StaticResource Switch}" Margin="0,8,0,4" IsChecked="{Binding PowerSaverOnBattery, Mode=TwoWay}"
+                                      AutomationProperties.Name="Экономить батарею"
+                                      Content="Экономить батарею: от батареи фоновый аудит реже, проверка в 2 потока" />
+                            <TextBlock Style="{StaticResource Muted}" TextWrapping="Wrap"
+                                       Text="Защита в реальном времени и проверка новых процессов работают как обычно. От батареи плановый аудит автозагрузки идёт раз в 30 минут вместо 5, а проверка файлов — в 2 рабочих процесса. При подключении зарядки обычный режим возвращается сам." />
                         </StackPanel>
                     </Border>
                 </StackPanel>

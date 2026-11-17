@@ -38,6 +38,15 @@ public enum CloudReputation
 public sealed record CloudLookupResult(CloudReputation Reputation, string Source, string? Detail = null)
 {
     public static CloudLookupResult Unknown { get; } = new(CloudReputation.Unknown, "none");
+
+    /// <summary>
+    /// Хеш есть в базе известных программ (зелёная зона KSN, NSRL/CIRCL с достаточным доверием): эвристический балл
+    /// такого файла не превращается в находку — так «белое облако» снимает ложные срабатывания.
+    /// </summary>
+    public bool KnownGood { get; init; }
+
+    /// <summary>Сервисы расходятся (часть движков VirusTotal, жёлтая/оранжевая зона OpenTIP): «известной чистоте» не доверяем.</summary>
+    public bool Disputed { get; init; }
 }
 
 /// <summary>Облачная проверка репутации по SHA-256 (сам файл никуда не отправляется).</summary>

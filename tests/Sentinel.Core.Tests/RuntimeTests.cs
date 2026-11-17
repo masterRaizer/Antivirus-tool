@@ -26,6 +26,12 @@ internal sealed class FakeTelemetry : ITelemetryProvider
     public void Dispose() => Disposed = true;
 }
 
+/// <summary>Синтетический источник питания для режима ноутбука.</summary>
+internal sealed class FakePower : IPowerSource
+{
+    public bool OnBattery { get; set; }
+}
+
 /// <summary>Стенд рантайма: настоящие анализатор, карантин и движок; платформенные источники — синтетические.</summary>
 internal sealed class RuntimeBench : IAsyncDisposable
 {
@@ -34,6 +40,7 @@ internal sealed class RuntimeBench : IAsyncDisposable
     public InMemoryRegistryProvider Registry { get; } = new();
     public FakeDefender Defender { get; } = new();
     public FakeTelemetry Telemetry { get; } = new();
+    public FakePower Power { get; } = new();
     public List<PersistenceEntry> Persistence { get; } = [];
     public List<(DefenderExclusion Exclusion, Severity Severity)> Exclusions { get; } = [];
     public SentinelRuntime Runtime { get; }
@@ -89,6 +96,7 @@ internal sealed class RuntimeBench : IAsyncDisposable
             KernelHealthInterval = TimeSpan.FromMilliseconds(20),
             KernelReconnectInterval = TimeSpan.FromMilliseconds(60),
             KernelSyncInterval = TimeSpan.FromMilliseconds(60),
+            Power = Power,
         });
         Runtime.ScanProgressChanged += p => { lock (Progress) { Progress.Add(p); } };
         Runtime.ThreatRaised += t => { lock (Raised) { Raised.Add(t); } };
@@ -608,6 +616,48 @@ public class RealtimeInfrastructureTests
 
 public class RuntimeSettingsTests
 {
+    [Fact]
+    public async Task PowerSaver_OnBattery_StretchesPlannedAudit_AndNarrowsWorkers_UnlessSwitchedOff()
+    {
+        await using var b = new RuntimeBench();
+        Assert.False(b.Runtime.PowerSaving);
+        Assert.Equal(TimeSpan.FromMinutes(5), b.Runtime.EffectiveConfigAuditInterval);
+
+        b.Power.OnBattery = true;
+        Assert.True(b.Runtime.PowerSaving);
+        Assert.Equal(PowerSaverPolicy.BatteryConfigAuditInterval, b.Runtime.EffectiveConfigAuditInterval);
+        Assert.InRange(b.Runtime.EffectiveWorkerCount, 1, PowerSaverPolicy.BatteryWorkerCount);
+
+        await b.Runtime.SaveSettingsAsync(new SettingsUpdate { PowerSaverOnBattery = false });
+        Assert.False(b.Runtime.PowerSaving);
+        Assert.Equal(TimeSpan.FromMinutes(5), b.Runtime.EffectiveConfigAuditInterval);
+        Assert.Equal(Sentinel.Core.Scanning.Pool.ScanPoolBase.DefaultWorkerCount(), b.Runtime.EffectiveWorkerCount);
+    }
+
+    [Fact]
+    public void PowerSaverPolicy_NeverShortensLongerIntervals_AndKeepsAtLeastOneWorker()
+    {
+        Assert.Equal(TimeSpan.FromHours(2), PowerSaverPolicy.ConfigAuditInterval(TimeSpan.FromHours(2), saving: true));
+        Assert.Equal(TimeSpan.FromMinutes(5), PowerSaverPolicy.ConfigAuditInterval(TimeSpan.FromMinutes(5), saving: false));
+        Assert.Equal(1, PowerSaverPolicy.WorkerCount(1, saving: true));
+        Assert.Equal(8, PowerSaverPolicy.WorkerCount(8, saving: false));
+        Assert.False(SystemPowerSource.Instance.OnBattery && !OperatingSystem.IsWindows());
+    }
+
+    [Fact]
+    public async Task KnownGoodLookup_IsOffByDefault_AndBothLaptopSwitchesAreSaved()
+    {
+        await using var b = new RuntimeBench();
+        var initial = await b.Runtime.GetSettingsAsync();
+        Assert.False(initial.EnableKnownGoodLookup);
+        Assert.True(initial.PowerSaverOnBattery);
+
+        await b.Runtime.SaveSettingsAsync(new SettingsUpdate { EnableKnownGoodLookup = true, PowerSaverOnBattery = false });
+        var saved = await b.Runtime.GetSettingsAsync();
+        Assert.True(saved.EnableKnownGoodLookup);
+        Assert.False(saved.PowerSaverOnBattery);
+    }
+
     [Fact]
     public async Task MonitorEvasionSwitch_IsSaved_AndOtherBehaviorSwitchesAreKept()
     {
