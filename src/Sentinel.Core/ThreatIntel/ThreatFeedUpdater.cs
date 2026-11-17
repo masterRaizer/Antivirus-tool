@@ -261,7 +261,7 @@ public abstract class ThreatFeedSource
 
     public abstract Task<FeedResult> FetchAsync(FeedContext context, CancellationToken cancellationToken);
 
-    /// <summary>Источники по умолчанию: GitHub-зеркала IOC, устаревшие публичные списки abuse.ch и актуальные API abuse.ch (нужен Auth-Key).</summary>
+    /// <summary>Источники по умолчанию: GitHub-зеркала IOC, Feodo Tracker и актуальные API abuse.ch (нужен Auth-Key).</summary>
     public static IReadOnlyList<ThreatFeedSource> CreateDefaults() =>
     [
         new GitHubIocSource("Neo23x0/signature-base (IOC)", "Neo23x0", "signature-base", "master",
@@ -278,10 +278,8 @@ public abstract class ThreatFeedSource
                     || path.EndsWith(".txt", StringComparison.Ordinal) || path.EndsWith(".csv", StringComparison.Ordinal)
                     || path.EndsWith(".ioc", StringComparison.Ordinal) || path.EndsWith(".adoc", StringComparison.Ordinal) || path.EndsWith(".json", StringComparison.Ordinal)),
             (path, text) => ThreatFeedParsers.ParseHashListAllKinds(text, "ESET." + path[..path.IndexOf('/', StringComparison.Ordinal)])),
-        new TextListSource("abuse.ch MalwareBazaar (публичный список)", "https://bazaar.abuse.ch/export/txt/sha256/recent/",
-            text => (ThreatFeedParsers.ParseHashList(text, "MalwareBazaar").ToArray(), [], [])),
-        new TextListSource("abuse.ch URLhaus (публичный список)", "https://urlhaus.abuse.ch/downloads/text/",
-            text => ([], [], ThreatFeedParsers.ParseUrlList(text))),
+        // Публичные списки bazaar.abuse.ch/export/txt/… и urlhaus.abuse.ch/downloads/text/ отключены (HTTP 410 Gone с ноября 2026):
+        // те же данные отдают API ниже по Auth-Key.
         new TextListSource("abuse.ch Feodo Tracker (C2 IP)", "https://feodotracker.abuse.ch/downloads/ipblocklist.txt",
             text => ([], ThreatFeedParsers.ParseIpBlocklist(text), [])),
         new AbuseChApiSource("abuse.ch MalwareBazaar API", "https://mb-api.abuse.ch/api/v1/", "query=get_recent&selector=time",

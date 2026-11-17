@@ -127,7 +127,7 @@ public class ThreatIntelTests
         Assert.True(engine.TryGetFamily(Hash(100), out _), "прежние записи сохраняются");
         Assert.True(engine.TryGetFamily(Hash(200), out var family));
         Assert.Equal("SigBase.Test Family", family);
-        Assert.Contains(status.Sources, s => s.Name.Contains("MalwareBazaar (публичный", StringComparison.Ordinal) && s.Status == "пропущен" && s.Message!.StartsWith("410", StringComparison.Ordinal));
+        Assert.DoesNotContain(status.Sources, s => s.Name.Contains("публичный", StringComparison.Ordinal)); // отключены abuse.ch (410 Gone)
         Assert.Contains(status.Sources, s => s.Name.Contains("eset", StringComparison.Ordinal) && s.Message!.StartsWith("403", StringComparison.Ordinal));
         Assert.Contains(status.Sources, s => s.Name.Contains("Feodo", StringComparison.Ordinal) && s.Status == "ok");
         Assert.Contains(status.Sources, s => s.Name.Contains("API", StringComparison.Ordinal) && s.Message!.Contains("AbuseChAuthKey", StringComparison.Ordinal));

@@ -48,17 +48,27 @@ foreach ($repo in @(@{ Name = 'eset/malware-ioc'; Dir = 'eset'; Arg = '--eset' }
 
 # 2. MalwareBazaar: полная выгрузка CSV (с семействами), при отказе — полный список SHA-256.
 $mb = $null
-foreach ($candidate in @(
-        @{ Url = 'https://bazaar.abuse.ch/export/csv/full/'; File = 'malwarebazaar_full.zip' },
-        @{ Url = 'https://bazaar.abuse.ch/export/txt/sha256/full/'; File = 'malwarebazaar_sha256_full.zip' })) {
+# Старые адреса bazaar.abuse.ch/export/… отвечают 410 Gone; выгрузки теперь только с Auth-Key в пути
+# (https://mb-api.abuse.ch/v2/files/exports/<ключ>/…) — секрет репозитория ABUSECH_AUTH_KEY.
+$mbCandidates = @()
+if ($env:ABUSECH_AUTH_KEY) {
+    $mbBase = "https://mb-api.abuse.ch/v2/files/exports/$($env:ABUSECH_AUTH_KEY)"
+    $mbCandidates += @{ Url = "$mbBase/full.csv.zip"; File = 'malwarebazaar_full.zip'; Label = 'exports/full.csv.zip' }
+    $mbCandidates += @{ Url = "$mbBase/full.zip"; File = 'malwarebazaar_full2.zip'; Label = 'exports/full.zip' }
+    $mbCandidates += @{ Url = "$mbBase/sha256_full.zip"; File = 'malwarebazaar_sha256_full.zip'; Label = 'exports/sha256_full.zip' }
+} else {
+    Write-Warning 'MalwareBazaar: секрет ABUSECH_AUTH_KEY не задан — полная выгрузка пропущена.'
+}
+foreach ($candidate in $mbCandidates) {
     try {
         $path = Join-Path $work $candidate.File
         Get-File $candidate.Url $path
         if (-not (Test-Zip $path)) { throw 'ответ не zip (вероятно, нужен ключ ABUSECH_AUTH_KEY)' }
         $mb = $path
-        Write-Host ("OK  MalwareBazaar {0} ({1:N0} МБ)" -f $candidate.Url, ((Get-Item $path).Length / 1MB))
+        # В журнал — только метка: в адресе есть ключ (GitHub его маскирует, но лучше не печатать вовсе).
+        Write-Host ("OK  MalwareBazaar {0} ({1:N0} МБ)" -f $candidate.Label, ((Get-Item $path).Length / 1MB))
         break
-    } catch { Write-Warning "MalwareBazaar $($candidate.Url): $_" }
+    } catch { Write-Warning ("MalwareBazaar {0}: {1}" -f $candidate.Label, ($_.Exception.Message -replace [regex]::Escape([string]$env:ABUSECH_AUTH_KEY), '***')) }
 }
 if ($mb) { $buildArgs.Add('--malwarebazaar'); $buildArgs.Add($mb) }
 
@@ -67,7 +77,7 @@ try {
     $page = (Invoke-WebRequest -Uri 'https://virusshare.com/hashes' -Headers $headers -TimeoutSec 120 -UseBasicParsing).Content
     $numbers = [regex]::Matches($page, 'VirusShare_(\d{5})\.md5') | ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object -Unique
     if (-not $numbers) { throw 'на странице не найдено ни одного списка' }
-    $last = ($numbers | Measure-Object -Maximum).Maximum
+    $last = [int](($numbers | Measure-Object -Maximum).Maximum) # Measure-Object отдаёт double, а формат {0:D5} — только для целых
     $vsDir = Join-Path $work 'virusshare'
     New-Item -ItemType Directory -Force $vsDir | Out-Null
     $ok = 0
