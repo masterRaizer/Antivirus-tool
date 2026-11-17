@@ -694,8 +694,20 @@ public sealed class StartupViewModel : SectionViewModel
         IsBusy = true;
         try
         {
-            Summary = "Сбор сведений: реестр, службы, планировщик задач, WMI, hosts, исключения Defender…";
-            var snapshot = await Hub.GetStartupAsync(refresh);
+            Summary = "Сбор сведений: реестр, службы, планировщик задач, WMI, hosts, исключения Defender… "
+                + "Первый сбор после запуска службы занимает 1–3 минуты (проверяются подписи всех файлов), дальше — секунды.";
+            StartupSnapshot snapshot;
+            try
+            {
+                snapshot = await Hub.GetStartupAsync(refresh);
+            }
+            catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException or OperationCanceledException)
+            {
+                // Раньше исключение молча оставляло пустую таблицу: теперь видно, что случилось и что делать.
+                Summary = $"Не удалось собрать сводку: {ex.Message}. Проверьте, что служба Sentinel запущена, и нажмите «Обновить».";
+                return;
+            }
+
             Items.Clear();
             foreach (var item in snapshot.Items)
             {
@@ -703,7 +715,10 @@ public sealed class StartupViewModel : SectionViewModel
             }
 
             Note = snapshot.Note;
-            Summary = $"Записей: {Items.Count} · нестандартных: {Items.Count(i => i.Flagged)} · без подписи: {Items.Count(i => i.NotSigned)}";
+            Summary = Items.Count == 0
+                ? "Записей автозагрузки не найдено — нажмите «Обновить»."
+                : $"Записей: {Items.Count} · требуют внимания: {Items.Count(i => i.Flagged)} · без подписи: {Items.Count(i => i.NotSigned)} · "
+                    + $"собрано {snapshot.TakenAtUtc.ToLocalTime():HH:mm:ss}";
             _loaded = true;
         }
         finally

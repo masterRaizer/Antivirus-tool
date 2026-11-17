@@ -227,6 +227,9 @@ public sealed record StartupItem
     public string? Remarks { get; init; }
     public bool CanClean { get; init; }
 
+    /// <summary>Оценка для колонки «Оценка»: уровень находки или «Норма» / «Без подписи» для штатной записи — никогда не пустая.</summary>
+    public string Assessment { get; init; } = "Норма";
+
     /// <summary>
     /// Группа для интерфейса: однотипные информационные записи (например, блокировка телеметрии в hosts) сворачиваются в одну группу,
     /// чтобы не заслонять то, что требует внимания.

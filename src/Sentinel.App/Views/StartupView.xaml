@@ -95,15 +95,16 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Замечания" Width="2*">
+                <DataGridTemplateColumn Header="Оценка и замечания" Width="2*">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <StackPanel Visibility="{Binding Flagged, Converter={StaticResource BoolToVis}}">
+                            <!-- Оценка есть у каждой записи: уровень находки, «Норма», «Без подписи» или «Разрешено». -->
+                            <StackPanel>
                                 <Border Style="{StaticResource Pill}" Background="{Binding Severity, Converter={StaticResource SeverityBrush}, ConverterParameter=soft}">
-                                    <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Severity, Converter={StaticResource SeverityText}}"
+                                    <TextBlock FontSize="11.5" FontWeight="SemiBold" Text="{Binding Assessment}"
                                                Foreground="{Binding Severity, Converter={StaticResource SeverityBrush}}" />
                                 </Border>
-                                <TextBlock Margin="0,4,0,0" FontSize="12" Text="{Binding Remarks}" ToolTip="{Binding Remarks}" />
+                                <TextBlock Margin="0,4,0,0" FontSize="12" TextWrapping="Wrap" Text="{Binding Remarks}" ToolTip="{Binding Remarks}" />
                             </StackPanel>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>

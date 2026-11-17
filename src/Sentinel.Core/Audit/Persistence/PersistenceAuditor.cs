@@ -412,9 +412,9 @@ public sealed class PersistenceAuditor
                     Evidence.Of("start", autoStart ? "auto" : startValue)));
             }
 
-            if (findings.Count == 0)
+            if (findings.Count == 0 && !(_options.IncludeCleanEntries && autoStart && IsUserModeService(key)))
             {
-                // Штатные службы не засоряют отчёт — включаем только помеченные.
+                // Штатные службы не засоряют отчёт — включаем только помеченные (или все автозапускаемые — для раздела «Автозагрузка»).
                 continue;
             }
 
@@ -429,6 +429,14 @@ public sealed class PersistenceAuditor
                 FileScan = scan,
             });
         }
+    }
+
+    /// <summary>Тип службы: 0x10/0x20 — процесс пользовательского режима; 0x1/0x2 — драйвер (в раздел автозагрузки не выводится).</summary>
+    private bool IsUserModeService(RegistryKeyPath key)
+    {
+        var type = _registry!.GetValue(key, "Type")?.Value;
+        return !int.TryParse(type, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            || (value & 0x30) != 0;
     }
 
     // ---- Планировщик задач -----------------------------------------------------
@@ -462,7 +470,7 @@ public sealed class PersistenceAuditor
 
                 AddTaskFamilyFindings(task, command, findings);
 
-                if (findings.Count == 0)
+                if (findings.Count == 0 && !(_options.IncludeCleanEntries && task.Enabled))
                 {
                     continue;
                 }

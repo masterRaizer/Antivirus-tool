@@ -134,7 +134,8 @@ public sealed class SentinelRuntimeOptions
             var wmi = new WindowsWmiSubscriptionProvider();
             var certificates = new WindowsRootCertificateProvider();
             var defenderExclusions = new WindowsDefenderExclusionSource();
-            persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, tasks, wmi, analyzer).Audit();
+            persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed, IncludeCleanEntries = true },
+                registry, tasks, wmi, analyzer).Audit();
             config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, certificates, defenderExclusions, analyzer).Audit();
             familyProbe = FamilyProbeFactory(analyzer, services.IsUserAllowed);
         }

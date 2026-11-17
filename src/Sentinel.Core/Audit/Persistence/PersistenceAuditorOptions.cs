@@ -35,6 +35,12 @@ public sealed record PersistenceAuditorOptions
     /// <summary>Анализировать целевые файлы через FileAnalyzer (подпись, правила, энтропия).</summary>
     public bool AnalyzeTargets { get; init; } = true;
 
+    /// <summary>
+    /// Включать в отчёт и штатные записи: включённые задачи планировщика и службы с автозапуском (не драйверы). Нужно разделу
+    /// «Автозагрузка и службы», чтобы видеть всё, что стартует; находки и реакция по-прежнему только для помеченных записей.
+    /// </summary>
+    public bool IncludeCleanEntries { get; init; }
+
     /// <summary>Проверка существования файла при разборе команд без кавычек (в тестах — синтетическая файловая система).</summary>
     public Func<string, bool> FileExists { get; init; } = File.Exists;
 

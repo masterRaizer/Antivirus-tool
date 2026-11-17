@@ -44,3 +44,34 @@ public class V134Tests
         Assert.Contains("справочных записей скрыто: 1", area.Note, StringComparison.Ordinal);
     }
 }
+
+/// <summary>Раздел «Автозагрузка и службы»: штатные автозапускаемые службы и включённые задачи видны, драйверы — нет.</summary>
+public class StartupCleanEntriesTests
+{
+    [Fact]
+    public void IncludeCleanEntries_ListsAutoServicesAndEnabledTasks_ButNotDriversOrDisabled()
+    {
+        var reg = new Audit.Persistence.Registry.InMemoryRegistryProvider();
+        void Service(string name, string image, string start, string type)
+        {
+            var key = new Audit.Persistence.Registry.RegistryKeyPath(Audit.Persistence.Registry.RegistryHive.LocalMachine, $@"SYSTEM\CurrentControlSet\Services\{name}");
+            reg.Set(key, "ImagePath", image).Set(key, "Start", start, Audit.Persistence.Registry.RegistryValueKind.Dword)
+                .Set(key, "Type", type, Audit.Persistence.Registry.RegistryValueKind.Dword);
+        }
+
+        Service("Spooler", @"C:\Windows\System32\spoolsv.exe", "2", "16");
+        Service("ManualSvc", @"C:\Windows\System32\manual.exe", "3", "16");
+        Service("SomeDriver", @"\SystemRoot\System32\drivers\some.sys", "2", "1");
+        var enabled = new Audit.Persistence.Tasks.ScheduledTaskInfo("Backup", @"\Backup", true, [new(@"C:\Windows\System32\wbem\wmic.exe", null)]);
+        var disabled = new Audit.Persistence.Tasks.ScheduledTaskInfo("Old", @"\Old", false, [new(@"C:\Windows\System32\cmd.exe", null)]);
+        var tasks = new FakeTaskProvider(enabled, disabled);
+
+        var clean = new Audit.Persistence.PersistenceAuditor(new Audit.Persistence.PersistenceAuditorOptions { IncludeCleanEntries = true }, reg, tasks).Audit();
+        var flaggedOnly = new Audit.Persistence.PersistenceAuditor(new Audit.Persistence.PersistenceAuditorOptions(), reg, tasks).Audit();
+
+        Assert.Equal(["Spooler"], clean.Entries.Where(e => e.Kind == Audit.Persistence.PersistenceKind.Service).Select(e => e.Name));
+        Assert.Equal(["Backup"], clean.Entries.Where(e => e.Kind == Audit.Persistence.PersistenceKind.ScheduledTask).Select(e => e.Name));
+        Assert.All(clean.Entries, e => Assert.False(e.HasFindings));
+        Assert.Empty(flaggedOnly.Entries);
+    }
+}

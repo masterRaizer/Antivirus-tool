@@ -88,8 +88,11 @@ public sealed partial class SentinelRuntime
 
         if (_o.PersistenceAudit is not null)
         {
-            foreach (var e in _o.PersistenceAudit().Entries)
+            // Тот же аудит, что у фоновой проверки службы: свежий результат берётся из кэша, идущий — дожидается, а не дублируется.
+            var persistence = TryGetFreshPersistence(out var cached, out _) ? cached : RunPersistenceAuditSharedAsync().GetAwaiter().GetResult();
+            foreach (var e in persistence.Entries)
             {
+                var notSigned = e.FileScan?.Signature is { IsValid: false, Status: not SignatureStatus.Unsupported };
                 var key = Unique(ReportBuilder.PersistenceKey(e));
                 targets[key] = e;
                 items.Add(new StartupItem
@@ -108,10 +111,13 @@ public sealed partial class SentinelRuntime
                     Command = e.Command,
                     Target = e.ResolvedTarget,
                     SignatureStatus = e.FileScan is null ? "не проверялась" : ReportBuilder.DescribeSignature(e.FileScan),
-                    NotSigned = e.FileScan?.Signature is { IsValid: false, Status: not SignatureStatus.Unsupported },
+                    NotSigned = notSigned,
                     Flagged = e.HasFindings,
                     Severity = e.MaxSeverity,
-                    Remarks = e.HasFindings ? string.Join("; ", e.Findings.Select(f => f.Title).Distinct()) : null,
+                    Remarks = e.HasFindings ? string.Join("; ", e.Findings.Select(f => f.Title).Distinct())
+                        : notSigned ? "Замечаний нет, но файл без действительной подписи — проверьте, знаете ли вы эту программу."
+                        : "Замечаний нет.",
+                    Assessment = e.HasFindings ? ReportGenerator.SeverityLabel(e.MaxSeverity) : notSigned ? "Без подписи" : "Норма",
                     CanClean = canAct && e.HasFindings,
                 });
             }
@@ -135,6 +141,7 @@ public sealed partial class SentinelRuntime
                     Flagged = !userAllowed,
                     Severity = userAllowed ? Severity.Info : finding.Severity,
                     Remarks = userAllowed ? "Разрешено пользователем (allowed_exclusions.json)." : finding.Description,
+                    Assessment = userAllowed ? "Разрешено" : ReportGenerator.SeverityLabel(finding.Severity),
                     CanClean = canAct && !userAllowed,
                 });
             }
