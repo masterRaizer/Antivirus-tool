@@ -22,6 +22,15 @@ public sealed class IpcServerOptions
 
     /// <summary>Сколько исходящих сообщений может накопиться у клиента, прежде чем он будет отключён.</summary>
     public int OutboundQueueLimit { get; init; } = 2048;
+
+    /// <summary>
+    /// Определение клиента для самозащиты (<see cref="IpcClientPolicy"/>). <c>null</c> — клиент без ограничений (тесты, Linux);
+    /// служба в Windows передаёт <see cref="WindowsIpcClientIdentifier.Identify"/>.
+    /// </summary>
+    public Func<NamedPipeServerStream, IpcClientIdentity>? IdentifyClient { get; init; }
+
+    /// <summary>Отказ клиенту в ослабляющей команде (для журнала службы).</summary>
+    public Action<string>? OnDenied { get; init; }
 }
 
 /// <summary>
@@ -168,6 +177,16 @@ public sealed class SentinelIpcServer : IAsyncDisposable
         var id = Interlocked.Increment(ref _nextConnectionId);
         var connection = new Connection(pipe, _options.OutboundQueueLimit);
         _connections[id] = connection;
+        IpcClientIdentity client;
+        try
+        {
+            client = _options.IdentifyClient?.Invoke(pipe) ?? IpcClientIdentity.Unrestricted;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+        {
+            client = new IpcClientIdentity(0, null, false, false); // не удалось определить — только безопасные команды
+        }
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
         var writer = connection.PumpAsync(cts.Token);
         try
@@ -186,7 +205,7 @@ public sealed class SentinelIpcServer : IAsyncDisposable
                 }
 
                 // Запросы одного клиента выполняются по очереди: порядок ответов совпадает с порядком запросов.
-                var response = await HandleAsync(message, cts.Token).ConfigureAwait(false);
+                var response = await HandleAsync(message, client, cts.Token).ConfigureAwait(false);
                 if (!connection.Enqueue(response))
                 {
                     break;
@@ -217,8 +236,14 @@ public sealed class SentinelIpcServer : IAsyncDisposable
         }
     }
 
-    private async Task<IpcMessage> HandleAsync(IpcMessage request, CancellationToken token)
+    private async Task<IpcMessage> HandleAsync(IpcMessage request, IpcClientIdentity client, CancellationToken token)
     {
+        if (IpcClientPolicy.Authorize(request, client) is { } denied)
+        {
+            _options.OnDenied?.Invoke($"Канал службы: {request.Type} отклонён — {denied}");
+            return new IpcMessage { Kind = IpcMessageKind.Response, Type = request.Type, Id = request.Id, Error = denied };
+        }
+
         try
         {
             var payload = await IpcRequestRouter.DispatchAsync(_backend, request, token).ConfigureAwait(false);

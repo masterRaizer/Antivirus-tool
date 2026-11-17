@@ -209,7 +209,10 @@ public sealed class MultiProcessScanCoordinator : ScanPoolBase
     private async Task<Connection?> TryConnectAsync(CancellationToken cancellationToken)
     {
         var pipeName = $"Sentinel.ScanWorker.{Environment.ProcessId}.{Guid.NewGuid():N}";
-        var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        // Только та же учётная запись (рабочие процессы запускаются от неё же): посторонний процесс не подключится вместо рабочего
+        // и не подсунет «чистый» вердикт; имя канала видно в \\.\pipe\, поэтому одного случайного имени недостаточно.
+        var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         IWorkerProcess? process = null;
         try
         {

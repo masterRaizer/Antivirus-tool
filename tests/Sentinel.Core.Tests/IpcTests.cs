@@ -502,3 +502,68 @@ public class PipeSecurityTests
         Assert.Equal(4, rules.Count);
     }
 }
+
+/// <summary>1.3.8: самозащита канала — посторонний клиент не может ослабить защиту.</summary>
+public sealed class IpcSelfDefenseTests : IAsyncLifetime
+{
+    private readonly FakeBackend _backend = new();
+    private readonly CancellationTokenSource _cts = new();
+    private readonly string _pipe = "sentinel-test-" + Guid.NewGuid().ToString("N");
+    private readonly List<string> _denied = [];
+    private SentinelIpcServer _server = null!;
+    private Task _serverTask = Task.CompletedTask;
+
+    public async Task InitializeAsync()
+    {
+        _server = new SentinelIpcServer(_backend, new IpcServerOptions
+        {
+            PipeName = _pipe,
+            IdentifyClient = _ => new IpcClientIdentity(4242, @"C:\Users\u\AppData\Local\Temp\evil.exe", Elevated: false, TrustedSentinelBinary: false),
+            OnDenied = m => { lock (_denied) { _denied.Add(m); } },
+        });
+        _serverTask = _server.RunAsync(_cts.Token);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!_backend.HasSubscribers && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+    }
+
+    public async Task DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        await _serverTask;
+        await _server.DisposeAsync();
+        _cts.Dispose();
+    }
+
+    [Fact]
+    public async Task UntrustedClient_CannotDisableProtection_ButCanReadAndEnable()
+    {
+        await using var client = await SentinelIpcClient.TryConnectAsync(_pipe, TimeSpan.FromSeconds(10)) ?? throw new InvalidOperationException();
+
+        var disable = await Assert.ThrowsAsync<IpcRemoteException>(() => client.SetRealtimeProtectionAsync(false));
+        Assert.Contains("ослабляет защиту", disable.Message, StringComparison.Ordinal);
+        await Assert.ThrowsAsync<IpcRemoteException>(() => client.UndoRollbackAsync("abcdef12"));
+        await Assert.ThrowsAsync<IpcRemoteException>(() => client.RestoreQuarantineAsync("abcdef12"));
+
+        Assert.True((await client.SetRealtimeProtectionAsync(true)).Success); // включить защиту можно всем
+        Assert.Equal("4.0", (await client.GetStatusAsync()).Version);
+        lock (_denied)
+        {
+            Assert.Equal(3, _denied.Count);
+            Assert.All(_denied, d => Assert.Contains("evil.exe", d, StringComparison.Ordinal));
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    public void Policy_AllowsWeakeningOnlyForElevatedOrSentinelWindow(bool elevated, bool trusted, bool allowed)
+    {
+        var request = new IpcMessage { Kind = IpcMessageKind.Request, Type = IpcProtocol.SaveSettings, Id = 1, Payload = IpcProtocol.ToElement(new SettingsUpdate()) };
+        var client = new IpcClientIdentity(1, "x.exe", elevated, trusted);
+        Assert.Equal(allowed, IpcClientPolicy.Authorize(request, client) is null);
+    }
+}
