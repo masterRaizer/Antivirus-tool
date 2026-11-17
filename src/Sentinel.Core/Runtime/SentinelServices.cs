@@ -95,6 +95,9 @@ public sealed class SentinelServices : IDisposable
             MaxScanBytes = maxScanBytes ?? new FileAnalyzerOptions().MaxScanBytes,
             IsUserAllowed = path => services!.IsUserAllowed(path),
             IsHashAllowed = hash => services!.IsHashAllowed(hash),
+            ResultCacheDuration = TimeSpan.FromMinutes(30),
+            CacheGeneration = () => (File.Exists(allowed.Path) ? File.GetLastWriteTimeUtc(allowed.Path).Ticks : 0)
+                ^ (intel.TimestampUtc?.UtcTicks ?? 0),
         };
         var analyzer = new FileAnalyzer(new SignatureEngine(rules), verifier, whitelist, options, intel, cloud);
         services = new SentinelServices(data, rules, verifier, whitelist, intel, config, allowed, cloud, analyzer);

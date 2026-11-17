@@ -50,6 +50,16 @@ public sealed class ProcessWorkerLauncher(string executablePath, string rulesDir
         }
 
         var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить рабочий процесс сканирования.");
+        try
+        {
+            // Как «уступать ресурсы» у Касперского: проверка забирает свободный CPU, но не отнимает его у программ пользователя.
+            process.PriorityClass = ProcessPriorityClass.BelowNormal;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or PlatformNotSupportedException)
+        {
+            // приоритет — пожелание: без него проверка работает как раньше
+        }
+
         return new ProcessHandle(process);
     }
 

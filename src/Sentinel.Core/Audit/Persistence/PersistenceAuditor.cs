@@ -924,7 +924,7 @@ public sealed class PersistenceAuditor
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(t => !_scanMemo.ContainsKey(t) && File.Exists(t))
             .ToList();
-        Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8) }, file =>
+        Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 4) }, file =>
         {
             try
             {

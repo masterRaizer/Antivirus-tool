@@ -159,7 +159,8 @@ public sealed partial class SentinelRuntime
             return 0;
         }
 
-        var report = new ProcessAuditor(new ProcessAuditorOptions { MemoryScanner = _o.MemoryScanner }, _o.Analyzer).Audit(fresh, exclusions);
+        var report = new ProcessAuditor(new ProcessAuditorOptions { MemoryScanner = _o.MemoryScanner, ShouldScanMemory = ProcessAuditor.MemoryScanWorthwhile },
+            _o.Analyzer).Audit(fresh, exclusions);
         Interlocked.Add(ref _processesChecked, fresh.Count);
         foreach (var entry in report.Entries)
         {

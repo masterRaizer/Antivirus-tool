@@ -42,6 +42,20 @@ public sealed class FileAnalyzerOptions
     /// и хеша для него не становится находкой. <c>null</c> — проверка по умолчанию.
     /// </summary>
     public Func<string, bool>? IsOfflineSystemImage { get; init; }
+
+    /// <summary>
+    /// Сколько помнить результат проверки неизменившегося файла (тот же путь, размер, время изменения и создания).
+    /// Фоновый аудит службы каждые 5 мин заново проверял хеш и подпись сотен файлов служб, драйверов и задач — отсюда периодические
+    /// скачки нагрузки и шум вентиляторов. <see cref="TimeSpan.Zero"/> — без кэша (по умолчанию; служба включает 30 мин).
+    /// Приоритетная проверка (файлы под исключениями Защитника) не кэшируется никогда.
+    /// </summary>
+    public TimeSpan ResultCacheDuration { get; init; } = TimeSpan.Zero;
+
+    /// <summary>
+    /// «Поколение» внешних данных, от которых зависит вердикт (список разрешённого, базы угроз): при его изменении кэш результатов
+    /// не используется. <c>null</c> — кэш живёт только по времени.
+    /// </summary>
+    public Func<long>? CacheGeneration { get; init; }
 }
 
 /// <summary>
@@ -87,6 +101,15 @@ public sealed class FileAnalyzer
         _options = options ?? new FileAnalyzerOptions();
     }
 
+    private const int MaxCachedResults = 20_000;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<CacheKey, (FileScanResult Result, long StoredAt)> _resultCache = new();
+
+    private readonly record struct CacheKey(string Path, long Length, long LastWriteTicks, long CreationTicks, ScoreContext Context, long Generation);
+
+    /// <summary>Сбросить кэш результатов: после обновления баз угроз или изменения списка разрешённого.</summary>
+    public void ClearResultCache() => _resultCache.Clear();
+
     /// <summary>Белый список, с которым работает анализатор (его же обязаны использовать карантин и нейтрализация).</summary>
     public IWhitelistProvider? Whitelist => _whitelist;
 
@@ -103,7 +126,39 @@ public sealed class FileAnalyzer
         ArgumentException.ThrowIfNullOrEmpty(path);
         try
         {
-            return AnalyzeCore(Path.GetFullPath(path), priority, context ?? ScoreContext.None);
+            var full = Path.GetFullPath(path);
+            var ctx = context ?? ScoreContext.None;
+            if (priority is not null || _options.ResultCacheDuration <= TimeSpan.Zero)
+            {
+                return AnalyzeCore(full, priority, ctx);
+            }
+
+            var info = new FileInfo(full);
+            if (!info.Exists)
+            {
+                return AnalyzeCore(full, priority, ctx);
+            }
+
+            var key = new CacheKey(full.ToUpperInvariant(), info.Length, info.LastWriteTimeUtc.Ticks, info.CreationTimeUtc.Ticks, ctx,
+                _options.CacheGeneration?.Invoke() ?? 0);
+            var now = Environment.TickCount64;
+            if (_resultCache.TryGetValue(key, out var cached) && now - cached.StoredAt < (long)_options.ResultCacheDuration.TotalMilliseconds)
+            {
+                return cached.Result;
+            }
+
+            var result = AnalyzeCore(full, priority, ctx);
+            if (result.Verdict != Verdict.Error)
+            {
+                if (_resultCache.Count >= MaxCachedResults)
+                {
+                    _resultCache.Clear(); // простая защита от разрастания: кэш наполнится заново за один аудит
+                }
+
+                _resultCache[key] = (result, now);
+            }
+
+            return result;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
