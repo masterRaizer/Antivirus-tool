@@ -56,6 +56,10 @@ internal static partial class Program
         {
             Console.WriteLine($"Детектор скрытых майнеров: наблюдение {seconds} с (Ctrl+C — выход). Только чтение — процессы не трогаются.");
             Console.WriteLine("Дайте процессам поработать 30 с, затем откройте Диспетчер задач на 15–30 с и закройте его.");
+            sampler.Capture(); // первый замер запускает счётчики видеокарты
+            Console.WriteLine(sampler.GpuUnavailable is { } gpuOff
+                ? $"Нагрузка видеокарты недоступна ({gpuOff}) — наблюдение только за процессором."
+                : "Наблюдаются процессор и видеокарта.");
         }
 
         try
@@ -161,5 +165,112 @@ internal static partial class Program
         }
 
         return worst >= 50 ? ExitDetected : ExitOk;
+    }
+
+    /// <summary>
+    /// <c>gpu-usage [секунды]</c> — кто нагружает видеокарту и процессор, без Диспетчера задач (скрытый майнер его не увидит):
+    /// средняя и максимальная нагрузка за время замера, путь к образу. Только чтение.
+    /// </summary>
+    private static int GpuUsage(CliOptions opts)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.Error.WriteLine("Замер нагрузки видеокарты доступен только в Windows (счётчики GPU Engine).");
+            return ExitError;
+        }
+
+        var seconds = 30;
+        if (opts.Target is not null && (!int.TryParse(opts.Target, NumberStyles.None, CultureInfo.InvariantCulture, out seconds) || seconds is < 3 or > 3600))
+        {
+            Console.Error.WriteLine("Ошибка: длительность — число секунд от 3 до 3600.");
+            return ExitError;
+        }
+
+        return RunGpuUsage(opts, seconds);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static int RunGpuUsage(CliOptions opts, int seconds)
+    {
+        using var sampler = new WindowsProcessActivitySampler();
+        var stats = new Dictionary<(int Pid, long Create), (string Name, double GpuSum, double GpuMax, int GpuSamples, long CpuFirst, long CpuLast, TimeSpan First, TimeSpan Last)>();
+        if (!opts.Json)
+        {
+            Console.WriteLine($"Замер нагрузки {seconds} с (Диспетчер задач не нужен; закрывать его не обязательно, но лучше закрыть)…");
+        }
+
+        for (var i = 0; i <= seconds; i++)
+        {
+            var snapshot = sampler.Capture();
+            foreach (var p in snapshot.Processes.Where(p => p.Pid > 0))
+            {
+                var key = (p.Pid, p.CreateTimeTicks);
+                if (!stats.TryGetValue(key, out var s))
+                {
+                    s = (p.Name, 0, 0, 0, p.CpuTimeTicks, p.CpuTimeTicks, snapshot.Clock, snapshot.Clock);
+                }
+
+                if (p.GpuPercent >= 0)
+                {
+                    s.GpuSum += p.GpuPercent;
+                    s.GpuMax = Math.Max(s.GpuMax, p.GpuPercent);
+                    s.GpuSamples++;
+                }
+
+                s.CpuLast = p.CpuTimeTicks;
+                s.Last = snapshot.Clock;
+                stats[key] = s;
+            }
+
+            if (i < seconds)
+            {
+                Thread.Sleep(1000);
+            }
+        }
+
+        var inspector = new WindowsEvasionProcessInspector();
+        var rows = stats
+            .Select(kv =>
+            {
+                var span = (kv.Value.Last - kv.Value.First).Ticks;
+                return new
+                {
+                    kv.Key.Pid,
+                    kv.Value.Name,
+                    GpuAvg = kv.Value.GpuSamples > 0 ? kv.Value.GpuSum / kv.Value.GpuSamples : 0,
+                    kv.Value.GpuMax,
+                    CpuCores = span > 0 ? (kv.Value.CpuLast - kv.Value.CpuFirst) / (double)span : 0,
+                };
+            })
+            .Where(r => r.GpuMax >= 1 || r.CpuCores >= 0.2)
+            .OrderByDescending(r => r.GpuAvg)
+            .ThenByDescending(r => r.CpuCores)
+            .Take(20)
+            .Select(r => new { r.Pid, r.Name, r.GpuAvg, r.GpuMax, r.CpuCores, Path = inspector.GetImagePath(r.Pid) })
+            .ToList();
+
+        if (opts.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new { seconds, gpuUnavailable = sampler.GpuUnavailable, processes = rows }, JsonOptions));
+            return ExitOk;
+        }
+
+        if (sampler.GpuUnavailable is { } off)
+        {
+            Console.WriteLine($"Нагрузка видеокарты недоступна: {off}. Показан только процессор.");
+        }
+
+        Console.WriteLine($"{"PID",7}  {"ГП ср.",7}  {"ГП макс",7}  {"ЦП ядер",7}  Процесс и путь");
+        foreach (var r in rows)
+        {
+            Console.WriteLine($"{r.Pid,7}  {r.GpuAvg,6:0.0}%  {r.GpuMax,6:0.0}%  {r.CpuCores,7:0.00}  {r.Name}  {r.Path ?? "-"}");
+        }
+
+        if (rows.Count == 0)
+        {
+            Console.WriteLine("Заметной нагрузки на видеокарту и процессор нет.");
+        }
+
+        return ExitOk;
     }
 }

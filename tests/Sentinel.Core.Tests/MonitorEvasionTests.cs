@@ -13,7 +13,10 @@ namespace Sentinel.Core.Tests;
 /// </summary>
 internal sealed class ActivitySim
 {
-    private readonly Dictionary<int, (int Parent, string Name, long Create, long Cpu, double Cores)> _procs = [];
+    private readonly Dictionary<int, (int Parent, string Name, long Create, long Cpu, double Cores, double Gpu)> _procs = [];
+
+    /// <summary>Замеряется ли нагрузка видеокарты (как на Windows со счётчиками GPU Engine).</summary>
+    public bool GpuAvailable { get; set; } = true;
     private TimeSpan _clock = TimeSpan.FromSeconds(1000);
     private long _busy;
 
@@ -22,9 +25,17 @@ internal sealed class ActivitySim
     /// <summary>Нагрузка, которую потребляет процесс, скрытый из списка (руткит): видна только в общей занятости.</summary>
     public double HiddenCores { get; set; }
 
-    public ActivitySim Start(int pid, string name, double cores, int parent = 1000)
+    public ActivitySim Start(int pid, string name, double cores, int parent = 1000, double gpu = 0)
     {
-        _procs[pid] = (parent, name, 100_000 + pid, 0, cores);
+        _procs[pid] = (parent, name, 100_000 + pid, 0, cores, gpu);
+        return this;
+    }
+
+    /// <summary>Нагрузка на видеокарту, 0–100 %.</summary>
+    public ActivitySim Gpu(int pid, double percent)
+    {
+        var p = _procs[pid];
+        _procs[pid] = p with { Gpu = percent };
         return this;
     }
 
@@ -55,7 +66,8 @@ internal sealed class ActivitySim
         }
 
         _busy += (long)(HiddenCores * dt.Ticks);
-        var samples = _procs.Select(kv => new ProcessActivitySample(kv.Key, kv.Value.Parent, kv.Value.Name, kv.Value.Create, kv.Value.Cpu)).ToList();
+        var samples = _procs.Select(kv => new ProcessActivitySample(kv.Key, kv.Value.Parent, kv.Value.Name, kv.Value.Create, kv.Value.Cpu,
+            GpuAvailable ? kv.Value.Gpu : -1)).ToList();
         samples.Insert(0, new ProcessActivitySample(0, 0, "System Idle Process", 0, 0));
         return new ActivitySnapshot(_clock, DateTimeOffset.UnixEpoch + _clock, samples, Processors, new SystemCpuTimes(_busy, 0, 0));
     }
@@ -175,6 +187,107 @@ public class MonitorEvasionDetectorTests
         found.AddRange(sim.Run(detector, 20, _ => sim.Load(Miner, 3.0)));
         Assert.Empty(found);
     }
+
+    /// <summary>GPU-майнер (как «Microsoft Network Realtime lnspection Service.exe» семейства CAAService): процессор почти не грузит.</summary>
+    [Fact]
+    public void GpuMiner_HidingFromTaskManager_IsDetected()
+    {
+        const int gpuMiner = 5300;
+        var (sim, detector) = Bench();
+        sim.Load(Miner, 0.0).Start(gpuMiner, "Microsoft Network Realtime lnspection Service.exe", 0.05, gpu: 74);
+        sim.Run(detector, 40);
+        var hidden = false;
+        sim.Start(TaskManager, "Taskmgr.exe", 0.1);
+        var found = sim.Run(detector, 20, i =>
+        {
+            if (i % 2 == 0)
+            {
+                hidden = true;
+            }
+
+            sim.Gpu(gpuMiner, hidden ? 0 : 74);
+        });
+        sim.Stop(TaskManager);
+        found.AddRange(sim.Run(detector, 20, i =>
+        {
+            if (i % 2 == 0)
+            {
+                hidden = false;
+            }
+
+            sim.Gpu(gpuMiner, hidden ? 0 : 74);
+        }));
+
+        var finding = Assert.Single(found);
+        Assert.Equal(ActivityResource.Gpu, finding.Resource);
+        Assert.Equal(EvasionKind.HideAndResume, finding.Kind);
+        Assert.InRange(finding.BaselineCores, 0.73, 0.75);
+        Assert.Contains("видеокарт", finding.Describe(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CpuAndGpuMiner_IsReportedOnce()
+    {
+        var (sim, detector) = Bench();
+        sim.Gpu(Miner, 60);
+        sim.Run(detector, 40);
+        sim.Start(TaskManager, "Taskmgr.exe", 0.1);
+        var found = sim.Run(detector, 15, _ => sim.Load(Miner, 0).Gpu(Miner, 0));
+        sim.Stop(TaskManager);
+        found.AddRange(sim.Run(detector, 20, _ => sim.Load(Miner, 3).Gpu(Miner, 60)));
+        Assert.Equal(Miner, Assert.Single(found).Pid);
+    }
+
+    [Fact]
+    public void UnknownGpuSamples_DoNotBreakTracking()
+    {
+        var (sim, detector) = Bench();
+        sim.Gpu(Miner, 60).Load(Miner, 0.01);
+        sim.Run(detector, 40);
+        sim.Start(TaskManager, "Taskmgr.exe", 0.1);
+        var found = sim.Run(detector, 15, i =>
+        {
+            sim.Gpu(Miner, 0);
+            sim.GpuAvailable = i % 3 != 1; // счётчики иногда не отдают значения
+        });
+        sim.Stop(TaskManager);
+        found.AddRange(sim.Run(detector, 25, i =>
+        {
+            sim.Gpu(Miner, 60);
+            sim.GpuAvailable = i % 3 != 1;
+        }));
+        Assert.Equal(ActivityResource.Gpu, Assert.Single(found).Resource);
+    }
+
+    [Fact]
+    public void GpuLoad_ThatKeepsRunning_IsNotReported()
+    {
+        var (sim, detector) = Bench();
+        sim.Load(Miner, 0.01).Gpu(Miner, 80); // игра или видео: видеокарта работает и при открытом Диспетчере
+        sim.Run(detector, 40);
+        sim.Start(TaskManager, "Taskmgr.exe", 0.1);
+        var found = sim.Run(detector, 20);
+        sim.Stop(TaskManager);
+        found.AddRange(sim.Run(detector, 100));
+        Assert.Empty(found);
+    }
+
+    [Theory]
+    [InlineData("pid_1234_luid_0x00000000_0x0000D1A4_phys_0_eng_0_engtype_3D", 1234, "3D")]
+    [InlineData("pid_8_luid_0x0_0x1_phys_0_eng_3_engtype_VideoDecode", 8, "VideoDecode")]
+    public void GpuCounterInstance_IsParsed(string instance, int pid, string engine)
+    {
+        Assert.True(GpuEngineInstance.TryParse(instance, out var parsedPid, out var parsedEngine));
+        Assert.Equal(pid, parsedPid);
+        Assert.Equal(engine, parsedEngine);
+    }
+
+    [Theory]
+    [InlineData("_Total")]
+    [InlineData("pid_abc_luid")]
+    [InlineData(null)]
+    public void GpuCounterInstance_Garbage_IsRejected(string? instance) =>
+        Assert.False(GpuEngineInstance.TryParse(instance, out _, out _));
 
     [Fact]
     public void SteadyProcess_ThatDoesNotReact_IsNotReported()

@@ -34,6 +34,12 @@ public sealed class MonitorEvasionOptions
     /// <summary>Минимальная средняя нагрузка, при которой процесс вообще рассматривается (0,25 — четверть ядра).</summary>
     public double MinBaselineCores { get; init; } = 0.25;
 
+    /// <summary>Минимальная средняя нагрузка на видеокарту (0,15 — 15 %), при которой процесс рассматривается как GPU-кандидат.</summary>
+    public double MinBaselineGpu { get; init; } = 0.15;
+
+    /// <summary>«Тихо» для видеокарты — не выше этого абсолютного уровня (3 %), если он больше доли от базовой нагрузки.</summary>
+    public double QuietFloorGpu { get; init; } = 0.03;
+
     /// <summary>Доля замеров окна, в которых нагрузка не ниже половины средней: отсекает всплески (сборка, распаковка).</summary>
     public double MinActiveShare { get; init; } = 0.8;
 
@@ -165,14 +171,14 @@ public sealed class MonitorEvasionDetector
             present.Add(key);
             if (!_tracks.TryGetValue(key, out var track))
             {
-                _tracks[key] = new Track(p.Pid, p.ParentPid, p.Name, p.CpuTimeTicks);
+                _tracks[key] = new Track(p.Pid, p.CreateTimeTicks, p.ParentPid, p.Name, p.CpuTimeTicks);
                 appeared++;
                 continue;
             }
 
             var cores = Math.Max(0, p.CpuTimeTicks - track.LastCpu) / (double)interval.Ticks;
             track.LastCpu = p.CpuTimeTicks;
-            track.Points.Add(new Point(snapshot.Clock, cores));
+            track.Points.Add(new Point(snapshot.Clock, cores, p.GpuPercent >= 0 ? Math.Min(1, p.GpuPercent / 100) : -1));
             var horizon = snapshot.Clock - _o.HistoryWindow;
             var stale = track.Points.FindIndex(x => x.Clock >= horizon);
             if (stale > 0)
@@ -221,7 +227,7 @@ public sealed class MonitorEvasionDetector
         _hiddenSince = null;
         foreach (var p in snapshot.Processes.Where(p => p.Pid != 0))
         {
-            _tracks[(p.Pid, p.CreateTimeTicks)] = new Track(p.Pid, p.ParentPid, p.Name, p.CpuTimeTicks);
+            _tracks[(p.Pid, p.CreateTimeTicks)] = new Track(p.Pid, p.CreateTimeTicks, p.ParentPid, p.Name, p.CpuTimeTicks);
         }
 
         // Мониторинг, открытый уже в момент первого замера, не даёт эпизода: базовой нагрузки «до» нет.
@@ -248,60 +254,97 @@ public sealed class MonitorEvasionDetector
         }
 
         _waiting.Clear();
-        var already = episode.Candidates.Select(c => c.Key).ToHashSet();
+        var already = episode.Candidates.Select(c => (c.Key, c.Resource)).ToHashSet();
 
         foreach (var (key, track) in _tracks)
         {
-            if (already.Contains(key) || key.Pid <= 4 || key.Pid == _ownPid || monitorPids.Contains(key.Pid)
+            if (key.Pid <= 4 || key.Pid == _ownPid || monitorPids.Contains(key.Pid)
                 || monitorPids.Contains(track.ParentPid) || _o.MonitorTools.Contains(track.Name)
                 || MonitorEvasionOptions.KernelPseudoProcesses.Contains(track.Name))
             {
                 continue;
             }
 
-            // Базовая нагрузка — строго до текущего замера: в его интервал уже попадает реакция на мониторинг.
-            var baseline = track.Points.Where(x => x.Clock < snapshot.Clock && x.Clock >= snapshot.Clock - _o.BaselineWindow).ToList();
-            var horizon = snapshot.Clock - _o.CycleMemory;
-            if (Count(_cycles, track.Name, horizon) + Count(_exits, track.Name, horizon) > 0)
+            foreach (var resource in Resources)
             {
-                // Образ уже прятался: при быстром повторном открытии Диспетчера достаточно непрерывной нагрузки после
-                // возврата (не меньше PreOpenActiveSamples замеров) — полного окна в 10 с у него ещё нет.
-                var tail = baseline.Count - 1;
-                while (tail >= 0 && baseline[tail].Cores >= _o.MinBaselineCores)
+                if (!already.Contains((key, resource)) && Baseline(snapshot, track, resource) is { } candidate)
                 {
-                    tail--;
-                }
-
-                baseline = baseline.GetRange(tail + 1, baseline.Count - tail - 1);
-                if (baseline.Count < _o.PreOpenActiveSamples)
-                {
-                    continue;
+                    episode.Candidates.Add(candidate);
                 }
             }
-            else if (baseline.Count < _o.MinBaselineSamples)
-            {
-                continue;
-            }
-
-            var mean = baseline.Average(x => x.Cores);
-            if (mean < _o.MinBaselineCores)
-            {
-                continue;
-            }
-
-            var activeShare = baseline.Count(x => x.Cores >= mean * 0.5) / (double)baseline.Count;
-            var preOpen = baseline.TakeLast(_o.PreOpenActiveSamples).ToList();
-            if (activeShare < _o.MinActiveShare || preOpen.Count < _o.PreOpenActiveSamples
-                || preOpen.Exists(x => x.Cores < mean * _o.ResumeFraction))
-            {
-                continue;
-            }
-
-            var deviation = Math.Sqrt(baseline.Average(x => (x.Cores - mean) * (x.Cores - mean)));
-            episode.Candidates.Add(new Candidate(key, track.Name, track.ParentPid, mean, mean > 0 ? deviation / mean : 0));
         }
 
         _episode = episode;
+    }
+
+    private static readonly ActivityResource[] Resources = [ActivityResource.Cpu, ActivityResource.Gpu];
+
+    /// <summary>Нагрузка точки по ресурсу; −1 — неизвестно (нагрузка видеокарты не замерялась).</summary>
+    private static double Load(Point x, ActivityResource resource) => resource == ActivityResource.Cpu ? x.Cores : x.Gpu;
+
+    private double MinBaseline(ActivityResource resource) => resource == ActivityResource.Cpu ? _o.MinBaselineCores : _o.MinBaselineGpu;
+
+    private double QuietThreshold(Candidate c) =>
+        Math.Max(c.Resource == ActivityResource.Cpu ? _o.QuietFloorCores : _o.QuietFloorGpu, c.Baseline * _o.QuietFraction);
+
+    /// <summary>Кандидат по ресурсу, если нагрузка на него до открытия мониторинга была устойчивой; иначе <c>null</c>.</summary>
+    private Candidate? Baseline(ActivitySnapshot snapshot, Track track, ActivityResource resource)
+    {
+        // Базовая нагрузка — строго до текущего замера: в его интервал уже попадает реакция на мониторинг.
+        var baseline = track.Points
+            .Where(x => x.Clock < snapshot.Clock && x.Clock >= snapshot.Clock - _o.BaselineWindow && Load(x, resource) >= 0)
+            .Select(x => Load(x, resource))
+            .ToList();
+        var horizon = snapshot.Clock - _o.CycleMemory;
+        if (Count(_cycles, track.Name, horizon) + Count(_exits, track.Name, horizon) > 0)
+        {
+            // Образ уже прятался: при быстром повторном открытии Диспетчера достаточно непрерывной нагрузки после
+            // возврата (не меньше PreOpenActiveSamples замеров) — полного окна в 10 с у него ещё нет.
+            var tail = baseline.Count - 1;
+            while (tail >= 0 && baseline[tail] >= MinBaseline(resource))
+            {
+                tail--;
+            }
+
+            baseline = baseline.GetRange(tail + 1, baseline.Count - tail - 1);
+            if (baseline.Count < _o.PreOpenActiveSamples)
+            {
+                return null;
+            }
+        }
+        else if (baseline.Count < _o.MinBaselineSamples)
+        {
+            return null;
+        }
+
+        var mean = baseline.Average();
+        if (mean < MinBaseline(resource))
+        {
+            return null;
+        }
+
+        var activeShare = baseline.Count(x => x >= mean * 0.5) / (double)baseline.Count;
+        var preOpen = baseline.TakeLast(_o.PreOpenActiveSamples).ToList();
+        if (activeShare < _o.MinActiveShare || preOpen.Count < _o.PreOpenActiveSamples
+            || preOpen.Exists(x => x < mean * _o.ResumeFraction))
+        {
+            return null;
+        }
+
+        var deviation = Math.Sqrt(baseline.Average(x => (x - mean) * (x - mean)));
+        return new Candidate((track.Pid, track.Create), track.Name, track.ParentPid, resource, mean, mean > 0 ? deviation / mean : 0);
+    }
+
+    /// <summary>По процессу уже есть находка: кандидат по другому ресурсу того же процесса больше не нужен.</summary>
+    private void CloseSiblings(Candidate reported)
+    {
+        foreach (var c in (_episode?.Candidates ?? []).Concat(_waiting))
+        {
+            if (!ReferenceEquals(c, reported) && c.Key == reported.Key)
+            {
+                c.Done = true;
+            }
+        }
     }
 
     private void UpdateOpenEpisode(ActivitySnapshot snapshot, HashSet<(int, long)> present, List<MonitorEvasionFinding> findings)
@@ -316,14 +359,21 @@ public sealed class MonitorEvasionDetector
                 {
                     var count = Remember(_exits, c.Name, snapshot.Clock);
                     findings.Add(Finding(c, EvasionKind.ExitOnMonitor, episode, elapsed, null, snapshot) with { ExitCount = count });
+                    CloseSiblings(c);
                 }
 
                 c.Done = true;
                 continue;
             }
 
-            var cores = _tracks[c.Key].Points.LastOrDefault()?.Cores ?? 0;
-            var quiet = cores <= Math.Max(_o.QuietFloorCores, c.Baseline * _o.QuietFraction);
+            var point = _tracks[c.Key].Points.LastOrDefault();
+            var cores = point is null ? 0 : Load(point, c.Resource);
+            if (cores < 0)
+            {
+                continue; // нагрузка видеокарты в этом замере неизвестна — ждём следующий
+            }
+
+            var quiet = cores <= QuietThreshold(c);
             if (c.Dropped)
             {
                 // Спрятавшийся процесс снова нагрузил процессор при открытом мониторинге — он не прятался.
@@ -401,7 +451,13 @@ public sealed class MonitorEvasionDetector
                 continue;
             }
 
-            var cores = _tracks[c.Key].Points.LastOrDefault()?.Cores ?? 0;
+            var point = _tracks[c.Key].Points.LastOrDefault();
+            var cores = point is null ? 0 : Load(point, c.Resource);
+            if (cores < 0)
+            {
+                continue;
+            }
+
             if (cores >= c.Baseline * _o.ResumeFraction)
             {
                 c.ResumeRun++;
@@ -420,11 +476,13 @@ public sealed class MonitorEvasionDetector
                 var finding = Finding(c, EvasionKind.HideAndResume, null, c.Reaction, c.FirstResume!.Value - c.ClosedClock.Value, snapshot);
                 findings.Add(finding with { CycleCount = cycles });
                 c.Done = true;
+                CloseSiblings(c);
             }
             else if (sinceClose > _o.ResumeWindow)
             {
                 findings.Add(Finding(c, EvasionKind.HiddenWhileMonitorOpen, null, c.Reaction, null, snapshot));
                 c.Done = true;
+                CloseSiblings(c);
             }
         }
 
@@ -441,6 +499,7 @@ public sealed class MonitorEvasionDetector
             Pid = c.Key.Pid,
             ParentPid = c.ParentPid,
             Name = c.Name,
+            Resource = c.Resource,
             CreateTimeTicks = c.Key.Create,
             Monitor = episode?.Monitor ?? c.Monitor ?? "мониторинга",
             BaselineCores = c.Baseline,
@@ -506,11 +565,14 @@ public sealed class MonitorEvasionDetector
         return finding;
     }
 
-    private sealed record Point(TimeSpan Clock, double Cores);
+    /// <summary>Замер процесса: нагрузка на процессор в ядрах и на видеокарту в долях (−1 — неизвестно).</summary>
+    private sealed record Point(TimeSpan Clock, double Cores, double Gpu);
 
-    private sealed class Track(int pid, int parentPid, string name, long cpu)
+    private sealed class Track(int pid, long create, int parentPid, string name, long cpu)
     {
         public int Pid { get; } = pid;
+
+        public long Create { get; } = create;
 
         public int ParentPid { get; } = parentPid;
 
@@ -534,13 +596,15 @@ public sealed class MonitorEvasionDetector
         public List<Candidate> Candidates { get; } = [];
     }
 
-    private sealed class Candidate((int Pid, long Create) key, string name, int parentPid, double baseline, double variation)
+    private sealed class Candidate((int Pid, long Create) key, string name, int parentPid, ActivityResource resource, double baseline, double variation)
     {
         public (int Pid, long Create) Key { get; } = key;
 
         public string Name { get; } = name;
 
         public int ParentPid { get; } = parentPid;
+
+        public ActivityResource Resource { get; } = resource;
 
         public double Baseline { get; } = baseline;
 

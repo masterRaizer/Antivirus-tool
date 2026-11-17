@@ -296,6 +296,7 @@ public sealed class MonitorEvasionWatcher
         var auditFinding = AuditFinding.Create(id, severity, "Прячется от Диспетчера задач (скрытый майнер)", summary,
             Evidence.Of("pid", finding.Pid),
             Evidence.Of("monitor", finding.Monitor),
+            Evidence.Of("resource", finding.Resource == ActivityResource.Gpu ? "видеокарта" : "процессор"),
             Evidence.Of("baselineCores", finding.BaselineCores.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)),
             Evidence.Of("cycles", finding.CycleCount),
             Evidence.Of("score", guard.EffectiveScore));
@@ -304,7 +305,9 @@ public sealed class MonitorEvasionWatcher
         {
             Verdict = Verdict.Suspicious,
             Detections = [.. scan.Detections, new Scanning.Detection("Behavior.MonitorEvasion", severity, "miner", DetectionSource.Heuristic,
-                BehaviorRuleId, "Процесс прятал нагрузку на процессор от Диспетчера задач", [])],
+                BehaviorRuleId, finding.Resource == ActivityResource.Gpu
+                    ? "Процесс прятал нагрузку на видеокарту от Диспетчера задач (скрытый GPU-майнер)"
+                    : "Процесс прятал нагрузку на процессор от Диспетчера задач", [])],
         };
         var snapshot = new ProcessSnapshot
         {

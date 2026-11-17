@@ -29,6 +29,7 @@ public sealed class WindowsProcessActivitySampler : IProcessActivitySampler
     private const int ImageNameField = 56;
 
     private readonly object _sync = new();
+    private readonly WindowsGpuUsageReader _gpu = new();
     private IntPtr _buffer;
     private int _bufferSize = 512 * 1024;
     private bool _disposed;
@@ -40,6 +41,16 @@ public sealed class WindowsProcessActivitySampler : IProcessActivitySampler
             ObjectDisposedException.ThrowIf(_disposed, this);
             var clock = Stopwatch.GetElapsedTime(0);
             var processes = QueryProcesses();
+            var gpu = _gpu.Read();
+            if (gpu is not null)
+            {
+                for (var i = 0; i < processes.Count; i++)
+                {
+                    var p = processes[i];
+                    processes[i] = p with { GpuPercent = gpu.GetValueOrDefault(p.Pid, 0) };
+                }
+            }
+
             var system = QuerySystemTimes(out var processors);
             return new ActivitySnapshot(clock, DateTimeOffset.UtcNow, processes, processors > 0 ? processors : Environment.ProcessorCount, system);
         }
@@ -151,10 +162,14 @@ public sealed class WindowsProcessActivitySampler : IProcessActivitySampler
         }
     }
 
+    /// <summary>Причина, по которой нагрузка видеокарты недоступна (<c>null</c> — замеряется).</summary>
+    public string? GpuUnavailable => _gpu.Unavailable;
+
     public void Dispose()
     {
         lock (_sync)
         {
+            _gpu.Dispose();
             if (_buffer != IntPtr.Zero)
             {
                 Marshal.FreeHGlobal(_buffer);

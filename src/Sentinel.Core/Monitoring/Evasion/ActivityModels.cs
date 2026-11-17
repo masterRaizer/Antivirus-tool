@@ -3,8 +3,19 @@ namespace Sentinel.Core.Monitoring.Evasion;
 /// <summary>
 /// Процесс в одном замере активности: накопленное процессорное время (ядро + пользователь) в единицах 100 нс.
 /// Ключ процесса — PID вместе с временем создания: повторно выданный PID не смешивается с завершившимся процессом.
+/// <see cref="GpuPercent"/> — нагрузка процесса на видеокарту за последний интервал, 0–100 % (−1 — неизвестно).
 /// </summary>
-public sealed record ProcessActivitySample(int Pid, int ParentPid, string Name, long CreateTimeTicks, long CpuTimeTicks);
+public sealed record ProcessActivitySample(int Pid, int ParentPid, string Name, long CreateTimeTicks, long CpuTimeTicks, double GpuPercent = -1);
+
+/// <summary>Ресурс, нагрузку на который прятал процесс.</summary>
+public enum ActivityResource
+{
+    /// <summary>Процессор (нагрузка в ядрах).</summary>
+    Cpu,
+
+    /// <summary>Видеокарта (нагрузка в долях: 1,0 — 100 %): GPU-майнеры.</summary>
+    Gpu,
+}
 
 /// <summary>
 /// Накопленные времена всех логических процессоров (100 нс): занятость (ядро − простой + пользователь), а также
@@ -57,19 +68,25 @@ public sealed record MonitorEvasionFinding
 
     public required string Name { get; init; }
 
+    /// <summary>Что прятал процесс: нагрузку на процессор или на видеокарту.</summary>
+    public ActivityResource Resource { get; init; } = ActivityResource.Cpu;
+
     /// <summary>Время создания процесса (FILETIME, 100 нс) — вместе с PID однозначно задаёт процесс.</summary>
     public long CreateTimeTicks { get; init; }
 
     /// <summary>Средство мониторинга, на которое отреагировал процесс (например, <c>Taskmgr.exe</c>).</summary>
     public required string Monitor { get; init; }
 
-    /// <summary>Средняя нагрузка до открытия мониторинга, в ядрах (1,0 — одно ядро загружено полностью).</summary>
+    /// <summary>
+    /// Средняя нагрузка до открытия мониторинга: для процессора — в ядрах (1,0 — одно ядро загружено полностью),
+    /// для видеокарты — в долях (1,0 — 100 %).
+    /// </summary>
     public double BaselineCores { get; init; }
 
     /// <summary>Коэффициент вариации нагрузки до открытия: чем меньше, тем ровнее (майнер держит постоянную нагрузку).</summary>
     public double BaselineVariation { get; init; }
 
-    /// <summary>Средняя нагрузка, пока процесс «прятался», в ядрах.</summary>
+    /// <summary>Средняя нагрузка, пока процесс «прятался», в тех же единицах, что и <see cref="BaselineCores"/>.</summary>
     public double QuietCores { get; init; }
 
     /// <summary>Через сколько после появления мониторинга пропала нагрузка (или завершился процесс).</summary>
@@ -91,15 +108,17 @@ public sealed record MonitorEvasionFinding
     /// <summary>Короткое описание для журнала и карточки находки.</summary>
     public string Describe()
     {
-        var baseline = $"{BaselineCores * 100:0}% ядра";
+        var gpu = Resource == ActivityResource.Gpu;
+        var unit = gpu ? "% видеокарты" : "% ядра";
+        var baseline = $"{BaselineCores * 100:0}{unit}";
         var reaction = $"{Reaction.TotalSeconds:0.#} с";
         var text = Kind switch
         {
             EvasionKind.HideAndResume =>
-                $"держал нагрузку {baseline}, через {reaction} после запуска {Monitor} снизил её до {QuietCores * 100:0}%, "
-                + $"а через {ResumeDelay?.TotalSeconds ?? 0:0.#} с после закрытия {Monitor} снова нагрузил процессор",
+                $"держал нагрузку {baseline}, через {reaction} после запуска {Monitor} снизил её до {QuietCores * 100:0}{unit}, "
+                + $"а через {ResumeDelay?.TotalSeconds ?? 0:0.#} с после закрытия {Monitor} снова нагрузил {(gpu ? "видеокарту" : "процессор")}",
             EvasionKind.HiddenWhileMonitorOpen =>
-                $"держал нагрузку {baseline} и через {reaction} после запуска {Monitor} снизил её до {QuietCores * 100:0}%",
+                $"держал нагрузку {baseline} и через {reaction} после запуска {Monitor} снизил её до {QuietCores * 100:0}{unit}",
             _ => $"держал нагрузку {baseline} и завершился через {reaction} после запуска {Monitor}",
         };
         var history = CycleCount > 1 || ExitCount > 1
