@@ -57,6 +57,7 @@ public class HostsCleanerTests
     }
 }
 
+[Collection(KernelGuardStateGroup.Name)]
 public class RemediationEngineTests
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";

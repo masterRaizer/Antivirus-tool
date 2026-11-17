@@ -57,6 +57,8 @@ internal sealed class RecordingTerminator(FakeProcessHost host, List<string> log
     }
 }
 
+// Барьер изоляции читает общий список PID, защищённых драйвером: тесты KernelGuardStateGroup не должны идти параллельно.
+[Collection(KernelGuardStateGroup.Name)]
 public class ProcessContainmentEngineTests
 {
     private sealed class Bench : IDisposable

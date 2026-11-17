@@ -50,6 +50,7 @@ internal sealed class RegistryBackedDefender(InMemoryRegistryProvider registry) 
 /// Сквозной цикл: обнаружение исключения и файла → завершение процесса → изоляция в карантин →
 /// откат исключений и реестра → восстановление из манифестов → HTML/JSON-отчёты.
 /// </summary>
+[Collection(KernelGuardStateGroup.Name)]
 public class EndToEndRemediationTests
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
