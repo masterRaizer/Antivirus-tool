@@ -376,7 +376,7 @@ public sealed partial class SentinelRuntime
                 allowedWhenNull: true);
         }
 
-        run.Threats += config.Findings.Count(f => f.Area != ConfigArea.DefenderExclusion);
+        run.Threats += config.Findings.Count(f => f.Area != ConfigArea.DefenderExclusion && f.Severity > Signatures.Severity.Info);
     }
 
     private static void BeginPhase(ScanRun run, double start, double span, bool files = false)

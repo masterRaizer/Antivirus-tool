@@ -50,6 +50,37 @@ public sealed class QuarantineManager : IDisposable
 
     public void Dispose() => _gate.Dispose();
 
+    /// <summary>
+    /// Журнал действий с файлами пользователя: <c>&lt;каталог данных&gt;\Logs\file-actions.jsonl</c>, только дописывается (UTC, действие,
+    /// путь, SHA-256, причина). Манифест карантина меняется при восстановлении и удалении, а журнал остаётся доказательством того,
+    /// что Sentinel делал (и чего не делал) с файлами; установщик каталог данных не удаляет.
+    /// </summary>
+    public string JournalPath => Path.Combine(Path.GetDirectoryName(_directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? _directory, "Logs", JournalFileName);
+
+    public const string JournalFileName = "file-actions.jsonl";
+
+    private void AppendJournal(string action, string path, string? sha256, string reason)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(JournalPath)!);
+            var line = JsonSerializer.Serialize(new
+            {
+                utc = _time.GetUtcNow().UtcDateTime,
+                action,
+                path,
+                sha256,
+                reason,
+                machine = Environment.MachineName,
+            });
+            File.AppendAllText(JournalPath, line + Environment.NewLine);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Журнал — дополнительная гарантия: его недоступность не отменяет уже выполненное действие.
+        }
+    }
+
     public string QuarantineDirectory => _directory;
 
     public string ManifestPath => _manifestPath;
@@ -208,6 +239,7 @@ public sealed class QuarantineManager : IDisposable
             manifestSaved = true;
 
             File.Delete(fullPath);
+            AppendJournal("quarantine", fullPath, sha256, reason);
             return new QuarantineResult(QuarantineStatus.Quarantined, $"Изолирован: {fullPath} → {storedName}", record);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
@@ -292,6 +324,7 @@ public sealed class QuarantineManager : IDisposable
             var updated = record with { State = QuarantineState.Deleted, RestoredAtUtc = _time.GetUtcNow().UtcDateTime };
             manifest.Entries[manifest.Entries.IndexOf(record)] = updated;
             await SaveManifestAsync(manifest, cancellationToken).ConfigureAwait(false);
+            AppendJournal("delete", record.OriginalPath, record.Sha256, "удалён из карантина навсегда");
             return new RestoreResult(RestoreStatus.Restored, $"Файл удалён из карантина навсегда: {record.OriginalPath}", updated);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -403,6 +436,7 @@ public sealed class QuarantineManager : IDisposable
         await SaveManifestAsync(manifest, ct).ConfigureAwait(false);
         TryDelete(storedPath);
 
+        AppendJournal("restore", record.OriginalPath, record.Sha256, "восстановлен из карантина");
         return new RestoreResult(RestoreStatus.Restored, $"Восстановлен: {record.OriginalPath}", restored);
     }
 

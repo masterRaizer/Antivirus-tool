@@ -94,13 +94,13 @@
                                     </TextBlock>
                                 </Border>
                                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0" Visibility="{Binding IsActionable, Converter={StaticResource BoolToVis}}">
-                                    <Button Style="{StaticResource DangerButton}" Content="В карантин"
+                                    <Button AutomationProperties.Name="В карантин" AutomationProperties.AutomationId="QuarantineButton" Style="{StaticResource DangerButton}" Content="В карантин"
                                             ToolTip="Нейтрализовать: изолировать файл, завершить процесс или откатить параметр"
                                             Command="{Binding DataContext.QuarantineCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}" />
-                                    <Button Margin="10,0,0,0" Content="В исключения"
+                                    <Button AutomationProperties.Name="В исключения" AutomationProperties.AutomationId="AllowButton" Margin="10,0,0,0" Content="В исключения"
                                             ToolTip="Доверять объекту: добавить в allowed_exclusions.json и больше не сообщать о нём"
                                             Command="{Binding DataContext.AllowCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}" />
-                                    <Button Style="{StaticResource GhostButton}" Margin="10,0,0,0" Content="Игнорировать"
+                                    <Button AutomationProperties.Name="Игнорировать" AutomationProperties.AutomationId="IgnoreButton" Style="{StaticResource GhostButton}" Margin="10,0,0,0" Content="Игнорировать"
                                             ToolTip="Оставить без действий: событие уходит в журнал, объект не изменяется и не вносится в исключения"
                                             Command="{Binding DataContext.IgnoreCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}" />
                                 </StackPanel>

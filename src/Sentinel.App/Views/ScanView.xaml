@@ -47,7 +47,7 @@
                 </Grid.RowDefinitions>
                 <TextBox Text="{Binding CustomPath, UpdateSourceTrigger=PropertyChanged}" FontFamily="{StaticResource MonoFont}"
                          ToolTip="Путь к папке, диску или файлу — можно ввести вручную, например C:\ или D:\Windows" />
-                <Button Grid.Column="1" Margin="10,0,0,0" Command="{Binding BrowseCommand}" Content="Обзор…" />
+                <Button AutomationProperties.Name="Обзор…" Grid.Column="1" Margin="10,0,0,0" Command="{Binding BrowseCommand}" Content="Обзор…" />
                 <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Muted}" Margin="2,6,0,0" TextWrapping="Wrap"
                            Text="Путь можно вписать вручную (например, C:\, D:\Windows или букву флешки) — это работает и в среде восстановления, где диалог выбора папок ограничен." />
             </Grid>
@@ -102,9 +102,9 @@
                     </UniformGrid>
 
                     <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
-                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding StartCommand}" Content="Начать проверку" MinWidth="150" />
+                        <Button AutomationProperties.Name="Начать проверку" Style="{StaticResource PrimaryButton}" Command="{Binding StartCommand}" Content="Начать проверку" MinWidth="150" />
                         <Button Margin="10,0,0,0" Command="{Binding PauseResumeCommand}" Content="{Binding PauseResumeText}" MinWidth="110" />
-                        <Button Margin="10,0,0,0" Style="{StaticResource DangerButton}" Command="{Binding StopCommand}" Content="Стоп" MinWidth="90" />
+                        <Button AutomationProperties.Name="Стоп" Margin="10,0,0,0" Style="{StaticResource DangerButton}" Command="{Binding StopCommand}" Content="Стоп" MinWidth="90" />
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -124,7 +124,7 @@
                     </Style>
                 </Border.Style>
                 <DockPanel LastChildFill="True">
-                    <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Command="{Binding OpenReportCommand}" Content="Открыть отчёт" VerticalAlignment="Center" />
+                    <Button AutomationProperties.Name="Открыть отчёт" DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Command="{Binding OpenReportCommand}" Content="Открыть отчёт" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding Progress.Message}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,14,0" />
                 </DockPanel>
             </Border>

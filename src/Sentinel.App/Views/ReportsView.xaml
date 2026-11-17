@@ -15,7 +15,7 @@
                 <TextBlock Style="{StaticResource H1}" Text="История отчётов" />
                 <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0" Text="Каждая проверка сохраняется; отчёт экспортируется в самодостаточный HTML или JSON одним нажатием" />
             </StackPanel>
-            <Button DockPanel.Dock="Right" VerticalAlignment="Center" Command="{Binding RefreshCommand}" Content="Обновить" />
+            <Button AutomationProperties.Name="Обновить" DockPanel.Dock="Right" VerticalAlignment="Center" Command="{Binding RefreshCommand}" Content="Обновить" />
         </DockPanel>
 
         <!-- Список проверок -->
@@ -86,11 +86,11 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding ExportHtmlCommand}" Content="Экспорт в HTML"
+                        <Button AutomationProperties.Name="Экспорт в HTML" Style="{StaticResource PrimaryButton}" Command="{Binding ExportHtmlCommand}" Content="Экспорт в HTML"
                                 ToolTip="Сохранить самодостаточный HTML-отчёт в «Документы\Sentinel Reports» и открыть его" />
-                        <Button Margin="10,0,0,0" Command="{Binding ExportJsonCommand}" Content="Экспорт в JSON"
+                        <Button AutomationProperties.Name="Экспорт в JSON" Margin="10,0,0,0" Command="{Binding ExportJsonCommand}" Content="Экспорт в JSON"
                                 ToolTip="Сохранить структурированный JSON-отчёт в «Документы\Sentinel Reports»" />
-                        <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Command="{Binding OpenExportFolderCommand}" Content="Показать файл"
+                        <Button AutomationProperties.Name="Показать файл" Margin="10,0,0,0" Style="{StaticResource GhostButton}" Command="{Binding OpenExportFolderCommand}" Content="Показать файл"
                                 Visibility="{Binding LastExportPath, Converter={StaticResource BoolToVis}}" ToolTip="{Binding LastExportPath}" />
                     </StackPanel>
                 </StackPanel>

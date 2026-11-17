@@ -28,13 +28,13 @@
                         <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10" TextWrapping="Wrap"
                                    Text="Файлы, папки, процессы и SHA-256 из этого списка не изолируются и не завершаются. Системный белый список Windows этим не затрагивается." />
                         <WrapPanel>
-                            <Button Command="{Binding AddFolderCommand}" Content="Добавить папку" Margin="0,0,8,8" />
-                            <Button Command="{Binding AddFileCommand}" Content="Добавить файл" Margin="0,0,8,8" />
-                            <Button Style="{StaticResource DangerButton}" Command="{Binding RemoveCommand}" Content="Удалить" Margin="0,0,8,8" />
+                            <Button AutomationProperties.Name="Добавить папку" Command="{Binding AddFolderCommand}" Content="Добавить папку" Margin="0,0,8,8" />
+                            <Button AutomationProperties.Name="Добавить файл" Command="{Binding AddFileCommand}" Content="Добавить файл" Margin="0,0,8,8" />
+                            <Button AutomationProperties.Name="Удалить" Style="{StaticResource DangerButton}" Command="{Binding RemoveCommand}" Content="Удалить" Margin="0,0,8,8" />
                         </WrapPanel>
                         <DockPanel Margin="0,0,0,10">
-                            <Button DockPanel.Dock="Right" Command="{Binding AddProcessCommand}" Content="Добавить процесс" Margin="8,0,0,0" />
-                            <Button DockPanel.Dock="Right" Command="{Binding AddHashCommand}" Content="Добавить SHA-256" Margin="8,0,0,0" />
+                            <Button AutomationProperties.Name="Добавить процесс" DockPanel.Dock="Right" Command="{Binding AddProcessCommand}" Content="Добавить процесс" Margin="8,0,0,0" />
+                            <Button AutomationProperties.Name="Добавить SHA-256" DockPanel.Dock="Right" Command="{Binding AddHashCommand}" Content="Добавить SHA-256" Margin="8,0,0,0" />
                             <TextBox Text="{Binding NewValue, UpdateSourceTrigger=PropertyChanged}" FontFamily="{StaticResource MonoFont}"
                                      ToolTip="SHA-256 (64 шестнадцатеричных символа) или имя процесса, например tool.exe" />
                         </DockPanel>
@@ -64,7 +64,7 @@
                                        Foreground="{StaticResource TextBrush}" Text="{Binding DatabaseSummary}" />
                             <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,10" TextWrapping="Wrap" Text="{Binding DatabaseDetail}" />
                             <StackPanel Orientation="Horizontal">
-                                <Button Style="{StaticResource PrimaryButton}" Command="{Binding UpdateDatabasesCommand}" Content="Обновить базы" />
+                                <Button AutomationProperties.Name="Обновить базы" Style="{StaticResource PrimaryButton}" Command="{Binding UpdateDatabasesCommand}" Content="Обновить базы" />
                                 <CheckBox Style="{StaticResource Switch}" Margin="16,0,0,0" VerticalAlignment="Center"
                                           IsChecked="{Binding AutoUpdateDatabases, Mode=TwoWay}" Content="Автообновление каждые 6 часов" />
                             </StackPanel>
@@ -115,8 +115,8 @@
         </Grid>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-            <Button Style="{StaticResource GhostButton}" Command="{Binding ReloadCommand}" Content="Отменить изменения" Margin="0,0,10,0" />
-            <Button Style="{StaticResource PrimaryButton}" Command="{Binding SaveCommand}" Content="Сохранить и применить" Click="OnSaved" />
+            <Button AutomationProperties.Name="Отменить изменения" Style="{StaticResource GhostButton}" Command="{Binding ReloadCommand}" Content="Отменить изменения" Margin="0,0,10,0" />
+            <Button AutomationProperties.Name="Сохранить и применить" Style="{StaticResource PrimaryButton}" Command="{Binding SaveCommand}" Content="Сохранить и применить" Click="OnSaved" />
         </StackPanel>
     </Grid>
 </UserControl>

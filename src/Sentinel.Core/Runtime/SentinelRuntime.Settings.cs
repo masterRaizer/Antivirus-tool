@@ -163,7 +163,10 @@ public sealed partial class SentinelRuntime
         try
         {
             var status = await Feeds!.UpdateAsync(_lifetime.Token).ConfigureAwait(false);
-            Log?.Invoke($"Базы угроз: {status.LastStatus}");
+            var failed = status.Sources.Where(src => src.Status != "ok").ToList();
+            Log?.Invoke($"Базы угроз: {status.LastStatus}"
+                + (failed.Count == 0 ? string.Empty
+                    : ". Не обновлены: " + string.Join("; ", failed.Select(src => $"{src.Name} — {src.Status}: {src.Message}"))));
             return status;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or HttpRequestException or OperationCanceledException)

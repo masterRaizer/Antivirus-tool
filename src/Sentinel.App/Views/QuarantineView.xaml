@@ -11,7 +11,7 @@
                 <TextBlock Style="{StaticResource H1}" Text="Карантин и откат" />
                 <TextBlock Style="{StaticResource Muted}" Margin="0,4,0,0" Text="Любое действие Sentinel обратимо: файл возвращается на место, параметр — к прежнему значению" />
             </StackPanel>
-            <Button DockPanel.Dock="Right" VerticalAlignment="Center" Command="{Binding RefreshCommand}" Content="Обновить" />
+            <Button AutomationProperties.Name="Обновить" DockPanel.Dock="Right" VerticalAlignment="Center" Command="{Binding RefreshCommand}" Content="Обновить" />
         </DockPanel>
 
         <TabControl Grid.Row="1">
@@ -43,10 +43,10 @@
                                     <DataTemplate>
                                         <Grid>
                                             <StackPanel Orientation="Horizontal" Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
-                                                <Button Style="{StaticResource SmallButton}" Content="Восстановить"
+                                                <Button AutomationProperties.Name="Восстановить" Style="{StaticResource SmallButton}" Content="Восстановить"
                                                         ToolTip="Вернуть файл на исходное место с проверкой SHA-256"
                                                         Command="{Binding DataContext.RestoreCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
-                                                <Button Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="Удалить навсегда" Foreground="{StaticResource DangerBrush}"
+                                                <Button AutomationProperties.Name="Удалить навсегда" Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="Удалить навсегда" Foreground="{StaticResource DangerBrush}"
                                                         ToolTip="Стереть изолированный файл без возможности восстановления"
                                                         Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
                                             </StackPanel>
@@ -97,7 +97,7 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <Grid>
-                                            <Button Style="{StaticResource SmallButton}" Content="Вернуть" HorizontalAlignment="Left"
+                                            <Button AutomationProperties.Name="Вернуть" Style="{StaticResource SmallButton}" Content="Вернуть" HorizontalAlignment="Left"
                                                     ToolTip="Вернуть параметру прежнее значение из rollback_manifest.json"
                                                     Visibility="{Binding Undone, Converter={StaticResource BoolToVis}, ConverterParameter=invert}"
                                                     Command="{Binding DataContext.UndoCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />

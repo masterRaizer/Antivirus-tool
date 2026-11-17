@@ -25,7 +25,7 @@ using Sentinel.Core.Trust;
 
 namespace Sentinel.Cli;
 
-internal static class Program
+internal static partial class Program
 {
     private const int ExitOk = 0;
     private const int ExitDetected = 1;
@@ -86,6 +86,7 @@ internal static class Program
                 "threatdb" => ThreatDb(opts),
                 "scan-usb" => ScanUsb(opts),
                 "behavioral-status" => BehavioralStatus(opts),
+                "service-scan" => ServiceScan(opts),
                 _ => Unknown(args[0]),
             };
         }
@@ -111,6 +112,8 @@ internal static class Program
             Использование:
               sentinel scan-usb [путь]        проверка съёмных носителей USB-щитом
               sentinel behavioral-status     состояние поведенческого щита
+              sentinel service-scan quick|full|custom <путь> [--wait] [--json]
+                                             проверка силами службы (как кнопка в окне); --wait — ждать итога
               sentinel scan <путь> [--rules <каталог>] [--json] [--no-recurse] [--max-size <МБ>] [действия] [отчёт]
               sentinel hash <файл>                 SHA-256 и энтропия Шеннона
               sentinel pe <файл> [--json]          разбор PE-заголовков
@@ -1273,6 +1276,9 @@ internal sealed class CliOptions
     public bool NoFileScan { get; private set; }
     public bool Remediate { get; private set; }
     public bool DryRun { get; private set; }
+
+    /// <summary><c>service-scan --wait</c>: дождаться завершения проверки в службе.</summary>
+    public bool Wait { get; private set; }
     public bool Overwrite { get; private set; }
     public string? ReportHtml { get; private set; }
     public string? ReportJson { get; private set; }
@@ -1312,6 +1318,9 @@ internal sealed class CliOptions
                     break;
                 case "--dry-run":
                     o.DryRun = true;
+                    break;
+                case "--wait":
+                    o.Wait = true;
                     break;
                 case "--overwrite":
                     o.Overwrite = true;

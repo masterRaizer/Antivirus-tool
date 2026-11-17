@@ -18,7 +18,7 @@
                     <TextBlock Text="Спорный объект" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Style="{StaticResource Muted}" FontSize="11.5" Text="Sentinel не уверен — решите, что с ним делать" />
                 </StackPanel>
-                <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Padding="8,3" BorderThickness="0" VerticalAlignment="Top"
+                <Button AutomationProperties.Name="Решить позже" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Padding="8,3" BorderThickness="0" VerticalAlignment="Top"
                         Command="{Binding LaterCommand}" Content="&#xE8BB;" FontFamily="{StaticResource IconFont}" FontSize="10" ToolTip="Решить позже" />
             </DockPanel>
 
@@ -38,8 +38,8 @@
                     <ColumnDefinition Width="10" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button Style="{StaticResource DangerButton}" Command="{Binding QuarantineCommand}" Content="В карантин" />
-                <Button Grid.Column="2" Command="{Binding AllowCommand}" Content="В исключения" />
+                <Button AutomationProperties.Name="В карантин" AutomationProperties.AutomationId="QuarantineButton" Style="{StaticResource DangerButton}" Command="{Binding QuarantineCommand}" Content="В карантин" />
+                <Button AutomationProperties.Name="В исключения" AutomationProperties.AutomationId="AllowButton" Grid.Column="2" Command="{Binding AllowCommand}" Content="В исключения" />
             </Grid>
             <TextBlock Style="{StaticResource Muted}" Margin="0,10,0,0" FontSize="11.5" TextWrapping="Wrap" Text="{Binding QueueText}" />
         </StackPanel>

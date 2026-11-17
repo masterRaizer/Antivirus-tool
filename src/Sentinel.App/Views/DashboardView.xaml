@@ -46,8 +46,8 @@
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                         <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding RealtimeEnabled, Mode=TwoWay}" Content="Защита" Margin="0,0,20,0"
                                   ToolTip="Включить или приостановить защиту в реальном времени" />
-                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding QuickScanCommand}" Content="Быстрая проверка" />
-                        <Button Margin="10,0,0,0" Command="{Binding FullScanCommand}" Content="Полная проверка" />
+                        <Button AutomationProperties.Name="Быстрая проверка" Style="{StaticResource PrimaryButton}" Command="{Binding QuickScanCommand}" Content="Быстрая проверка" />
+                        <Button AutomationProperties.Name="Полная проверка" Margin="10,0,0,0" Command="{Binding FullScanCommand}" Content="Полная проверка" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -56,8 +56,8 @@
             <Border Style="{StaticResource Card}" Margin="0,12,0,0" Padding="20,14">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding UpdateDatabasesCommand}" Content="Обновить базы" />
-                        <Button Style="{StaticResource GhostButton}" Margin="10,0,0,0" Command="{Binding OpenSettingsCommand}" Content="Настройки и базы" />
+                        <Button AutomationProperties.Name="Обновить базы" Style="{StaticResource PrimaryButton}" Command="{Binding UpdateDatabasesCommand}" Content="Обновить базы" />
+                        <Button AutomationProperties.Name="Настройки и базы" Style="{StaticResource GhostButton}" Margin="10,0,0,0" Command="{Binding OpenSettingsCommand}" Content="Настройки и базы" />
                     </StackPanel>
                     <TextBlock DockPanel.Dock="Left" Style="{StaticResource Glyph}" Text="&#xE8F1;" FontSize="22" Foreground="{StaticResource InfoBrush}" Margin="0,0,16,0" VerticalAlignment="Center" />
                     <StackPanel VerticalAlignment="Center">
@@ -142,7 +142,7 @@
             <!-- Процессы -->
             <DockPanel Margin="0,16,0,10" LastChildFill="False">
                 <TextBlock Style="{StaticResource H2}" Text="Процессы с высокой нагрузкой или замечаниями" VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Command="{Binding RefreshProcessesCommand}" Content="Обновить" />
+                <Button AutomationProperties.Name="Обновить" DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Command="{Binding RefreshProcessesCommand}" Content="Обновить" />
             </DockPanel>
             <DataGrid ItemsSource="{Binding Processes}" MaxHeight="360" Visibility="{Binding HasProcesses, Converter={StaticResource BoolToVis}}">
                 <DataGrid.Columns>

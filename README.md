@@ -36,6 +36,7 @@ sentinel selftest
 sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan]   # только Windows
 sentinel audit-startup   [--rules <каталог>] [--json] [--no-file-scan]   # только Windows
 sentinel audit-config    [--json]                                        # только Windows
+sentinel service-scan    quick|full|custom <путь> [--wait] [--json]      # проверка силами службы (как кнопка в окне)
 ```
 
 Коды возврата: `0` — чисто, `1` — обнаружены угрозы/подозрения, `2` — ошибка.

@@ -22,7 +22,7 @@
             <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" ToolTip="Поиск по имени, расположению и команде" />
             <CheckBox Grid.Column="1" Style="{StaticResource Switch}" Margin="18,0,0,0" VerticalAlignment="Center"
                       IsChecked="{Binding OnlyFlagged, Mode=TwoWay}" Content="Только нестандартные и неподписанные" />
-            <Button Grid.Column="2" Command="{Binding RefreshCommand}" Content="Обновить" />
+            <Button AutomationProperties.Name="Обновить" Grid.Column="2" Command="{Binding RefreshCommand}" Content="Обновить" />
         </Grid>
 
         <Border Grid.Row="2" Margin="0,0,0,12" Padding="14,10" CornerRadius="8" Background="{StaticResource WarnSoftBrush}"
@@ -112,11 +112,11 @@
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Horizontal">
-                                <Button Style="{StaticResource SmallButton}" Content="Удалить с откатом"
+                                <Button AutomationProperties.Name="Удалить с откатом" Style="{StaticResource SmallButton}" Content="Удалить с откатом"
                                         ToolTip="Вернуть запись к эталону, отключить службу или удалить элемент; резервная копия — в разделе «Карантин и откат»"
                                         Visibility="{Binding CanClean, Converter={StaticResource BoolToVis}}"
                                         Command="{Binding DataContext.CleanCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />
-                                <Button Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="В исключения"
+                                <Button AutomationProperties.Name="В исключения" AutomationProperties.AutomationId="AllowButton" Style="{StaticResource SmallButton}" Margin="8,0,0,0" Content="В исключения"
                                         ToolTip="Доверять целевому файлу: добавить его путь в allowed_exclusions.json"
                                         Visibility="{Binding Target, Converter={StaticResource BoolToVis}}"
                                         Command="{Binding DataContext.AllowCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}" CommandParameter="{Binding}" />

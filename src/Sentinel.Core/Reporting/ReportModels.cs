@@ -258,8 +258,17 @@ public sealed class ReportBuilder
     {
         ArgumentNullException.ThrowIfNull(report);
         var exclusionIndex = 0;
+        var hidden = 0;
         foreach (var f in report.Findings)
         {
+            // Справочные записи (штатные устаревшие корневые сертификаты Windows и т.п.) пользователь исправить не может:
+            // в отчёт находками не выводятся, только счётчиком в примечании области.
+            if (f.Severity == Severity.Info && f.Area != ConfigArea.DefenderExclusion)
+            {
+                hidden++;
+                continue;
+            }
+
             string key;
             string name;
             if (f.Area == ConfigArea.DefenderExclusion && exclusionIndex < report.DefenderExclusions.Count)
@@ -288,8 +297,18 @@ public sealed class ReportBuilder
             });
         }
 
-        return AddArea("Конфигурация безопасности", report.Count, report.Count,
-            report.DefenderExclusions.Count > 0 ? $"исключений Defender: {report.DefenderExclusions.Count}" : null);
+        var notes = new List<string>();
+        if (report.DefenderExclusions.Count > 0)
+        {
+            notes.Add($"исключений Defender: {report.DefenderExclusions.Count}");
+        }
+
+        if (hidden > 0)
+        {
+            notes.Add($"справочных записей скрыто: {hidden}");
+        }
+
+        return AddArea("Конфигурация безопасности", report.Count, report.Count - hidden, notes.Count > 0 ? string.Join("; ", notes) : null);
     }
 
     /// <summary>Файлы, найденные приоритетной проверкой исключений Defender.</summary>
