@@ -40,6 +40,7 @@ sentinel service-scan    quick|full|custom <путь> [--wait] [--json]      # �
 sentinel family-scan     [--json]                                        # семейства майнеров/загрузчиков, только Windows
 sentinel family-clean    [--confirm] [--block-ioc] [--json]              # плейбук нейтрализации, только Windows
 sentinel evasion-watch   [секунды] [--json]                              # детектор скрытых майнеров вживую, только наблюдение
+sentinel gpu-usage       [секунды] [--json]                              # кто грузит видеокарту — без Диспетчера задач
 ```
 
 Детектор скрытых майнеров, которые прячут нагрузку при открытии Диспетчера задач, — [`docs/MONITOR_EVASION.md`](docs/MONITOR_EVASION.md).
