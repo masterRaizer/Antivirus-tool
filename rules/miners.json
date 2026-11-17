@@ -22,9 +22,9 @@
       "name": "CryptoMiner_Pool_Domains",
       "severity": "medium",
       "category": "miner",
-      "description": "Ссылки на популярные публичные майнинг-пулы Monero",
+      "description": "Исполняемый файл со ссылками на популярные публичные майнинг-пулы Monero",
       "tags": ["miner"],
-      "appliesTo": ["executable", "script", "config"],
+      "appliesTo": ["executable"],
       "excludeFileNames": ["geosite.dat", "geoip.dat", "geoip.metadb", "country.mmdb", "geosite.db", "geoip.db"],
       "strings": [
         { "id": "$p1", "text": "pool.minexmr.com", "nocase": true, "ascii": true, "wide": true },
@@ -34,6 +34,35 @@
         { "id": "$p5", "text": "gulf.moneroocean.stream", "nocase": true, "ascii": true, "wide": true }
       ],
       "condition": "any of them"
+    },
+    {
+      "id": "SNT-MINER-0003",
+      "name": "CryptoMiner_Pool_Endpoint",
+      "severity": "medium",
+      "category": "miner",
+      "description": "Скрипт или конфигурация майнера: адрес пула Monero с портом (host:port) или адрес пула вместе с параметрами майнера. Голое имя домена (списки блокировки AdBlock, uBlock, Edge) не считается находкой",
+      "tags": ["miner"],
+      "appliesTo": ["script", "config"],
+      "excludeFileNames": ["geosite.dat", "geoip.dat", "geoip.metadb", "country.mmdb", "geosite.db", "geoip.db"],
+      "strings": [
+        { "id": "$hp1", "text": "pool.minexmr.com:", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$hp2", "text": "xmr.2miners.com:", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$hp3", "text": "pool.supportxmr.com:", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$hp4", "text": "xmr-eu1.nanopool.org:", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$hp5", "text": "gulf.moneroocean.stream:", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p1", "text": "pool.minexmr.com", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p2", "text": "xmr.2miners.com", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p3", "text": "pool.supportxmr.com", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p4", "text": "xmr-eu1.nanopool.org", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$p5", "text": "gulf.moneroocean.stream", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$ctx_pools", "text": "\"pools\"", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$ctx_donate", "text": "donate-level", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$ctx_rig", "text": "rig-id", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$ctx_coin", "text": "--coin", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$ctx_url", "text": "--url", "nocase": true, "ascii": true, "wide": true },
+        { "id": "$ctx_user", "text": "--user", "nocase": true, "ascii": true, "wide": true }
+      ],
+      "condition": "any of ($hp*) or (any of ($p*) and any of ($ctx*))"
     }
   ]
 }

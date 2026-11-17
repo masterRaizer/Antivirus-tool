@@ -291,15 +291,39 @@ public class RuleApplicabilityTests
     [InlineData(@"C:\data\GeoSite.DAT")]
     [InlineData(@"C:\data\routing.dat")]
     public void PoolDomainRule_DoesNotFire_OnNonExecutableGeoDatabases(string path) =>
-        Assert.DoesNotContain(Scan(path), m => m.RuleId == "SNT-MINER-0002");
+        Assert.DoesNotContain(Scan(path), m => m.Category == "miner");
 
     [Theory]
-    [InlineData(@"C:\miner\config.json")]
-    [InlineData(@"C:\miner\start.bat")]
     [InlineData(@"C:\miner\xmrig.exe")]
     [InlineData(@"C:\miner\renamed.dat", true)]
-    public void PoolDomainRule_StillFires_OnConfigsScriptsAndExecutables(string path, bool isPe = false) =>
+    public void PoolDomainRule_StillFires_OnExecutables(string path, bool isPe = false) =>
         Assert.Contains(Scan(path, isPe), m => m.RuleId == "SNT-MINER-0002");
+
+    [Theory]
+    [InlineData(@"C:\miner\config.json", "{ \"url\": \"pool.supportxmr.com:443\" }")]
+    [InlineData(@"C:\miner\start.bat", "xmrig.exe -o gulf.moneroocean.stream:10128 -u 4abc")]
+    [InlineData(@"C:\miner\start.ps1", "& .\\svc.exe --url pool.minexmr.com --user 4abc")]
+    [InlineData(@"C:\miner\config.json", "{ \"pools\": [ { \"url\": \"xmr.2miners.com\" } ] }")]
+    public void PoolEndpointRule_Fires_OnMinerConfigsAndScripts(string path, string content) =>
+        Assert.Contains(ScanText(path, content), m => m.RuleId == "SNT-MINER-0003");
+
+    // Списки блокировки (AdBlock, uBlock, подписки Edge) перечисляют домены пулов именно для того, чтобы их блокировать.
+    [Theory]
+    [InlineData(@"C:\Users\u\AppData\Local\Google\Chrome\User Data\Default\Extensions\gighmmpiobklfepjocnamgkkbiglidom\6.53.0_0\data\rules\abp\D72B6F06-52B2-4FED-96A2-1BF59CDD7AEC",
+        "[Adblock Plus 2.0]\n! Title: NoCoin\n||pool.minexmr.com^\n||xmr.2miners.com^\n||pool.supportxmr.com^$third-party\n")]
+    [InlineData(@"C:\Users\u\AppData\Local\Google\Chrome\User Data\Default\Extensions\gighmmpiobklfepjocnamgkkbiglidom\6.53.0_0\background.js",
+        "const rules=[{id:1,action:{type:\"block\"},condition:{urlFilter:\"||gulf.moneroocean.stream^\"}}];")]
+    [InlineData(@"C:\Users\u\AppData\Local\Microsoft\Edge\User Data\Subresource Filter\Unindexed Rules\10.34.0.84\Part-FR",
+        "xmr-eu1.nanopool.org\0pool.minexmr.com\0")]
+    [InlineData(@"C:\Users\u\filters\hosts.txt", "0.0.0.0 pool.minexmr.com\n0.0.0.0 xmr.2miners.com\n")]
+    public void PoolRules_DoNotFire_OnBlocklists(string path, string content) =>
+        Assert.DoesNotContain(ScanText(path, content), m => m.Category == "miner");
+
+    private static IReadOnlyList<SignatureMatch> ScanText(string path, string content)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+        return new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory)).Scan(bytes, bytes.Length, null, new ScanTarget(path, false));
+    }
 
     [Fact]
     public void RuleWithoutRestrictions_AppliesEverywhere() =>
