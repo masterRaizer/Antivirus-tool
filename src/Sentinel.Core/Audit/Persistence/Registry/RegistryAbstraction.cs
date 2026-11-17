@@ -136,3 +136,12 @@ public interface IRegistryEditor : IRegistryProvider
     /// <summary>Удаляет значение. Возвращает <c>false</c>, если значения (или ключа) не было.</summary>
     bool DeleteValue(RegistryKeyPath key, string name);
 }
+
+/// <summary>
+/// Время последней записи ключа (<c>RegQueryInfoKey</c>). Отдельный интерфейс: у отдельного значения реестра времени нет,
+/// поэтому корреляция «Run-значение создано рядом по времени с файлом» использует время изменения ключа Run.
+/// </summary>
+public interface IRegistryKeyTimestampProvider
+{
+    DateTime? GetLastWriteTimeUtc(RegistryKeyPath key);
+}

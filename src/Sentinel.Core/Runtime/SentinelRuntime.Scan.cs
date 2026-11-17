@@ -255,7 +255,8 @@ public sealed partial class SentinelRuntime
         run.Processes = snapshot;
         run.Total += snapshot.Count;
         // Анализ образов идёт параллельно (одинаковые exe — один раз, см. ProcessAuditor), реакция на находки — по порядку.
-        var auditor = new ProcessAuditor(new ProcessAuditorOptions(), _o.Analyzer);
+        var auditor = new ProcessAuditor(new ProcessAuditorOptions { NetworkConnections = _o.NetworkConnections }, _o.Analyzer);
+        var connections = auditor.ReadNetworkConnections();
         var results = new ProcessAuditEntry[snapshot.Count];
         var gate = new object();
         await Parallel.ForEachAsync(Enumerable.Range(0, snapshot.Count),
@@ -268,7 +269,7 @@ public sealed partial class SentinelRuntime
                 }
 
                 var process = snapshot[i];
-                results[i] = auditor.Audit([process]).Entries[0];
+                results[i] = auditor.AuditInContext(process, snapshot, connections);
                 lock (gate)
                 {
                     run.Scanned++;

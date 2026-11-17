@@ -184,9 +184,12 @@ public sealed partial class SentinelRuntime
     private async Task<ThreatEvent?> DispatchAuditedProcessAsync(ProcessAuditEntry entry, string source, CancellationToken cancellationToken)
     {
         var (guard, signed) = EvaluateProcessGuard(entry);
+        var familyDecision = ThreatFamilies.FamilyFindingPolicy.DecisionReason(entry.Findings);
         return guard.Decision switch
         {
             Behavioral.GuardDecision.Protected => null,
+            Behavioral.GuardDecision.Act when familyDecision is not null =>
+                await _dispatcher.DispatchProcessForDecisionAsync(entry, familyDecision, source, cancellationToken).ConfigureAwait(false),
             // Слабые признаки у образа с действительной подписью (любого издателя: Termius, установщики Electron/NSIS) — не событие.
             Behavioral.GuardDecision.LogOnly when signed || HasValidSignature(entry) => null,
             Behavioral.GuardDecision.AskUser =>

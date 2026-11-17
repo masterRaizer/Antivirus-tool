@@ -87,6 +87,8 @@ internal static partial class Program
                 "scan-usb" => ScanUsb(opts),
                 "behavioral-status" => BehavioralStatus(opts),
                 "service-scan" => ServiceScan(opts),
+                "family-scan" => FamilyScan(opts, clean: false),
+                "family-clean" => FamilyScan(opts, clean: true),
                 _ => Unknown(args[0]),
             };
         }
@@ -127,6 +129,12 @@ internal static partial class Program
               sentinel kernel-status [--json]      состояние драйвера ядра SentinelDrv (или профиль User-Mode EDR)
               sentinel audit-startup [--rules <каталог>] [--json] [--no-file-scan] [действия] [отчёт]
                                                    аудит автозагрузки и персистентности (только Windows)
+              sentinel family-scan [--json]        поиск семейств майнеров/загрузчиков (CAAService, techias и похожие):
+                                                   корреляция Run + исключений Защитника + задач + правил брандмауэра,
+                                                   снимок улик в %ProgramData%\Sentinel\Evidence; ничего не изменяет
+              sentinel family-clean [--confirm] [--block-ioc] [--json]
+                                                   нейтрализация найденного по плейбуку с манифестом отката;
+                                                   без --confirm — только план (только Windows)
               sentinel audit-config [--rules <каталог>] [--json] [действия] [отчёт]
                                                    аудит конфигурации безопасности (исключения защиты, брандмауэр,
                                                    корневые сертификаты, прокси) с приоритетной глубокой проверкой
@@ -134,6 +142,8 @@ internal static partial class Program
               sentinel quarantine list [--json]    записи карантина
               sentinel quarantine restore <id> [--overwrite]
                                                    вернуть файл на исходное место (с проверкой SHA-256)
+              sentinel quarantine delete <id> --confirm
+                                                   удалить файл из карантина навсегда (без --confirm — только показать)
               sentinel rollback list [--json]      резервные копии изменённых параметров
               sentinel rollback undo <id>          отменить изменение конфигурации/автозагрузки
               sentinel service-status [--pipe <имя>] [--json]
@@ -1061,8 +1071,37 @@ internal static partial class Program
                 return result.Success ? ExitOk : ExitError;
             }
 
+            case "delete":
+            {
+                if (opts.Argument is null)
+                {
+                    Console.Error.WriteLine("Укажите идентификатор записи: sentinel quarantine delete <id> --confirm");
+                    return ExitError;
+                }
+
+                // Удаление необратимо: без --confirm только показывается, что будет удалено.
+                var record = manager.ListAsync().GetAwaiter().GetResult()
+                    .Where(r => r.Id.StartsWith(opts.Argument, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (record.Count != 1)
+                {
+                    Console.Error.WriteLine(record.Count == 0 ? "Запись карантина не найдена." : "Префикс идентификатора неоднозначен.");
+                    return ExitError;
+                }
+
+                if (!opts.Confirm)
+                {
+                    Console.WriteLine($"Будет удалён навсегда: {record[0].OriginalPath} (SHA-256 {record[0].Sha256}).");
+                    Console.WriteLine("Восстановить после этого будет нельзя. Повторите с --confirm.");
+                    return ExitOk;
+                }
+
+                var result = manager.DeleteAsync(record[0].Id).GetAwaiter().GetResult();
+                (result.Success ? Console.Out : Console.Error).WriteLine(result.Message);
+                return result.Success ? ExitOk : ExitError;
+            }
+
             default:
-                Console.Error.WriteLine("Использование: sentinel quarantine list | sentinel quarantine restore <id>");
+                Console.Error.WriteLine("Использование: sentinel quarantine list | restore <id> | delete <id> --confirm");
                 return ExitError;
         }
     }
@@ -1279,6 +1318,13 @@ internal sealed class CliOptions
 
     /// <summary><c>service-scan --wait</c>: дождаться завершения проверки в службе.</summary>
     public bool Wait { get; private set; }
+
+    /// <summary>Подтверждение разрушительных действий плейбука семейств (<c>family-clean</c>).</summary>
+    public bool Confirm { get; private set; }
+
+    /// <summary>Блокировать IOC брандмауэром и hosts (<c>family-clean</c>).</summary>
+    public bool BlockIoc { get; private set; }
+
     public bool Overwrite { get; private set; }
     public string? ReportHtml { get; private set; }
     public string? ReportJson { get; private set; }
@@ -1321,6 +1367,12 @@ internal sealed class CliOptions
                     break;
                 case "--wait":
                     o.Wait = true;
+                    break;
+                case "--confirm":
+                    o.Confirm = true;
+                    break;
+                case "--block-ioc":
+                    o.BlockIoc = true;
                     break;
                 case "--overwrite":
                     o.Overwrite = true;

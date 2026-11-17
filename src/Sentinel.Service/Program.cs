@@ -59,6 +59,7 @@ builder.Services.AddHostedService<TelemetryWorker>();
 builder.Services.AddHostedService<FileMonitorWorker>();
 builder.Services.AddHostedService<PeriodicAuditWorker>();
 builder.Services.AddHostedService<DatabaseUpdateWorker>();
+builder.Services.AddHostedService<FamilyRecheckWorker>();
 
 using var host = builder.Build();
 await host.RunAsync().ConfigureAwait(false);

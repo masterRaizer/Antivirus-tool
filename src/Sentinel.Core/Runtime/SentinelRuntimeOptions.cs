@@ -57,6 +57,12 @@ public sealed class SentinelRuntimeOptions
     /// <summary>Фабрика источника событий старта процессов (WMI/опрос); <c>null</c> — мониторинг старта недоступен.</summary>
     public Func<Monitoring.IProcessCreationEventSource>? ProcessStartSource { get; init; }
     public Func<PersistenceAuditReport>? PersistenceAudit { get; init; }
+
+    /// <summary>Таблица TCP-соединений для аудита процессов (узлы семейств, порты пулов, прослушивание).</summary>
+    public INetworkConnectionProvider? NetworkConnections { get; init; }
+
+    /// <summary>Источники перепроверки после чистки семейства (после перезагрузки); <c>null</c> — перепроверка недоступна.</summary>
+    public Func<ThreatFamilies.FamilyVerificationProbe>? FamilyProbe { get; init; }
     public Func<ConfigAuditReport>? ConfigAudit { get; init; }
     public required ITelemetryProvider Telemetry { get; init; }
     public FileMonitorOptions Monitor { get; init; } = new();
@@ -111,8 +117,11 @@ public sealed class SentinelRuntimeOptions
         IProcessProvider? kernelProcesses = null;
         Func<PersistenceAuditReport>? persistence = null;
         Func<ConfigAuditReport>? config = null;
+        INetworkConnectionProvider? network = null;
+        Func<ThreatFamilies.FamilyVerificationProbe>? familyProbe = null;
         if (OperatingSystem.IsWindows())
         {
+            network = new WindowsNetworkConnectionProvider();
             engine = RemediationEngine.CreateDefault(whitelist, RemediationOptions.CreateDefault(data));
             processes = ProcessProviderFactory.CreateDefault();
             processStarts = Monitoring.ProcessCreationEventSourceFactory.CreateDefault;
@@ -127,6 +136,7 @@ public sealed class SentinelRuntimeOptions
             var defenderExclusions = new WindowsDefenderExclusionSource();
             persistence = () => new PersistenceAuditor(PersistenceAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, tasks, wmi, analyzer).Audit();
             config = () => new ConfigIntegrityAuditor(ConfigIntegrityAuditorOptions.CreateDefault() with { IsUserAllowed = services.IsUserAllowed }, registry, certificates, defenderExclusions, analyzer).Audit();
+            familyProbe = FamilyProbeFactory(analyzer, services.IsUserAllowed);
         }
 
         return new SentinelRuntimeOptions
@@ -143,6 +153,8 @@ public sealed class SentinelRuntimeOptions
             KernelProtectionProcesses = kernelProcesses,
             PersistenceAudit = persistence,
             ConfigAudit = config,
+            NetworkConnections = network,
+            FamilyProbe = familyProbe,
             Telemetry = TelemetryProviderFactory.CreateDefault(),
             Monitor = FileMonitorOptions.CreateDefault(data),
             QuickScanRoots = DefaultQuickRoots(),
@@ -152,6 +164,10 @@ public sealed class SentinelRuntimeOptions
             RulesDirectory = rulesDirectory ?? DefaultRulesDirectory(),
         };
     }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static Func<ThreatFamilies.FamilyVerificationProbe> FamilyProbeFactory(FileAnalyzer analyzer, Func<string, bool>? isUserAllowed) =>
+        () => ThreatFamilies.ThreatFamilyScanner.CreateDefault(analyzer, isUserAllowed).CreateProbe();
 
     /// <summary>Каталоги быстрой проверки: туда вредоносное ПО попадает и оттуда запускается чаще всего.</summary>
     public static IReadOnlyList<ScanRoot> DefaultQuickRoots()

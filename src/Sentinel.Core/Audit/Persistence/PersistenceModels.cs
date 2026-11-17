@@ -16,6 +16,9 @@ public enum PersistenceKind
     WmiSubscription,
     StartupFolder,
     HostsFile,
+
+    /// <summary>Ключ удаления программы (<c>Uninstall\{GUID}_is1</c>) — улика носителя заражения, автоматически не удаляется.</summary>
+    UninstallEntry,
 }
 
 /// <summary>
@@ -40,6 +43,9 @@ public sealed record PersistenceEntry
 
     public IReadOnlyList<AuditFinding> Findings { get; init; } = [];
     public FileScanResult? FileScan { get; init; }
+
+    /// <summary>Время последнего изменения ключа реестра или задачи (UTC), если известно — для корреляции по времени.</summary>
+    public DateTime? TimestampUtc { get; init; }
 
     public bool HasFindings => Findings.Count > 0;
 

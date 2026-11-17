@@ -297,11 +297,14 @@ public sealed class ProcessStartMonitor
                 ShadowMode = _shadowMode(),
             });
 
+        // Поведенческие признаки семейств майнеров/загрузчиков без независимого подтверждения — решение за пользователем.
+        var familyDecision = ThreatFamilies.FamilyFindingPolicy.DecisionReason(findings);
         var decision = guard.Decision switch
         {
             GuardDecision.Protected => ProcessStartDecision.Allowed,
             GuardDecision.LogOnly => ProcessStartDecision.LogOnly,
             GuardDecision.AskUser => ProcessStartDecision.AskUser,
+            GuardDecision.Act when familyDecision is not null => ProcessStartDecision.AskUser,
             _ => ProcessStartDecision.Act,
         };
         if (decision is ProcessStartDecision.Allowed)
@@ -321,7 +324,7 @@ public sealed class ProcessStartMonitor
         var routed = AlignSeverity(findings, decision, guard);
         var entry = new ProcessAuditEntry(snapshot, routed, scan);
         var threat = decision == ProcessStartDecision.AskUser
-            ? await _dispatcher.DispatchProcessForDecisionAsync(entry, guard.Reason, Source, cancellationToken).ConfigureAwait(false)
+            ? await _dispatcher.DispatchProcessForDecisionAsync(entry, familyDecision ?? guard.Reason, Source, cancellationToken).ConfigureAwait(false)
             : await _dispatcher.DispatchProcessAsync(entry, Source, cancellationToken).ConfigureAwait(false);
         return Finish(created, decision, guard.EffectiveScore, guard.Reason, routed, correlation, threat);
     }

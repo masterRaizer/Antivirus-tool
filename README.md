@@ -37,7 +37,12 @@ sentinel audit-processes [--rules <каталог>] [--json] [--no-file-scan]   
 sentinel audit-startup   [--rules <каталог>] [--json] [--no-file-scan]   # только Windows
 sentinel audit-config    [--json]                                        # только Windows
 sentinel service-scan    quick|full|custom <путь> [--wait] [--json]      # проверка силами службы (как кнопка в окне)
+sentinel family-scan     [--json]                                        # семейства майнеров/загрузчиков, только Windows
+sentinel family-clean    [--confirm] [--block-ioc] [--json]              # плейбук нейтрализации, только Windows
 ```
+
+Семейства CAAService (Pearl/pearlhash) и techias (активатор Office): IOC, техники и плейбук —
+[`docs/THREAT_FAMILIES.md`](docs/THREAT_FAMILIES.md).
 
 Коды возврата: `0` — чисто, `1` — обнаружены угрозы/подозрения, `2` — ошибка.
 
@@ -82,7 +87,7 @@ sentinel service-scan    quick|full|custom <путь> [--wait] [--json]      # �
 sentinel scan <путь> --remediate --dry-run          # предпросмотр без изменений
 sentinel scan <путь> --remediate --report-html r.html --report-json r.json
 sentinel audit-config --remediate                   # файлы/процессы под исключениями + сами исключения
-sentinel quarantine list | quarantine restore <id>
+sentinel quarantine list | quarantine restore <id> | quarantine delete <id> --confirm
 sentinel rollback list   | rollback undo <id>
 ```
 

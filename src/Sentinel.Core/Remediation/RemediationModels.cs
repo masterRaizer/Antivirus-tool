@@ -8,6 +8,11 @@ public enum RemediationActionKind
     RollbackPersistence,
     RemoveDefenderExclusion,
     Undo,
+    RemoveFirewallRule,
+    BlockIoc,
+    QuarantineFile,
+    RemoveDirectory,
+    Verify,
 }
 
 public enum RemediationStatus

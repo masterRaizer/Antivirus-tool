@@ -224,6 +224,14 @@
 - Не сделано (нужна Windows/решение): обновление MSI с интерфейсом при запущенной службе и окне (Restart Manager), подпись Authenticode,
   память Sentinel.App 450–470 МБ, замер полной проверки на 1.3.3+.
 
+### 1.3.5 — вычистка семейств и удаление из карантина
+- В main слита ветка семейств CAAService/techias (PR masterRaizer/Antivirus-tool#10): правила `rules/families.json`, поведенческие находки
+  аудиторов, корреляция и плейбук `sentinel family-scan` / `family-clean --confirm [--block-ioc]` с откатом — см. `docs/THREAT_FAMILIES.md`.
+  При слиянии: проверка процессов в сканировании идёт параллельно и с контекстом (родитель, таблица TCP — `AuditInContext`), политика
+  «поведенческие находки семейства — решение за пользователем» встроена в общий маршрут `DispatchAuditedProcessAsync`.
+- `sentinel quarantine delete <id> --confirm` — удалить файл из карантина навсегда (без `--confirm` — только показать, что будет удалено);
+  в окне это кнопка «Удалить навсегда» в разделе «Карантин». Каждое удаление пишется в `Logs\file-actions.jsonl`.
+
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`
   показывает RESTART 5000/30000/60000 и сброс 86400; в `service-*.log` — «Восстановление службы: Политика восстановления выставлена…»;
