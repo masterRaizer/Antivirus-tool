@@ -87,6 +87,7 @@ internal static partial class Program
                 "scan-usb" => ScanUsb(opts),
                 "behavioral-status" => BehavioralStatus(opts),
                 "evasion-watch" => EvasionWatch(opts),
+                "gpu-usage" => GpuUsage(opts),
                 "service-scan" => ServiceScan(opts),
                 "family-scan" => FamilyScan(opts, clean: false),
                 "family-clean" => FamilyScan(opts, clean: true),
@@ -118,6 +119,8 @@ internal static partial class Program
               sentinel evasion-watch [секунды] [--json]
                                              живой прогон детектора скрытых майнеров (прячутся от Диспетчера задач);
                                              только наблюдение, по умолчанию 180 с (только Windows)
+              sentinel gpu-usage [секунды] [--json]
+                                             кто грузит видеокарту и процессор — без Диспетчера задач (по умолчанию 30 с)
               sentinel service-scan quick|full|custom <путь> [--wait] [--json]
                                              проверка силами службы (как кнопка в окне); --wait — ждать итога
               sentinel scan <путь> [--rules <каталог>] [--json] [--no-recurse] [--max-size <МБ>] [действия] [отчёт]

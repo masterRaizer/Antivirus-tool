@@ -310,24 +310,48 @@
   База угроз теперь из трёх файлов: `threat_hashes.bin` (SHA-256), `threat_hashes_sha1.bin`, `threat_hashes_md5.bin`
   (формат v2: длина хеша в заголовке; файлы v1 читаются как раньше). MD5/SHA-1 файла считаются, только если такие базы есть.
 - Источники сборки в релизе (`scripts/build-threat-db.ps1`, шаг workflow перед publish): eset/malware-ioc, Neo23x0/signature-base,
-  отчёты IOC Cisco-Talos/IOCs, pan-unit42/iocs (~630 тыс. образцов майнеров), sophoslabs/IoCs (без ключей: ~737 тыс. SHA-256),
-  последние 50 списков VirusShare (MD5), abuse.ch MalwareBazaar. Недоступный источник — предупреждение, релиз не падает.
-  MalwareBazaar с ноября 2026 отдаёт выгрузки только по ключу в пути (`mb-api.abuse.ch/v2/files/exports/<ключ>/…`; старые
-  адреса — 410 Gone): нужен бесплатный ключ abuse.ch в секрете репозитория `ABUSECH_AUTH_KEY`, иначе источник пропускается.
-- Отчёты IOC: строки с пометками легитимного файла (legitimate, vulnerable, BYOVD, sideload, signed, Microsoft…) не берутся.
-  Совпадение с базой у файла с действительной подписью стороннего издателя — не Critical (авто-карантин), а Medium
-  (решение пользователя): в отчётах бывают законные компоненты, которыми злоупотребляют (например, RTCore64.sys MSI Afterburner).
-- CLI: `threatdb build --out data/threat_hashes.bin [--signature-base dir] [--eset dir] [--ioc-reports Имя=dir]… [--malwarebazaar file]… [--virusshare dir]`,
+  последние 50 списков VirusShare (MD5), abuse.ch MalwareBazaar (см. 1.3.10 и 1.3.11). Недоступный источник — предупреждение.
+- CLI: `threatdb build --out data/threat_hashes.bin [--signature-base dir] [--eset dir] [--malwarebazaar file]… [--virusshare dir]`,
   `threatdb info` (по видам), `threatdb lookup <sha256|sha1|md5>`. Обновление баз службой — потоковое слияние без загрузки базы в память.
 - «Белое облако» (как KSN): переключатель «Проверять подозрительные файлы по базе известных программ» (`EnableKnownGoodLookup`,
   по умолчанию выключен) — SHA-256 неподписанного файла с баллом ≥ 45 сверяется с CIRCL hashlookup (NSRL, пакеты дистрибутивов).
   Известная программа (доверие ≥ 50, зелёная зона OpenTIP) — эвристический балл не находка; `KnownMalicious` у CIRCL — находка.
   Если VirusTotal видит хотя бы один движок с детектом или OpenTIP даёт жёлтую/оранжевую зону, «чистоте» не доверяем.
 - Режим ноутбука (`PowerSaverOnBattery`, по умолчанию включён): от батареи (`GetSystemPowerStatus`) плановый аудит автозагрузки
-  раз в 30 мин вместо 5. По решению пользователя скорость проверки не снижается: файлы и процессы всегда проверяются в полную
-  ширину пула (`Math.Clamp(ядра, 4, 8)`); защита в реальном времени, аудит новых процессов и внеочередной аудит после
-  изменения hosts/задач не откладываются.
-- Тесты Linux: 1035 всего, 1028 passed, 7 skipped (`WindowsFact`).
+  раз в 30 мин вместо 5 (в 1.3.9 ещё и проверка в 2 потока — убрано в 1.3.11).
+
+### Детектор скрытых майнеров: видеокарта (после 1.3.7, вошло в main поверх 1.3.9)
+- Пользователь видит на Katana: нагрузка Intel UHD Graphics высокая, при открытии Диспетчера задач падает (семейство CAAService
+  включает GPU-майнер). Детектор смотрел только процессор.
+- `WindowsGpuUsageReader` (PDH, `\GPU Engine(*)\Utilization Percentage`, английские имена; экземпляры `pid_…_engtype_…`, максимум по
+  типам движков; `null` — замер недоступен), `ProcessActivitySample.GpuPercent`, `ActivityResource` (Cpu/Gpu) в кандидатах и находках,
+  по одному процессу одна находка (`CloseSiblings`), неизвестные замеры видеокарты пропускаются. CLI `gpu-usage`.
+- **На проверку:** `sentinel gpu-usage 30` при высокой нагрузке видеокарты — процесс-виновник с путём; `sentinel evasion-watch 300`
+  с открытием Диспетчера — находка «…% видеокарты»; счётчики из службы (сеанс 0) — в журнале нет «Нагрузка видеокарты недоступна».
+
+### 1.3.10 — базы угроз после выпуска 1.3.9
+- Строка состояния окна застывала на «Обновление баз выполняется…» (выставляется при нажатии и не менялась): по событию статуса
+  службы она заменяется итогом обновления (`MainViewModel.RefreshDatabaseStatusAsync`).
+- Отключены мёртвые источники: `bazaar.abuse.ch/export/txt/sha256/recent/` и `urlhaus.abuse.ch/downloads/text/` отвечают 410 Gone
+  (у пользователя было «источников 7 из 9»); данные приходят через API abuse.ch по Auth-Key.
+- Релизная сборка базы (лог 1.3.9): MalwareBazaar full — 410 Gone (выгрузки теперь `mb-api.abuse.ch/v2/files/exports/<ключ>/…`,
+  кандидаты `full.csv.zip`, `full.zip`, `sha256_full.zip` — имена не проверены без ключа; секрет `ABUSECH_AUTH_KEY` в репозитории
+  не задан), VirusShare пропущен из-за `{0:D5}` на double — исправлено приведением к `[int]`. В 1.3.9 ушла база 11 743 SHA-256.
+- **На проверку:** лог шага «Build threat hash database» 1.3.10 — `OK VirusShare: списков N`; после добавления секрета — `OK MalwareBazaar`.
+
+### 1.3.11 — отчёты IOC Talos/Unit 42/Sophos, подписанные совпадения, проверка на полной скорости
+- По решению пользователя режим ноутбука не снижает скорость: файлы и процессы всегда проверяются в полную ширину пула
+  (`Math.Clamp(ядра, 4, 8)`); от батареи реже идёт только плановый аудит автозагрузки (30 мин вместо 5).
+- `threatdb build --ioc-reports Имя=dir` (`ThreatDatabaseSources.FromIocReports`): в релиз добавлены Cisco-Talos/IOCs,
+  pan-unit42/iocs (~630 тыс. образцов майнеров из исследования криптоджекинга), sophoslabs/IoCs — без ключей ~737 тыс. SHA-256
+  (было 11 743). Текстовые файлы построчно, JSON/STIX и `.git` пропускаются; семейство — `Talos.<отчёт>` и т. п.
+- Строки отчётов с пометками легитимного файла (legitimate, vulnerable, BYOVD, sideload, signed, Microsoft…) не берутся.
+  Совпадение с базой у файла с действительной подписью стороннего издателя — Medium (решение пользователя), а не Critical
+  (авто-карантин): в отчётах бывают законные компоненты, которыми злоупотребляют (например, RTCore64.sys MSI Afterburner).
+- Служба: `AbuseChExportSource` — выгрузка MalwareBazaar за 48 ч `mb-api.abuse.ch/v2/files/exports/<ключ>/recent.csv` по ключу
+  из настроек (в адресе для журнала и окна ключ заменён на «<ключ>»; без ключа — «пропущен» без обращения к сети).
+- Скрипт сборки базы: кандидаты полной выгрузки MalwareBazaar 1.3.10 объединены с моими, ключ вырезается из сообщений об ошибках.
+- Тесты Linux (после слияния с 1.3.10): 1044 всего, 1037 passed, 7 skipped (`WindowsFact`).
 
 ## На проверку пользователю на ноутбуке с Windows (Hardware-in-the-Loop)
 - **1.3.1 на Katana:** чистая установка MSI и обновление поверх 1.3.0 — код 0, `SentinelService` Running/Automatic, `sc.exe qfailure SentinelService`

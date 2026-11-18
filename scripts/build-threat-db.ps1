@@ -69,7 +69,7 @@ foreach ($repo in $repos) {
 #    перебираются по очереди (неверное имя — быстрый 404); последней — выгрузка за 48 часов (recent.csv).
 if ($abuseKey) {
     $mb = $null
-    foreach ($file in @('full.csv.zip', 'csv_full.zip', 'sha256_full.txt.zip', 'full_sha256.txt.zip', 'recent.csv')) {
+    foreach ($file in @('full.csv.zip', 'full.zip', 'csv_full.zip', 'sha256_full.zip', 'sha256_full.txt.zip', 'full_sha256.txt.zip', 'recent.csv')) {
         try {
             $path = Join-Path $work ('malwarebazaar_' + $file)
             Get-File "https://mb-api.abuse.ch/v2/files/exports/$abuseKey/$file" $path

@@ -215,6 +215,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             await Dashboard.RefreshDatabaseAsync();
+
+            // Строка состояния выставляется при нажатии «Обновить базы» и сама не меняется: когда служба сообщила о
+            // завершении, «выполняется…» заменяется итогом (сколько источников и новых хешей, или ошибка).
+            const string running = "Обновление баз выполняется…";
+            if (StatusMessage == running && Dashboard.Database.LastStatus is { Length: > 0 } result && result != running)
+            {
+                Notify(result, result.StartsWith("Обновление не выполнено", StringComparison.Ordinal));
+            }
+
             if (Section == Section.Settings)
             {
                 await Settings.RefreshDatabaseAsync();
