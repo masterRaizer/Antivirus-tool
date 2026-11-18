@@ -126,6 +126,15 @@ try {
     if (-not (Test-Path $Exclusions)) { throw "Не найден шаблон $Exclusions." }
     Copy-Item $Exclusions (Join-Path $Output 'allowed_exclusions.json')
 
+    # Базы угроз (до сотен МБ после build-threat-db.ps1) копируются из data\ репозитория напрямую: при публикации в один файл
+    # SDK мог упаковать их внутрь .exe, а служба и окно читают их отдельными файлами рядом с исполняемым.
+    $DataSource = Join-Path $Root 'data'
+    if (Test-Path $DataSource) {
+        $DataTarget = Join-Path $Output 'data'
+        New-Item -ItemType Directory -Force -Path $DataTarget | Out-Null
+        Get-ChildItem $DataSource -Filter 'threat_hashes*.bin' | ForEach-Object { Copy-Item $_.FullName (Join-Path $DataTarget $_.Name) -Force }
+    }
+
     if (-not (Test-Path (Join-Path $Output 'data\threat_hashes.bin'))) { throw 'В dist не попала база угроз data\threat_hashes.bin.' }
     $Notices = Join-Path $Root 'THIRD_PARTY_NOTICES.md'
     if (-not (Test-Path $Notices)) { throw "Не найден $Notices." }
