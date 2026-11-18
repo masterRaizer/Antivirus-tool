@@ -127,7 +127,10 @@ public class ThreatIntelTests
         Assert.True(engine.TryGetFamily(Hash(100), out _), "прежние записи сохраняются");
         Assert.True(engine.TryGetFamily(Hash(200), out var family));
         Assert.Equal("SigBase.Test Family", family);
-        Assert.Contains(status.Sources, s => s.Name.Contains("MalwareBazaar (публичный", StringComparison.Ordinal) && s.Status == "пропущен" && s.Message!.StartsWith("410", StringComparison.Ordinal));
+        // Выгрузка MalwareBazaar v2 без ключа пропускается до обращения к сети (старые публичные списки — 410 Gone).
+        Assert.Contains(status.Sources, s => s.Name.Contains("MalwareBazaar (выгрузка", StringComparison.Ordinal) && s.Status == "пропущен"
+            && s.Message!.Contains("AbuseChAuthKey", StringComparison.Ordinal));
+        Assert.DoesNotContain(handler.Requests, r => r.Contains("abuse.ch/v2/files/exports", StringComparison.Ordinal));
         Assert.Contains(status.Sources, s => s.Name.Contains("eset", StringComparison.Ordinal) && s.Message!.StartsWith("403", StringComparison.Ordinal));
         Assert.Contains(status.Sources, s => s.Name.Contains("Feodo", StringComparison.Ordinal) && s.Status == "ok");
         Assert.Contains(status.Sources, s => s.Name.Contains("API", StringComparison.Ordinal) && s.Message!.Contains("AbuseChAuthKey", StringComparison.Ordinal));
@@ -365,6 +368,32 @@ public class ThreatIntelTests
         ]);
         Assert.Equal("B", combined.Source);
         Assert.Equal(CloudReputation.Malicious, combined.Reputation);
+    }
+
+    [Fact]
+    public async Task AbuseChExport_NeedsKey_PutsItInPath_ButNeverShowsIt()
+    {
+        var handler = new FakeHandler(r =>
+        {
+            Assert.Equal("https://mb-api.abuse.ch/v2/files/exports/secret-key/recent.csv", r.RequestUri!.ToString());
+            return Text($"# MalwareBazaar recent\n\"2026-11-17 10:00:00\", \"{Hash(11)}\", \"m\", \"s\", \"r\", \"a.exe\", \"exe\", \"x\", \"XMRig\", \"n/a\"\n");
+        });
+        var source = ThreatFeedSource.CreateDefaults().OfType<AbuseChExportSource>().Single();
+        Assert.DoesNotContain("{key}", source.Url, StringComparison.Ordinal);
+        Assert.Contains("<ключ>", source.Url, StringComparison.Ordinal);
+
+        var skipped = await source.FetchAsync(new FeedContext(new HttpClient(handler), new SentinelConfig(), new FeedState()), CancellationToken.None);
+        Assert.Equal("пропущен", skipped.Status);
+        Assert.Empty(handler.Requests);
+
+        var ok = await source.FetchAsync(new FeedContext(new HttpClient(handler), new SentinelConfig { AbuseChAuthKey = " secret-key " }, new FeedState()),
+            CancellationToken.None);
+        Assert.Equal("ok", ok.Status);
+        var entry = Assert.Single(ok.Hashes);
+        Assert.Equal(Hash(11), entry.Sha256);
+        Assert.Equal("MalwareBazaar.XMRig", entry.Family);
+        Assert.DoesNotContain(ThreatFeedSource.CreateDefaults(), s => s.Url.Contains("bazaar.abuse.ch/export", StringComparison.Ordinal)
+            || s.Url.Contains("urlhaus.abuse.ch/downloads/text", StringComparison.Ordinal));
     }
 
     private sealed class FakeTime(DateTimeOffset start) : TimeProvider

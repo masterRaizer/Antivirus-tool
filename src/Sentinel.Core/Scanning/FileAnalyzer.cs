@@ -286,9 +286,21 @@ public sealed class FileAnalyzer
         if (_intel is not null && LookupThreatDb(sha256, sha1, md5) is { } hit
             && !(definitive == "EICAR" && hit.Family is not null && hit.Family.StartsWith("EICAR", StringComparison.Ordinal)))
         {
-            detections.Add(new Detection($"ThreatDB.{hit.Family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
-                $"{hit.Kind} найден в базе известных угроз ({hit.Family ?? "семейство не указано"}).", []));
-            definitive = $"ThreatDB.{hit.Family}";
+            if (signatureValid)
+            {
+                // Действительная подпись стороннего издателя: в открытых базах IOC встречаются законные файлы, которыми
+                // злоупотребляют (уязвимые драйверы BYOVD, программы для подмены DLL). Не автоматический карантин, а решение пользователя.
+                detections.Add(new Detection($"ThreatDB.{hit.Family ?? "Malware"}", Severity.Medium, "malware", DetectionSource.ThreatIntel, null,
+                    $"{hit.Kind} найден в базе известных угроз ({hit.Family ?? "семейство не указано"}), но файл подписан действительной подписью"
+                    + $"{(signature?.SignerSubject is { Length: > 0 } signer ? $" ({signer})" : string.Empty)}: возможно, это законный компонент, "
+                    + "которым злоупотребляют. Решение за вами.", []));
+            }
+            else
+            {
+                detections.Add(new Detection($"ThreatDB.{hit.Family ?? "Malware"}", Severity.Critical, "malware", DetectionSource.ThreatIntel, null,
+                    $"{hit.Kind} найден в базе известных угроз ({hit.Family ?? "семейство не указано"}).", []));
+                definitive = $"ThreatDB.{hit.Family}";
+            }
         }
 
         ThreatScore? score = null;

@@ -2,11 +2,18 @@ namespace Sentinel.Core.ThreatIntel;
 
 /// <summary>
 /// Сбор записей для стартовой базы из локальных копий публичных репозиториев IOC (детерминированная офлайн-сборка
-/// <c>data/threat_hashes.bin</c>): Neo23x0/signature-base (DRL 1.1) и eset/malware-ioc (BSD-2-Clause).
+/// <c>data/threat_hashes.bin</c>): Neo23x0/signature-base (DRL 1.1), eset/malware-ioc (BSD-2-Clause), отчёты IOC
+/// (Cisco-Talos/IOCs, pan-unit42/iocs, sophoslabs/IoCs), выгрузки MalwareBazaar и списки VirusShare.
 /// </summary>
 public static class ThreatDatabaseSources
 {
     private static readonly string[] EsetExtensions = [".sha256", ".sha1", ".md5", ".txt", ".csv", ".ioc", ".adoc", ".md", ".json", ".misp", ".xml"];
+
+    /// <summary>Текстовые файлы отчётов IOC; JSON/STIX пропускаются — те же хеши есть в текстовой копии, а строки там без контекста.</summary>
+    private static readonly string[] ReportExtensions = [".txt", ".text", ".csv", ".md", ".ioc", ".sha256", ".sha1", ".md5"];
+
+    /// <summary>Имена файлов, по которым семейство не понять: берётся имя каталога.</summary>
+    private static readonly string[] GenericReportNames = ["readme", "iocs", "ioc", "samples", "hashes", "indicators", "index"];
 
     /// <summary><c>iocs/*.txt</c> (в т.ч. <c>hash-iocs.txt</c>) и мета-хеши правил <c>yara/*.yar</c>.</summary>
     public static IEnumerable<ThreatHashEntry> FromSignatureBase(string root)
@@ -59,6 +66,47 @@ public static class ThreatDatabaseSources
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Репозиторий отчётов IOC (Talos, Unit 42, Sophos и подобные): все текстовые файлы, семейство — <paramref name="prefix"/>
+    /// и имя отчёта. Строки с пометками легитимного файла пропускаются (<see cref="ThreatFeedParsers.IsBenignContext"/>);
+    /// каталоги <c>.git</c> и точки повторной обработки (junction/symlink) не обходятся.
+    /// </summary>
+    public static IEnumerable<ThreatHashEntry> FromIocReports(string root, string prefix)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(root);
+        ArgumentException.ThrowIfNullOrEmpty(prefix);
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+            IgnoreInaccessible = true,
+        };
+        var files = Directory.EnumerateFiles(root, "*", options)
+            .Where(f => ReportExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+            .Where(f => !Path.GetRelativePath(root, f).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(part => part.StartsWith('.')))
+            .Order(StringComparer.Ordinal);
+        foreach (var file in files)
+        {
+            foreach (var e in ThreatFeedParsers.ParseIocReportLines(File.ReadLines(file), $"{prefix}.{ReportName(file)}"))
+            {
+                yield return e;
+            }
+        }
+    }
+
+    private static string ReportName(string file)
+    {
+        var name = Path.GetFileNameWithoutExtension(file);
+        if (name.Length < 3 || GenericReportNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            name = Path.GetFileName(Path.GetDirectoryName(file)) ?? name;
+        }
+
+        var clean = new string(name.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '-').ToArray()).Trim('-');
+        return clean.Length > 60 ? clean[..60] : clean.Length == 0 ? "report" : clean;
     }
 
     /// <summary>

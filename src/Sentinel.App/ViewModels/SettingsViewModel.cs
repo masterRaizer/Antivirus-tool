@@ -108,7 +108,7 @@ public sealed class SettingsViewModel : SectionViewModel
         set => Set(ref _knownGoodLookup, value);
     }
 
-    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока.</summary>
+    /// <summary>Режим ноутбука: от батареи плановый аудит автозагрузки реже; скорость проверки не меняется.</summary>
     public bool PowerSaverOnBattery
     {
         get => _powerSaver;

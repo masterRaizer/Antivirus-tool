@@ -261,7 +261,10 @@ public abstract class ThreatFeedSource
 
     public abstract Task<FeedResult> FetchAsync(FeedContext context, CancellationToken cancellationToken);
 
-    /// <summary>Источники по умолчанию: GitHub-зеркала IOC, устаревшие публичные списки abuse.ch и актуальные API abuse.ch (нужен Auth-Key).</summary>
+    /// <summary>
+    /// Источники по умолчанию: GitHub-зеркала IOC, Feodo Tracker и выгрузки/API abuse.ch с Auth-Key. Публичные списки
+    /// MalwareBazaar и URLhaus без ключа abuse.ch закрыл в ноябре 2026 (410 Gone) — вместо них выгрузка v2 с ключом в пути.
+    /// </summary>
     public static IReadOnlyList<ThreatFeedSource> CreateDefaults() =>
     [
         new GitHubIocSource("Neo23x0/signature-base (IOC)", "Neo23x0", "signature-base", "master",
@@ -278,10 +281,8 @@ public abstract class ThreatFeedSource
                     || path.EndsWith(".txt", StringComparison.Ordinal) || path.EndsWith(".csv", StringComparison.Ordinal)
                     || path.EndsWith(".ioc", StringComparison.Ordinal) || path.EndsWith(".adoc", StringComparison.Ordinal) || path.EndsWith(".json", StringComparison.Ordinal)),
             (path, text) => ThreatFeedParsers.ParseHashListAllKinds(text, "ESET." + path[..path.IndexOf('/', StringComparison.Ordinal)])),
-        new TextListSource("abuse.ch MalwareBazaar (публичный список)", "https://bazaar.abuse.ch/export/txt/sha256/recent/",
-            text => (ThreatFeedParsers.ParseHashList(text, "MalwareBazaar").ToArray(), [], [])),
-        new TextListSource("abuse.ch URLhaus (публичный список)", "https://urlhaus.abuse.ch/downloads/text/",
-            text => ([], [], ThreatFeedParsers.ParseUrlList(text))),
+        new AbuseChExportSource("abuse.ch MalwareBazaar (выгрузка за 48 ч)", "https://mb-api.abuse.ch/v2/files/exports/{key}/recent.csv",
+            text => (ThreatFeedParsers.ParseMalwareBazaarCsv(new StringReader(text)).ToArray(), [], [])),
         new TextListSource("abuse.ch Feodo Tracker (C2 IP)", "https://feodotracker.abuse.ch/downloads/ipblocklist.txt",
             text => ([], ThreatFeedParsers.ParseIpBlocklist(text), [])),
         new AbuseChApiSource("abuse.ch MalwareBazaar API", "https://mb-api.abuse.ch/api/v1/", "query=get_recent&selector=time",
@@ -330,6 +331,40 @@ public sealed class TextListSource(string name, string url, Func<string, (IReadO
 
     public override async Task<FeedResult> FetchAsync(FeedContext context, CancellationToken cancellationToken)
     {
+        using var response = await context.Http.GetAsync(url, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return FeedResult.Failed("пропущен", Describe(response.StatusCode));
+        }
+
+        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var (hashes, ips, urls) = parse(text);
+        return FeedResult.Ok(hashes, ips, urls);
+    }
+}
+
+/// <summary>
+/// Выгрузки abuse.ch v2 (<c>…/v2/files/exports/&lt;ключ&gt;/файл</c>): Auth-Key — часть пути, поэтому в <see cref="Url"/> (журнал,
+/// раздел настроек) он заменён на «&lt;ключ&gt;». Без ключа источник пропускается без обращения к сети.
+/// </summary>
+public sealed class AbuseChExportSource(string name, string urlTemplate,
+    Func<string, (IReadOnlyList<ThreatHashEntry> Hashes, IReadOnlyList<string> Ips, IReadOnlyList<string> Urls)> parse) : ThreatFeedSource
+{
+    private const string KeyPlaceholder = "{key}";
+
+    public override string Name => name;
+
+    public override string Url => urlTemplate.Replace(KeyPlaceholder, "<ключ>", StringComparison.Ordinal);
+
+    public override async Task<FeedResult> FetchAsync(FeedContext context, CancellationToken cancellationToken)
+    {
+        var key = context.Config.AbuseChAuthKey?.Trim();
+        if (string.IsNullOrEmpty(key))
+        {
+            return FeedResult.Failed("пропущен", "не задан AbuseChAuthKey в sentinel_config.json");
+        }
+
+        var url = urlTemplate.Replace(KeyPlaceholder, Uri.EscapeDataString(key), StringComparison.Ordinal);
         using var response = await context.Http.GetAsync(url, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {

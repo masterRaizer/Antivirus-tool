@@ -617,7 +617,7 @@ public class RealtimeInfrastructureTests
 public class RuntimeSettingsTests
 {
     [Fact]
-    public async Task PowerSaver_OnBattery_StretchesPlannedAudit_AndNarrowsWorkers_UnlessSwitchedOff()
+    public async Task PowerSaver_OnBattery_StretchesPlannedAuditOnly_UnlessSwitchedOff()
     {
         await using var b = new RuntimeBench();
         Assert.False(b.Runtime.PowerSaving);
@@ -626,21 +626,17 @@ public class RuntimeSettingsTests
         b.Power.OnBattery = true;
         Assert.True(b.Runtime.PowerSaving);
         Assert.Equal(PowerSaverPolicy.BatteryConfigAuditInterval, b.Runtime.EffectiveConfigAuditInterval);
-        Assert.InRange(b.Runtime.EffectiveWorkerCount, 1, PowerSaverPolicy.BatteryWorkerCount);
 
         await b.Runtime.SaveSettingsAsync(new SettingsUpdate { PowerSaverOnBattery = false });
         Assert.False(b.Runtime.PowerSaving);
         Assert.Equal(TimeSpan.FromMinutes(5), b.Runtime.EffectiveConfigAuditInterval);
-        Assert.Equal(Sentinel.Core.Scanning.Pool.ScanPoolBase.DefaultWorkerCount(), b.Runtime.EffectiveWorkerCount);
     }
 
     [Fact]
-    public void PowerSaverPolicy_NeverShortensLongerIntervals_AndKeepsAtLeastOneWorker()
+    public void PowerSaverPolicy_NeverShortensLongerIntervals()
     {
         Assert.Equal(TimeSpan.FromHours(2), PowerSaverPolicy.ConfigAuditInterval(TimeSpan.FromHours(2), saving: true));
         Assert.Equal(TimeSpan.FromMinutes(5), PowerSaverPolicy.ConfigAuditInterval(TimeSpan.FromMinutes(5), saving: false));
-        Assert.Equal(1, PowerSaverPolicy.WorkerCount(1, saving: true));
-        Assert.Equal(8, PowerSaverPolicy.WorkerCount(8, saving: false));
         Assert.False(SystemPowerSource.Instance.OnBattery && !OperatingSystem.IsWindows());
     }
 

@@ -39,20 +39,15 @@ public sealed class SystemPowerSource : IPowerSource
 }
 
 /// <summary>
-/// Режим ноутбука (как отложенные задачи Касперского при работе от батареи): плановый аудит автозагрузки и конфигурации
-/// реже, проверка меньшим числом рабочих процессов. Защита в реальном времени, аудит новых процессов и внеочередной аудит
-/// после изменения hosts/задач не откладываются.
+/// Режим ноутбука (как отложенные задачи Касперского при работе от батареи): от батареи реже идёт только плановый аудит
+/// автозагрузки и конфигурации. Проверка файлов и процессов всегда работает в полную ширину пула (до 8 потоков); защита
+/// в реальном времени, аудит новых процессов и внеочередной аудит после изменения hosts/задач не откладываются.
 /// </summary>
 public static class PowerSaverPolicy
 {
     /// <summary>Интервал планового аудита конфигурации от батареи.</summary>
     public static readonly TimeSpan BatteryConfigAuditInterval = TimeSpan.FromMinutes(30);
 
-    /// <summary>Рабочих процессов/потоков проверки от батареи.</summary>
-    public const int BatteryWorkerCount = 2;
-
     public static TimeSpan ConfigAuditInterval(TimeSpan normal, bool saving) =>
         saving && normal < BatteryConfigAuditInterval ? BatteryConfigAuditInterval : normal;
-
-    public static int WorkerCount(int normal, bool saving) => saving ? Math.Clamp(normal, 1, BatteryWorkerCount) : normal;
 }

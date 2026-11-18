@@ -201,9 +201,6 @@ public sealed partial class SentinelRuntime
     /// <summary>Интервал планового аудита конфигурации с учётом режима ноутбука.</summary>
     internal TimeSpan EffectiveConfigAuditInterval => PowerSaverPolicy.ConfigAuditInterval(_o.ConfigAuditInterval, PowerSaving);
 
-    /// <summary>Число рабочих процессов/потоков проверки с учётом режима ноутбука.</summary>
-    internal int EffectiveWorkerCount => PowerSaverPolicy.WorkerCount(Scanning.Pool.ScanPoolBase.DefaultWorkerCount(), PowerSaving);
-
     private SentinelConfig LoadConfigSafe()
     {
         try

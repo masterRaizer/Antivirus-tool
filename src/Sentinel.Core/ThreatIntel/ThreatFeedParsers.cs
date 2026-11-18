@@ -105,6 +105,45 @@ public static partial class ThreatFeedParsers
             .SelectMany(kind => ExtractHashes(text, kind))
             .Select(h => new ThreatHashEntry(h, family));
 
+    /// <summary>
+    /// Пометки легитимного файла в отчётах IOC: уязвимые подписанные драйверы (BYOVD), законные программы для подмены DLL,
+    /// системные утилиты, приманки. Хеши из таких строк в базу угроз не попадают — иначе карантин сломал бы обычные программы
+    /// (например, драйвер MSI Afterburner, которым злоупотребляют «убийцы EDR»).
+    /// </summary>
+    private static readonly string[] BenignMarkers =
+    [
+        "legit", "benign", "clean", "vulnerab", "not malicious", "non-malicious", "byovd", "sideload", "side-load", "side load",
+        "abused", "lolbin", "lolbas", "goodware", "false positive", "whitelist", "allowlist", "signed", "microsoft", "decoy",
+    ];
+
+    /// <summary>Строка отчёта IOC описывает легитимный (или используемый вредоносом законный) файл.</summary>
+    public static bool IsBenignContext(string line) =>
+        line is not null && BenignMarkers.Any(m => line.Contains(m, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Строки отчёта IOC (Talos, Unit 42, Sophos и т. п.): все виды хешей, кроме строк с пометками легитимного файла
+    /// (<see cref="IsBenignContext"/>). Читается построчно — файлы отчётов бывают по десяткам мегабайт.
+    /// </summary>
+    public static IEnumerable<ThreatHashEntry> ParseIocReportLines(IEnumerable<string> lines, string family)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        foreach (var line in lines)
+        {
+            if (line.Length < 32 || IsBenignContext(line))
+            {
+                continue;
+            }
+
+            foreach (var kind in new[] { ThreatHashKind.Sha256, ThreatHashKind.Sha1, ThreatHashKind.Md5 })
+            {
+                foreach (var hash in ExtractHashes(line, kind))
+                {
+                    yield return new ThreatHashEntry(hash, family);
+                }
+            }
+        }
+    }
+
     /// <summary><c>hash-iocs.txt</c> signature-base со всеми видами хешей (<c>хеш;описание</c>).</summary>
     public static IEnumerable<ThreatHashEntry> ParseSignatureBaseHashIocsAllKinds(string text)
     {

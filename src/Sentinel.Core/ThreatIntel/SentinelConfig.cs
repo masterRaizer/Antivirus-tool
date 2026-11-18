@@ -40,7 +40,7 @@ public sealed record SentinelConfig
     /// </summary>
     public bool EnableKnownGoodLookup { get; init; }
 
-    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока (как отложенные задачи Касперского).</summary>
+    /// <summary>Режим ноутбука: от батареи плановый аудит автозагрузки реже (как отложенные задачи Касперского); скорость проверки не меняется.</summary>
     public bool PowerSaverOnBattery { get; init; } = true;
 
     public bool HasCloudKeys => !string.IsNullOrWhiteSpace(KasperskyOpenTipApiKey) || !string.IsNullOrWhiteSpace(VirusTotalApiKey);

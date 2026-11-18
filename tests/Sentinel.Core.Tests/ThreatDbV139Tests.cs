@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Sentinel.Core.Scanning;
 using Sentinel.Core.Signatures;
+using Sentinel.Core.Testing;
 using Sentinel.Core.ThreatIntel;
 using Sentinel.Core.Trust;
 
@@ -84,6 +85,77 @@ public class ThreatDbV139Tests
         var detection = Assert.Single(result.Detections, d => d.Source == DetectionSource.ThreatIntel);
         Assert.Equal("ThreatDB.VirusShare", detection.Name);
         Assert.Contains("MD5", detection.Description, StringComparison.Ordinal);
+    }
+
+    private sealed class ThirdPartySigned : ISignatureVerifier
+    {
+        public SignatureVerificationResult Verify(string path) =>
+            new(SignatureStatus.Valid, SignatureSource.Embedded, "CN=Example Hardware Vendor Ltd", "CN=Example CA", "01", "thumb", 0, "ok");
+    }
+
+    [Fact]
+    public void ThreatDbHit_OnValidlySignedThirdPartyFile_AsksUser_InsteadOfAutoQuarantine()
+    {
+        using var tmp = new TempDir();
+        var sample = tmp.Write(Path.Combine("files", "vendor-tool.exe"), SyntheticArtifacts.BuildPe()); // подпись проверяется только у PE
+        var sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(sample))).ToLowerInvariant();
+        using var engine = new ThreatIntelligenceEngine(Path.Combine(tmp.Path, "data"));
+        engine.Merge([new(sha256, "Sophos.edrkiller")], DateTimeOffset.UtcNow);
+
+        FileAnalyzer With(ISignatureVerifier verifier) =>
+            new(new SignatureEngine(RuleLoader.LoadDirectory(RepoPaths.RulesDirectory)), verifier, threatIntel: engine);
+
+        var signed = With(new ThirdPartySigned()).Analyze(sample);
+        var asked = Assert.Single(signed.Detections, d => d.Source == DetectionSource.ThreatIntel);
+        Assert.Equal(Severity.Medium, asked.Severity);
+        Assert.Contains("Example Hardware Vendor", asked.Description, StringComparison.Ordinal);
+        Assert.Equal(Verdict.Suspicious, signed.Verdict);
+
+        var unsigned = With(new UnavailableSignatureVerifier()).Analyze(sample);
+        Assert.Equal(Severity.Critical, Assert.Single(unsigned.Detections, d => d.Source == DetectionSource.ThreatIntel).Severity);
+        Assert.Equal(Verdict.Malicious, unsigned.Verdict);
+    }
+
+    [Fact]
+    public void IocReportLines_SkipLegitimateAndVulnerableDriverMentions()
+    {
+        var malicious = Hex(21, 32);
+        var driver = Hex(22, 32);
+        var sideload = Hex(23, 20);
+        var md5 = Hex(24, 16);
+        string[] lines =
+        [
+            "Indicator_Type,Data,Note",
+            $"sha256,{malicious},EDR killer",
+            $"sha256,{driver},Vulnerable driver abused by the EDR killer (BYOVD)",
+            $"{sideload} legitimate signed executable used for DLL side-loading",
+            $"md5: {md5}",
+        ];
+
+        var entries = ThreatFeedParsers.ParseIocReportLines(lines, "Sophos.test").ToList();
+        Assert.Contains(entries, e => e.Sha256 == malicious);
+        Assert.Contains(entries, e => e.Sha256 == md5);
+        Assert.DoesNotContain(entries, e => e.Sha256 == driver);
+        Assert.DoesNotContain(entries, e => e.Sha256 == sideload);
+        Assert.All(entries, e => Assert.Equal("Sophos.test", e.Family));
+    }
+
+    [Fact]
+    public void IocReports_FamilyFromReportName_SkipsJsonAndGitFolders()
+    {
+        using var tmp = new TempDir();
+        var miner = Hex(31, 32);
+        var report = Hex(32, 32);
+        var ignored = Hex(33, 32);
+        tmp.WriteText(Path.Combine("repo", "cryptocurrency_miners", "samples.csv"), $"First Seen,SHA256\n5/13/18 4:51,{miner}\n");
+        tmp.WriteText(Path.Combine("repo", "2024", "04", "coralraider campaign.txt"), $"{report}\n");
+        tmp.WriteText(Path.Combine("repo", "2024", "04", "coralraider campaign.json"), $"{{\"hash\":\"{ignored}\"}}");
+        tmp.WriteText(Path.Combine("repo", ".git", "packed.txt"), $"{ignored}\n");
+
+        var entries = ThreatDatabaseSources.FromIocReports(Path.Combine(tmp.Path, "repo"), "Unit42").ToList();
+        Assert.Contains(entries, e => e.Sha256 == miner && e.Family == "Unit42.cryptocurrency_miners");
+        Assert.Contains(entries, e => e.Sha256 == report && e.Family == "Unit42.coralraider-campaign");
+        Assert.DoesNotContain(entries, e => e.Sha256 == ignored);
     }
 
     [Fact]

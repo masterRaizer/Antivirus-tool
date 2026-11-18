@@ -48,7 +48,7 @@ jobs:
       - name: Test
         run: dotnet test Sentinel.sln --configuration Release
 
-      # Большая база вирусных хешей из открытых источников (MalwareBazaar, VirusShare, ESET, signature-base) собирается в data\
+      # Большая база вирусных хешей из открытых источников (ESET, signature-base, Talos, Unit 42, Sophos, VirusShare, MalwareBazaar) — в data\
       # перед publish — только для релиза (тег или ручной запуск): это сотни мегабайт загрузок. Ключ abuse.ch — секрет репозитория.
       - name: Build threat hash database (open sources)
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'

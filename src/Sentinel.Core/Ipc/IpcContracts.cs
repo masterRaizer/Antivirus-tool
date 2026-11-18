@@ -165,7 +165,7 @@ public sealed record SettingsSnapshot
     /// <summary>Проверка неизвестных файлов по базе известных программ CIRCL hashlookup (только хеш).</summary>
     public bool EnableKnownGoodLookup { get; init; }
 
-    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока.</summary>
+    /// <summary>Режим ноутбука: от батареи плановый аудит автозагрузки реже; скорость проверки не меняется.</summary>
     public bool PowerSaverOnBattery { get; init; } = true;
 
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];
@@ -204,7 +204,7 @@ public sealed record SettingsUpdate
     /// <summary>Проверка неизвестных файлов по базе известных программ CIRCL hashlookup (только хеш).</summary>
     public bool EnableKnownGoodLookup { get; init; }
 
-    /// <summary>Режим ноутбука: от батареи плановый аудит реже и проверка в 2 потока.</summary>
+    /// <summary>Режим ноутбука: от батареи плановый аудит автозагрузки реже; скорость проверки не меняется.</summary>
     public bool PowerSaverOnBattery { get; init; } = true;
 
     public IReadOnlyList<string> AllowedPaths { get; init; } = [];

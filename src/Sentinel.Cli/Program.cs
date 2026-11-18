@@ -342,7 +342,7 @@ internal static partial class Program
                 if (opts.Output is null)
                 {
                     Console.Error.WriteLine("Укажите файл: sentinel threatdb build --out data/threat_hashes.bin [--signature-base <каталог>] [--eset <каталог>] "
-                        + "[--malwarebazaar <zip|csv|txt>]… [--virusshare <каталог>]");
+                        + "[--ioc-reports <Имя>=<каталог>]… [--malwarebazaar <zip|csv|txt>]… [--virusshare <каталог>]");
                     return ExitError;
                 }
 
@@ -362,6 +362,11 @@ internal static partial class Program
                 if (opts.EsetDir is not null)
                 {
                     AddFrom("eset/malware-ioc", ThreatDatabaseSources.FromEset(opts.EsetDir));
+                }
+
+                foreach (var (name, dir) in opts.IocReports)
+                {
+                    AddFrom($"отчёты IOC {name}", ThreatDatabaseSources.FromIocReports(dir, name));
                 }
 
                 foreach (var export in opts.MalwareBazaarExports)
@@ -1380,6 +1385,11 @@ internal sealed class CliOptions
 
     /// <summary>Каталог со списками VirusShare (<c>threatdb build --virusshare</c>).</summary>
     public string? VirusShareDir { get; private set; }
+
+    private readonly List<(string Name, string Directory)> _iocReports = [];
+
+    /// <summary>Репозитории отчётов IOC (<c>threatdb build --ioc-reports Talos=каталог</c>, можно несколько).</summary>
+    public IReadOnlyList<(string Name, string Directory)> IocReports => _iocReports;
     public DateTimeOffset? Timestamp { get; private set; }
 
     /// <summary>Второй позиционный аргумент (идентификатор для <c>quarantine restore</c> / <c>rollback undo</c>).</summary>
@@ -1447,6 +1457,21 @@ internal sealed class CliOptions
                 case "--virusshare" when i + 1 < args.Length:
                     o.VirusShareDir = args[++i];
                     break;
+                case "--ioc-reports" when i + 1 < args.Length:
+                {
+                    var value = args[++i];
+                    var eq = value.IndexOf('=', StringComparison.Ordinal);
+                    if (eq <= 0 || eq == value.Length - 1)
+                    {
+                        o.Error = "--ioc-reports: ожидается Имя=каталог, например Talos=C:\\iocs\\talos.";
+                    }
+                    else
+                    {
+                        o._iocReports.Add((value[..eq], value[(eq + 1)..]));
+                    }
+
+                    break;
+                }
                 case "--eset" when i + 1 < args.Length:
                     o.EsetDir = args[++i];
                     break;
